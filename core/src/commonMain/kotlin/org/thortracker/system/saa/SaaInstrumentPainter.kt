@@ -49,47 +49,11 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         val channels = s.system.channels
         val listen = channels.getOrNull(st.listenChannel)
         val col = ink.palette.channel(st.listenChannel)
-        val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val top = header(c, area, "Sound ${hex2(st.instrument)}",
-            "${variant.label} (${variant.chipLabel})${if (sound == null) " · empty slot" else ""}$locked  ${usageText(st.instrument)}")
+        val left = drawSidebar(c, area, col, SaaInstrumentView.row(s, st) == Row.SLOT)
+        val top = left.top
         val row = SaaInstrumentView.row(s, st)
         rowRects.clear()
 
-        // left column: the bank, scrolled to keep the selected slot in view
-        val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
-        val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, ink.palette.LANE)
-        slotTop = top + ink.unit * 0.2f
-        slotH = ink.unit * 1.45f
-        val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
-        slotScroll = slotScroll.coerceIn(maxOf(0, st.instrument - visible), minOf(st.instrument - 1, SaaSound.SLOTS - visible).coerceAtLeast(0))
-        slotRect = Rect(left.left, slotTop, left.right, slotTop + slotH * visible)
-        for (k in 0 until minOf(visible, SaaSound.SLOTS - slotScroll)) {
-            val i = slotScroll + k + 1
-            val y = slotTop + k * slotH
-            val sel = i == st.instrument
-            if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
-                ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
-            }
-            val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
-            val slotSound = s.saa.instrument(i)
-            val used = usage(i)
-            val nameColor = when {
-                slotSound == null -> ink.palette.FAINT
-                sel -> ink.palette.TEXT
-                used > 0 -> ink.palette.DIM
-                else -> ink.palette.FAINT
-            }
-            val text = slotSound?.name?.ifEmpty { "(unnamed)" } ?: "· empty"
-            ink.label(c, ink.fit(text, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
-        }
-        if (row == Row.SLOT) {
-            val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
-            ink.outline(c, Rect(left.left + 2, y + 1, left.right - 2, y + slotH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
-        }
 
         // right column: settings lines (pairs side by side), shrinking on short displays so the steps keep their room
         val pad = ink.unit * 0.9f
@@ -129,6 +93,55 @@ internal class SaaInstrumentPainter(v: PaneView) : Painter(v) {
         val plotTop = y + ink.unit * 0.3f
         if (area.bottom - plotTop > ink.unit * 4f) drawSteps(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), kind, env, col, row == Row.STEPS)
         else plot.hide()
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int = if (slotRect.contains(x, y))
+        (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, SaaSound.SLOTS) else -1
+
+    /** Same typography, usage marks, scrolling and hit rectangle in both faces. */
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
+        val s = song
+        val sound = SaaInstrumentView.sound(s, st)
+        val variant = s.saa.variant
+        val locked = if (st.lockedSubject >= 0) "  locked" else ""
+        val top = header(c, area, "Sound ${hex2(st.instrument)}",
+            "${variant.label} (${variant.chipLabel})${if (sound == null) " · empty slot" else ""}$locked  ${usageText(st.instrument)}")
+        val row = if (focused) Row.SLOT else Row.NAME
+        val leftW = minOf(area.width() * 0.3f, ink.unit * 14f)
+        val left = Rect(area.left, top, area.left + leftW, area.bottom)
+        ink.rect(c, left, ink.palette.LANE)
+        slotTop = top + ink.unit * 0.2f
+        slotH = ink.unit * 1.45f
+        val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
+        slotScroll = slotScroll.coerceIn(maxOf(0, st.instrument - visible), minOf(st.instrument - 1, SaaSound.SLOTS - visible).coerceAtLeast(0))
+        slotRect = Rect(left.left, slotTop, left.right, slotTop + slotH * visible)
+        for (k in 0 until minOf(visible, SaaSound.SLOTS - slotScroll)) {
+            val i = slotScroll + k + 1
+            val y = slotTop + k * slotH
+            val sel = i == st.instrument
+            if (sel) {
+                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
+                ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
+            }
+            val sz = minOf(ink.unit, slotH * 0.72f)
+            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
+            val slotSound = s.saa.instrument(i)
+            val used = usage(i)
+            val nameColor = when {
+                slotSound == null -> ink.palette.FAINT
+                sel -> ink.palette.TEXT
+                used > 0 -> ink.palette.DIM
+                else -> ink.palette.FAINT
+            }
+            val text = slotSound?.name?.ifEmpty { "(unnamed)" } ?: "· empty"
+            ink.label(c, ink.fit(text, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
+            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+        }
+        if (row == Row.SLOT) {
+            val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
+            ink.outline(c, Rect(left.left + 2, y + 1, left.right - 2, y + slotH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+        return left
     }
 
     /** Rows grouped into display lines: the pan pair, resolution with inversion and clock with rate share a line. */

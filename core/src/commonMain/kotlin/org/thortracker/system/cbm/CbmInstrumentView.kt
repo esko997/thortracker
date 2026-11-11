@@ -146,7 +146,8 @@ object CbmInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, CbmSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (CbmSoundFace.friendly(v)) CbmSoundFace.controls(v).size + 1 else rows(song, st).size - 1)
+        CbmSoundFace.settle(v)
         st.dpcmSample = st.dpcmSample.coerceIn(0, maxOf(0, song.cbm.samples.size - 1))
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, CbmEnvelopes.lastStep(it)) }
     }
@@ -154,10 +155,13 @@ object CbmInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("cbm").apply { invalidate(); editBlocked = true }
         state.instrument = subject.coerceIn(1, CbmSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel)
+            state.soundPanel("cbm").apply { invalidate(); editBlocked = true }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -195,6 +199,7 @@ object CbmInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, CbmSystem.SLOTS)
         if (slot == st.instrument) return
+        st.soundPanel("cbm").invalidate()
         val song = v.session.song
         val row = row(song, st)
         st.instrument = slot
@@ -205,6 +210,7 @@ object CbmInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (CbmSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -402,10 +408,20 @@ object CbmInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        CbmSoundFace.panel(v).editBlocked = false
+        if (v.state.instField < 0) return
+        if (CbmSoundFace.friendly(v)) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = CbmSoundFace.panel(v)
+        if (panel.editBlocked) { panel.editBlocked = false; if (!v.auditionHeld) v.session.releaseAudition(); return }
+        if (v.state.instField < 0) { if (tap) CbmSoundFace.selectMode(v, !panel.advanced, true); return }
+        if (CbmSoundFace.friendly(v)) { if (!v.auditionHeld) v.session.releaseAudition(); return }
         val st = v.state
         val session = v.session
         val row = row(session.song, st)
@@ -454,6 +470,8 @@ object CbmInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || CbmSoundFace.panel(v).editBlocked && v.editHeld) return
+        if (CbmSoundFace.friendly(v) && v.state.instField != 1) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -506,6 +524,8 @@ object CbmInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (CbmSoundFace.command(v, a)) return true
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) CbmSoundFace.panel(v).invalidate()
         val st = v.state
         val session = v.session
         val song = session.song
@@ -538,6 +558,7 @@ object CbmInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (CbmSoundFace.friendly(v) || v.state.instField == -1) { CbmSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -588,6 +609,8 @@ object CbmInstrumentView : SystemView() {
         val editUd = keys.held(Action.EDIT, ud)
         val vic = chip == CbmChip.VIC
         val sounds = buildList {
+            add("Sound face" to "$ud selects slots; $lr selects mode, name or musical controls; $editLr adjusts. $editUd moves the name caret. $channels chooses the Listen lane.")
+            add("Sound / Advanced" to "Both faces edit the same patch. Custom programs stay unchanged until a recipe is chosen. All voices shapes the ONE shared master volume; Gate shapes only this lane. Advanced retains presets, every envelope and sample import.")
             add(ud to (if (vic) "Sound slot, name, Listen lane, preset, page, then the page's settings"
                 else "Sound slot, name, Listen lane, kind, preset, wave (tone sounds), page, then the page's settings"))
             add(lr to "On settings: the sound slot; on envelope steps: the step; on the sample list: the sample")
@@ -630,5 +653,5 @@ object CbmInstrumentView : SystemView() {
         return listOf("Instruments" to sounds, "Envelopes" to envelopes) + if (vic) emptyList() else listOf("Samples" to samples)
     }
 
-    override fun painter(pane: PaneView): Painter = CbmInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = CbmSoundPainter(pane)
 }

@@ -92,7 +92,7 @@ object OpmInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, OpmSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, v.session.song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, PAGES.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        OpmSoundFace.normalise(v, rows(st).size - 1)
         if (page(st) == Page.EXPERT) st.envStep = st.envStep.coerceIn(0, 3)
     }
 
@@ -135,6 +135,7 @@ object OpmInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (OpmSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(st)
@@ -307,10 +308,12 @@ object OpmInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        if (OpmSoundFace.editPress(v)) return
         if (row(v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (OpmSoundFace.editRelease(v, tap)) return
         val st = v.state
         val session = v.session
         val row = row(st)
@@ -336,6 +339,7 @@ object OpmInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (OpmSoundFace.clear(v)) return
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -401,6 +405,7 @@ object OpmInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (OpmSoundFace.command(v, a)) return true
         val st = v.state
         val session = v.session
         val song = session.song
@@ -430,6 +435,7 @@ object OpmInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (OpmSoundFace.hints(v, h)) return
         val st = v.state
         val song = v.session.song
         val row = row(st)
@@ -472,6 +478,12 @@ object OpmInstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         val editLr = keys.held(Action.EDIT, lr)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose instrument slot; $lr chooses mode, name or a musical control",
+                editLr to "Shape the selected sound; $edit on mode switches Sound / Advanced without changing the patch",
+                "Workstation" to "Colour and Alloy shape modulators, Contour shapes outputs, Bite adds feedback, Noise uses FM 8, Fall adds pitch drop",
+                "Touch" to "Tap the name to rename; drag a control to shape it. Compact panes use arrows to page. Advanced retains routing, ratios and the shared LFO",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, page, then the page's settings",
                 lr to "On settings: the sound slot; on the Expert grid: the operator",
@@ -509,5 +521,5 @@ object OpmInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = OpmInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = OpmSoundPainter(pane)
 }

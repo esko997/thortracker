@@ -32,6 +32,8 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     }
 
     private val plot = EnvelopePlot(ink)
+    internal val soundFace = TiaSoundPainter(v)
+    private val soundArea = Rect()
 
     override fun draw(c: Surface, area: Rect) {
         val s = song
@@ -44,15 +46,16 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             ins.raw -> "raw sound"
             else -> "tonal sound"
         }
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "Atari 2600 ${region.label} · $kind$locked  ${usageText(st.instrument)}")
+        val top = soundFace.modes(c, area, header(c, area, "Sound ${hex2(st.instrument)}", "Atari 2600 ${region.label} · $kind$locked  ${usageText(st.instrument)}"))
         val row = TiaInstrumentView.row(st)
         val allRows = TiaInstrumentView.rows(st)
         rowRects.clear()
         gridCells.clear()
+        tabs.clear()
         plot.hide()
         ladderRect = Rect()
 
-        val left = drawBank(c, area, top, TiaSystem.SLOTS, col, row == Row.SLOT) { i ->
+        val left = drawBank(c, area, top, TiaSystem.SLOTS, col, TiaSoundFace.panel(st).advanced && row == Row.SLOT) { i ->
             s.tia.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.raw) " ʳ" else "" }
         }
 
@@ -60,6 +63,11 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val rx = left.right + pad
         val rw = area.right - pad - rx
         rightEdge = rx + rw
+        if (TiaSoundFace.friendly(st)) {
+            soundArea.set(rx, top, area.right - pad, area.bottom)
+            soundFace.draw(c, soundArea)
+            return
+        }
         val rows = allRows.filter { it != Row.SLOT && it != Row.STEPS && it != Row.LADDER }
         val reserve = ink.unit * 8f
         val fit = (area.bottom - top - ink.unit * 0.7f - reserve) / (rows.size + 0.4f)
@@ -233,6 +241,16 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private var drawKind = TiaEnvelopeKind.VOLUME
 
     override fun down(x: Float, y: Float): Boolean {
+        if (soundFace.down(x, y)) return true
+        if (TiaSoundFace.friendly(st)) {
+            val field = st.instField
+            return downShared(x, y, TiaSystem.SLOTS, {}, {
+                TiaSoundFace.invalidate(ctl)
+                st.instField = field
+                TiaSoundFace.settle(st)
+                TiaInstrumentView.publish(ctl)
+            })
+        }
         val rows = TiaInstrumentView.rows(st)
         if (downShared(x, y, TiaSystem.SLOTS, { TiaInstrumentView.showPage(ctl, it) }, { TiaInstrumentView.publish(ctl) })) return true
         val kind = TiaInstrumentView.envelopeKind(st)
@@ -263,6 +281,7 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     }
 
     override fun move(x: Float, y: Float) {
+        if (TiaSoundFace.friendly(st)) { soundFace.move(x, y); return }
         val g = drawing ?: return
         if (!session.isGestureOpen(g)) { drawing = null; return }
         drawAt(x, y)
@@ -272,6 +291,7 @@ internal class TiaInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     override fun cancel() = finish()
 
     private fun finish() {
+        soundFace.cancel()
         drawing?.let { session.endGesture(it) }
         drawing = null
     }

@@ -134,6 +134,13 @@ class AppMenus(
     /** The menus a view opens through [EditorSession.requestMenu]; hosts route `session.onMenuRequest` to [open]. */
     private val context = object : MenuContext {
         override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = this@AppMenus.menu(title, entries, selected)
+        override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) {
+            val value = PopupText(initial.take(maxLength), maxLength)
+            popups.show(PopupSpec(title, text = value, items = listOf(
+                PopupItem("Apply", PopupItem.Tone.PRIMARY) { accepted(value.value.take(maxLength)); host.refresh() },
+                PopupItem.dismiss(),
+            )), host.modalDisplay)
+        }
         override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) =
             host.loadFile(title, extensions, maxBytes, picked)
         override fun status(message: String) = host.status(message)

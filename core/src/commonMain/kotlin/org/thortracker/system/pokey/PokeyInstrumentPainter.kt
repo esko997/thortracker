@@ -25,6 +25,8 @@ import org.thortracker.ui.Surface
  */
 internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private val plot = EnvelopePlot(ink)
+    internal val soundFace = PokeySoundPainter(v)
+    private val soundArea = Rect()
     private var sampleRect = Rect()
     private var sampleRowH = 0f
     private var sampleScroll = 0
@@ -38,22 +40,28 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = ins?.kind?.label ?: "empty slot"
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "POKEY · $kind$locked  ${usageText(st.instrument)}")
+        val top = soundFace.modes(c, area, header(c, area, "Sound ${hex2(st.instrument)}", "POKEY · $kind$locked  ${usageText(st.instrument)}"))
         val row = PokeyInstrumentView.row(s, st)
         val allRows = PokeyInstrumentView.rows(s, st)
         rowRects.clear()
         gridCells.clear()
+        tabs.clear()
         plot.hide()
         sampleRect = Rect()
         addRect = Rect()
 
-        val left = drawBank(c, area, top, PokeySystem.SLOTS, col, row == Row.SLOT) { i ->
+        val left = drawBank(c, area, top, PokeySystem.SLOTS, col, PokeySoundFace.panel(st).advanced && row == Row.SLOT) { i ->
             s.pokey.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + TAGS[it.kind.ordinal] }
         }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
         val fullW = area.right - pad - rx
+        if (PokeySoundFace.friendly(st)) {
+            soundArea.set(rx, top, area.right - pad, area.bottom)
+            soundFace.draw(c, soundArea)
+            return
+        }
         val side = fullW >= ink.unit * 50f && page == Page.SOUND
         val rw = if (side) minOf(fullW * 0.5f, ink.unit * 30f) else fullW
         rightEdge = rx + rw
@@ -358,6 +366,16 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private var drawKind = PokeyEnvelopeKind.VOLUME
 
     override fun down(x: Float, y: Float): Boolean {
+        if (soundFace.down(x, y)) return true
+        if (PokeySoundFace.friendly(st)) {
+            val field = st.instField
+            return downShared(x, y, PokeySystem.SLOTS, {}, {
+                PokeySoundFace.invalidate(ctl)
+                st.instField = field
+                PokeySoundFace.settle(st)
+                PokeyInstrumentView.publish(ctl)
+            })
+        }
         val rows = PokeyInstrumentView.rows(song, st)
         if (addRect.contains(x, y)) {
             st.instField = rows.indexOf(Row.ADD)
@@ -393,6 +411,7 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     }
 
     override fun move(x: Float, y: Float) {
+        if (PokeySoundFace.friendly(st)) { soundFace.move(x, y); return }
         val g = drawing ?: return
         if (!session.isGestureOpen(g)) { drawing = null; return }
         drawAt(x, y)
@@ -402,6 +421,7 @@ internal class PokeyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     override fun cancel() = finish()
 
     private fun finish() {
+        soundFace.cancel()
         drawing?.let { session.endGesture(it) }
         drawing = null
     }

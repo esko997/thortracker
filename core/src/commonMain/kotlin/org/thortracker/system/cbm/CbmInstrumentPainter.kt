@@ -44,14 +44,8 @@ internal class CbmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         val page = CbmInstrumentView.page(s, st)
         val listen = CbmInstrumentView.listenChannel(s, st, ins)
         val col = ink.palette.channel(listen)
-        val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val kind = when {
-            ins == null -> "empty slot"
-            ins.kind == CbmKind.SAMPLE -> "sample sound"
-            !ins.volume.isEmpty -> "master volume sound"
-            else -> "tone sound"
-        }
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${s.system.name} · $kind$locked  ${usageText(st.instrument)}")
+        val left = drawSidebar(c, area, col, CbmInstrumentView.row(s, st) == Row.SLOT)
+        val top = left.top
         val row = CbmInstrumentView.row(s, st)
         val allRows = CbmInstrumentView.rows(s, st)
         rowRects.clear()
@@ -60,16 +54,6 @@ internal class CbmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         sampleRect = Rect()
         addRect = Rect()
 
-        val left = drawBank(c, area, top, CbmSystem.SLOTS, col, row == Row.SLOT) { i ->
-            s.cbm.instrument(i)?.let {
-                it.name.ifEmpty { "(unnamed)" } + when {
-                    it.kind == CbmKind.SAMPLE -> " ˢ"
-                    !it.volume.isEmpty -> " ᵛ"
-                    chip == CbmChip.TED && it.playsNoise -> " ᴺ"
-                    else -> ""
-                }
-            }
-        }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad
@@ -131,6 +115,33 @@ internal class CbmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
         plot.draw(c, Rect(rx, plotTop, rx + rw, area.bottom - ink.unit * 0.5f), title, PLOT_KINDS.getValue(k),
             NesEnvelope(env.values, env.loop, env.release), st.envStep, text, ins == null || ignored(k, listen), col, row == Row.STEPS,
             cursorColor(), ctl.editHeld, range, CbmEnvelope.MAX_LENGTH)
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int = if (slotRect.contains(x, y))
+        (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, CbmSystem.SLOTS) else -1
+
+    /** The identical bank and header are shared by both faces, including scroll and hit geometry. */
+    internal fun drawSidebar(c: Surface, area: Rect, col: Int, focused: Boolean): Rect {
+        val s = song
+        val ins = CbmInstrumentView.sound(s, st)
+        val kind = when {
+            ins == null -> "empty slot"
+            ins.kind == CbmKind.SAMPLE -> "sample sound"
+            !ins.volume.isEmpty -> "master volume sound"
+            else -> "tone sound"
+        }
+        val locked = if (st.lockedSubject >= 0) "  locked" else ""
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${s.system.name} · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, CbmSystem.SLOTS, col, focused) { i ->
+            s.cbm.instrument(i)?.let {
+                it.name.ifEmpty { "(unnamed)" } + when {
+                    it.kind == CbmKind.SAMPLE -> " ˢ"
+                    !it.volume.isEmpty -> " ᵛ"
+                    s.cbm.chip == CbmChip.TED && it.playsNoise -> " ᴺ"
+                    else -> ""
+                }
+            }
+        }
     }
 
     /** A page tab: envelopes carry their length, as on the NES. */

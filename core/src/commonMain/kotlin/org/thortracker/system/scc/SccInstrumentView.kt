@@ -97,7 +97,7 @@ object SccInstrumentView : SystemView() {
         val song = v.session.song
         st.instrument = st.instrument.coerceIn(1, SccSound.SLOTS)
         st.envelope = st.envelope.coerceIn(0, SccEnvelopeKind.entries.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        SccSoundFace.settle(v)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envStep = st.envStep.coerceIn(0, lastStep(envelope(song, st)))
     }
@@ -105,10 +105,12 @@ object SccInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("scc").invalidate()
         state.instrument = subject.coerceIn(1, SccSound.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument) state.soundPanel("scc").invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -149,6 +151,8 @@ object SccInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (SccSoundFace.direction(v, dx, dy)) return
+        if (!v.editHeld && dy > 0 && v.state.instField == 0) { v.state.instField = -1; return }
         val st = v.state
         val song = v.session.song
         val rows = rows(st)
@@ -256,7 +260,13 @@ object SccInstrumentView : SystemView() {
         return ok
     }
 
+    override fun editPress(v: ViewController) {
+        if (v.state.soundPanel("scc").editBlocked) return
+        if (!v.state.soundPanel("scc").advanced && v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+    }
+
     override fun editRelease(v: ViewController, tap: Boolean) {
+        if (SccSoundFace.release(v, tap)) return
         if (!tap) return
         val st = v.state
         val session = v.session
@@ -292,6 +302,13 @@ object SccInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.soundPanel("scc").editBlocked && v.editHeld) return
+        if (!v.state.soundPanel("scc").advanced || v.state.instField == -1) {
+            if (v.state.instField == 1) v.session.editSccInstrument(v.state.instrument, "Rename sound") {
+                it.copy(name = ViewController.deleteChar(it.name, v.state.textPos))
+            }
+            return
+        }
         val st = v.state
         val session = v.session
         val kind = kind(st)
@@ -331,6 +348,7 @@ object SccInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (SccSoundFace.command(v, a)) return true
         val st = v.state
         val session = v.session
         val kind = kind(st)
@@ -362,6 +380,7 @@ object SccInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (!v.state.soundPanel("scc").advanced || v.state.instField == -1) { SccSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(st)
@@ -409,6 +428,15 @@ object SccInstrumentView : SystemView() {
         val up = keys.label(Action.UP)
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose sound slot; $lr cycles face, name and musical controls",
+                keys.held(Action.EDIT, lr) to "Shape the selected control; on Name change a letter",
+                keys.held(Action.EDIT, ud) to "On Name move the caret; on a control adjust it",
+                "Name" to "Tap the name to type it; switching slot, face or document cancels a pending rename",
+                "Paste" to "Sound accepts whole sounds; choose Advanced to paste an envelope into a precise destination",
+                "Advanced" to "Exact envelopes and raw wave tools remain here; complex wave sequences stay Custom",
+                "Shared waves" to "Selecting a wave changes only its pointer, never the stored samples. SCC 4/5 still share the last claimed wave; SCC+ channels are independent",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, preset, Listen channel, restart, page, length, loop, release (volume), mode (pitch), then the steps",
                 lr to "On settings: the sound slot; on the steps: move along them",
@@ -451,5 +479,5 @@ object SccInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = SccInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = SccSoundPainter(pane)
 }

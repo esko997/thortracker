@@ -23,12 +23,8 @@ import org.thortracker.ui.Surface
  * [FmInstrumentPainter]'s.
  */
 internal class OpmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
-    override fun draw(c: Surface, area: Rect) {
-        val s = song
-        val ins = OpmInstrumentView.sound(s, st)
-        val page = OpmInstrumentView.page(st)
-        val listen = OpmInstrumentView.listenChannel(st, ins)
-        val col = ink.palette.channel(listen)
+    internal fun drawSidebar(c: Surface, area: Rect, focused: Boolean): Rect {
+        val ins = OpmInstrumentView.sound(song, st)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
         val kind = when {
             ins == null -> "empty slot"
@@ -36,14 +32,27 @@ internal class OpmInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             else -> "FM · " + OpmCurated.ALGORITHMS[ins.algorithm.coerceIn(0, 7)].name
         }
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "OPM · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, OpmSystem.SLOTS, ink.palette.channel(OpmInstrumentView.listenChannel(st, ins)), focused) { i ->
+            song.opm.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.noise) " ᴺ" else "" }
+        }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int = if (slotRect.contains(x, y))
+        (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, OpmSystem.SLOTS) else -1
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val ins = OpmInstrumentView.sound(s, st)
+        val page = OpmInstrumentView.page(st)
+        val listen = OpmInstrumentView.listenChannel(st, ins)
+        val col = ink.palette.channel(listen)
+        val left = drawSidebar(c, area, st.instField == 0)
+        val top = left.top
         val row = OpmInstrumentView.row(st)
         val allRows = OpmInstrumentView.rows(st)
         rowRects.clear()
         gridCells.clear()
 
-        val left = drawBank(c, area, top, OpmSystem.SLOTS, col, row == Row.SLOT) { i ->
-            s.opm.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } + if (it.noise) " ᴺ" else "" }
-        }
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad

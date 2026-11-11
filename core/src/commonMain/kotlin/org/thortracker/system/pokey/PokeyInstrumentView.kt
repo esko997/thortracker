@@ -168,7 +168,8 @@ object PokeyInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, PokeySystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (PokeySoundFace.friendly(st)) PokeySoundFace.COUNT + 1 else rows(song, st).size - 1)
+        PokeySoundFace.settle(st)
         envelope(song, st)?.let { st.envStep = st.envStep.coerceIn(0, lastStep(it)) }
         st.dpcmSample = st.dpcmSample.coerceIn(0, maxOf(0, song.pokey.samples.size - 1))
     }
@@ -176,10 +177,18 @@ object PokeyInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) {
+            PokeySoundFace.panel(state).invalidate()
+            PokeySoundFace.panel(state).editBlocked = true
+        }
         state.instrument = subject.coerceIn(1, PokeySystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) {
+            PokeySoundFace.panel(state).invalidate()
+            PokeySoundFace.panel(state).editBlocked = true
+        }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -218,6 +227,7 @@ object PokeyInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, PokeySystem.SLOTS)
         if (slot == st.instrument) return
+        PokeySoundFace.invalidate(v)
         val song = v.session.song
         val row = row(song, st)
         val page = page(song, st)
@@ -228,6 +238,7 @@ object PokeyInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (PokeySoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -237,7 +248,7 @@ object PokeyInstrumentView : SystemView() {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> { v.useClear(); if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e)) }
             dy != 0 -> {
-                st.instField = (st.instField - dy).coerceIn(0, rows.size - 1)
+                st.instField = (st.instField - dy).coerceIn(-1, rows.size - 1)
                 st.textPos = 0
             }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
@@ -406,10 +417,31 @@ object PokeyInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        PokeySoundFace.panel(v.state).editBlocked = false
+        if (v.state.instField < 0) return
+        if (PokeySoundFace.friendly(v.state)) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = PokeySoundFace.panel(v.state)
+        if (panel.editBlocked) {
+            panel.editBlocked = false
+            if (!v.auditionHeld) v.session.releaseAudition()
+            return
+        }
+        if (v.state.instField < 0) {
+            if (tap) PokeySoundFace.selectMode(v, !panel.advanced, true)
+            return
+        }
+        if (PokeySoundFace.friendly(v.state)) {
+            if (!v.auditionHeld) v.session.releaseAudition()
+            if (tap && v.state.instField == 7 && kind(v.session.song, v.state) == PokeyKind.SAMPLE) PokeySampleMenu.open(v.session, v.state.instrument)
+            return
+        }
         val st = v.state
         val session = v.session
         val song = session.song
@@ -454,6 +486,8 @@ object PokeyInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || (PokeySoundFace.panel(v.state).editBlocked && v.editHeld)) return
+        if (PokeySoundFace.friendly(v.state) && v.state.instField >= 2) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -515,6 +549,8 @@ object PokeyInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (PokeySoundFace.command(v, a)) return true
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) PokeySoundFace.invalidate(v)
         val st = v.state
         val session = v.session
         val song = session.song
@@ -555,6 +591,7 @@ object PokeyInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (PokeySoundFace.friendly(v.state) || v.state.instField == -1) { PokeySoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -610,6 +647,13 @@ object PokeyInstrumentView : SystemView() {
         val editLr = keys.held(Action.EDIT, lr)
         val editUd = keys.held(Action.EDIT, ud)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose an instrument slot; $lr cycles mode, name and musical controls",
+                editLr to "Shape the selected control; on Name change a letter, $editUd moves the caret",
+                "Sound / Advanced" to "Switch faces without changing the patch. Advanced retains every page and sample tool",
+                "Voice" to "8-bit, paired 16-bit, high-pass, all-channel 16-bit high-pass or samples; the channel lamps show ownership",
+                "Custom" to "Programs stay intact. A contour choice explicitly replaces only volume; distortion programs require Advanced",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, kind, page, then the page's settings",
                 lr to "On settings: the sound slot; on envelope steps: the step; on names: the letter",

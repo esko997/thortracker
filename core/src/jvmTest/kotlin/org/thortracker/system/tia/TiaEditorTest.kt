@@ -23,7 +23,9 @@ class TiaEditorTest {
         session.onAudition = { ch, note, ins, detune -> auditions += listOf(ch, note, ins, detune) }
     }
 
-    private fun view(setup: ViewState.() -> Unit = {}) = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply(setup))
+    private fun view(setup: ViewState.() -> Unit = {}) = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply {
+        soundPanel("tia").advanced = true
+    }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 
@@ -52,6 +54,7 @@ class TiaEditorTest {
     private fun installMenus() {
         session.onMenuRequest = { build ->
             build(object : MenuContext {
+                override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) = error("Unexpected text prompt")
                 override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) { menus += entries }
                 override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = Unit
                 override fun status(message: String) = Unit
@@ -256,7 +259,11 @@ class TiaEditorTest {
         // The guide's cursor opens on the divider the Listen note plays: the same AUDF, a lower frequency on PAL.
         val pal = EditorSession(TiaPalSystem.blank())
         pal.setTiaInstrument(1, TiaInstrument(waveform = 0xC), "test")
-        val v = ViewController(pal, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; envelope = TiaInstrumentView.PAGES.indexOf(Page.GUIDE) - 1 })
+        val v = ViewController(pal, ViewState(kind = ViewKind.INSTRUMENT).apply {
+            soundPanel("tia").advanced = true
+            instrument = 1
+            envelope = TiaInstrumentView.PAGES.indexOf(Page.GUIDE) - 1
+        })
         v.tap(Action.NEXT_CHANNEL)
         assertEquals(Page.GUIDE, TiaInstrumentView.page(v.state))
         val expected = TiaRules.audf(TiaRegion.PAL, 0xC, v.defaultNote() * 64)

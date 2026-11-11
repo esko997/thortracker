@@ -29,6 +29,7 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
         val editLabels = Array(5) { "Set ${YmSoundControl.entries[it].label}" }
     }
     private val advanced = YmInstrumentPainter(v)
+    private val auxiliary = YmAuxSoundPainter(v, advanced)
     private val modes = Array(2) { Rect() }
     private val body = Rect()
     private val nameRect = Rect()
@@ -116,11 +117,6 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
         previousSlot.set(0f, 0f, 0f, 0f)
         nextSlot.set(0f, 0f, 0f, 0f)
         nameRect.set(0f, 0f, 0f, 0f)
-        if (!fm) {
-            modes[0].set(0f, 0f, 0f, 0f); modes[1].set(0f, 0f, 0f, 0f)
-            advanced.draw(c, area)
-            return
-        }
         // The editor's own ground: the console colours belong to Sound's right side only, never the shared column.
         c.fillRect(area.left, area.top, area.right, area.bottom, p.BG)
         val modeW = minOf(area.width() * 0.5f, maxOf(touch * 2, ink.unit * 7))
@@ -131,12 +127,14 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
             ink.label(c, if (i == 0) "Sound" else "Advanced", modes[i].centerX(), area.top, touch, p.TEXT, true, align = Align.CENTER)
         }
         if (area.right - modes[1].right >= ink.dp(130f)) {
-            PixelLabels.draw(c, "FM / YM2612", modes[1].right + ink.dp(12f), area.top + touch * 0.5f - ink.dp(7f),
+            PixelLabels.draw(c, if (fm) "FM / YM2612" else if (YmAuxSoundControls.pcm(song, st)) "XGM2 / PCM" else "PSG / SN76489",
+                modes[1].right + ink.dp(12f), area.top + touch * 0.5f - ink.dp(7f),
                 ink.dp(2f), blue, area.right - modes[1].right - ink.dp(24f))
         }
         if (st.instField == -1) ink.outline(c, modes[if (st.ymPanel.advanced) 1 else 0], p.FOCUS, ink.dp(2f))
         body.set(area.left, area.top + touch, area.right, area.bottom)
         if (st.ymPanel.advanced) { advanced.draw(c, body); return }
+        if (!fm) { auxiliary.draw(c, body); return }
         val actual = YmInstrumentView.sound(song, st) as? YmFmInstrument
         if (actual == null && emptySlot != st.instrument) { emptySlot = st.instrument; emptySound = defaultYmFm(st.instrument) }
         val ins = actual ?: emptySound!!
@@ -241,16 +239,21 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
     }
 
     internal fun modeRect(advanced: Boolean): Rect? = modes[if (advanced) 1 else 0].takeIf { it.width() > 0 }
-    internal fun controlRect(index: Int): Rect? = controls.getOrNull(index)?.takeIf { it.width() > 0 }
-    internal fun valueX(index: Int, fraction: Float): Float = rails[index].let { it.left + it.width() * fraction }
-    internal fun navigationRect(forward: Boolean): Rect? = (if (forward) nextControl else previousControl).takeIf { it.width() > 0 }
+    internal fun controlRect(index: Int): Rect? = if (YmInstrumentView.fmPages(song, st))
+        controls.getOrNull(index)?.takeIf { it.width() > 0 } else auxiliary.controlRect(index)
+    internal fun valueX(index: Int, fraction: Float): Float = if (YmInstrumentView.fmPages(song, st))
+        rails[index].let { it.left + it.width() * fraction } else auxiliary.valueX(index, fraction)
+    internal fun navigationRect(forward: Boolean): Rect? = if (YmInstrumentView.fmPages(song, st))
+        (if (forward) nextControl else previousControl).takeIf { it.width() > 0 } else auxiliary.navigationRect(forward)
     internal fun slotRect(slot: Int): Rect? = advanced.slotBounds(slot)
-    internal fun slotNavigationRect(forward: Boolean): Rect? = (if (forward) nextSlot else previousSlot).takeIf { it.width() > 0 }
-    internal fun nameTarget(): Rect? = nameRect.takeIf { it.width() > 0 }
+    internal fun slotNavigationRect(forward: Boolean): Rect? = if (YmInstrumentView.fmPages(song, st))
+        (if (forward) nextSlot else previousSlot).takeIf { it.width() > 0 } else auxiliary.slotNavigationRect(forward)
+    internal fun nameTarget(): Rect? = if (YmInstrumentView.fmPages(song, st))
+        nameRect.takeIf { it.width() > 0 } else auxiliary.nameTarget()
 
     override fun down(x: Float, y: Float): Boolean {
         cancel()
-        if (YmInstrumentView.fmPages(song, st)) for (i in 0..1) if (modes[i].contains(x, y)) {
+        for (i in 0..1) if (modes[i].contains(x, y)) {
             YmSoundFace.selectMode(ctl, i == 1)
             return true
         }
@@ -259,6 +262,7 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
             if (advancedPointer) st.ymPanel.cancelTouch = cancelOwnedTouch
             return advancedPointer
         }
+        if (!YmInstrumentView.fmPages(song, st)) return auxiliary.down(x, y)
         if (ctl.editHeld) { ctl.useEdit(); st.ymPanel.editBlocked = true }
         // The shared column selects a slot as Advanced reads it, but Sound keeps the focused parameter.
         advanced.slotAt(x, y).takeIf { it > 0 }?.let { YmSoundFace.chooseSlot(ctl, it); return true }
@@ -266,7 +270,7 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
             YmSoundFace.moveSlot(ctl, if (nextSlot.contains(x, y)) 1 else -1)
             return true
         }
-        if (nameRect.contains(x, y)) { st.instField = 1; return true }
+        if (nameRect.contains(x, y)) { YmSoundFace.rename(ctl); return true }
         if (previousControl.contains(x, y) || nextControl.contains(x, y)) {
             st.instField = 2 + ((st.instField - 2).coerceIn(0, 4) + if (nextControl.contains(x, y)) 1 else 4).mod(5)
             return true
@@ -297,9 +301,14 @@ internal class YmSoundPainter(v: PaneView) : Painter(v) {
         target.expected = session.song.ymInstrument(target.slot) as? YmFmInstrument
     }
 
-    override fun move(x: Float, y: Float) { if (advancedPointer) advanced.move(x, y) else setFromX(x) }
+    override fun move(x: Float, y: Float) {
+        if (advancedPointer) advanced.move(x, y)
+        else if (YmInstrumentView.fmPages(song, st)) setFromX(x)
+        else auxiliary.move(x, y)
+    }
     override fun up(x: Float, y: Float) { if (advancedPointer) advanced.up(x, y); cancel() }
     override fun cancel() {
+        auxiliary.cancel()
         if (st.ymPanel.cancelTouch === cancelOwnedTouch) st.ymPanel.cancelTouch = null
         drag.finish(session)
         if (advancedPointer) { advancedPointer = false; advanced.cancel() }

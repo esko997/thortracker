@@ -168,12 +168,13 @@ object YmInstrumentView : SystemView() {
 
     override fun normalise(v: ViewController) {
         val st = v.state
+        if (!v.editHeld) st.ymPanel.editBlocked = false
         val song = v.session.song
         st.instrument = st.instrument.coerceIn(1, YmSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(if (fmPages(song, st)) -1 else 0,
-            if (YmSoundFace.friendly(song, st)) YmSoundControl.entries.size + 1 else rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(-1,
+            if (YmSoundFace.friendly(song, st)) YmSoundFace.count(song, st) + 1 else rows(song, st).size - 1)
         YmSoundFace.settle(song, st)
         when {
             page(song, st) == Page.EXPERT || page(song, st) == Page.CH3 -> st.envStep = st.envStep.coerceIn(0, 3)
@@ -185,12 +186,14 @@ object YmInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
-        if (state.instrument != subject) state.ymPanel.invalidate()
+        if (state.instrument != subject) { state.ymPanel.invalidate(); state.ymPanel.editBlocked = true }
         state.instrument = subject.coerceIn(1, YmSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
-        if (state.instrument != selection.instrument) state.ymPanel.invalidate()
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) {
+            state.ymPanel.invalidate(); state.ymPanel.editBlocked = true
+        }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -253,7 +256,7 @@ object YmInstrumentView : SystemView() {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> { v.useClear(); if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e)) }
             dy != 0 -> {
-                st.instField = (st.instField - dy).coerceIn(if (fmPages(song, st)) -1 else 0, rows.size - 1)
+                st.instField = (st.instField - dy).coerceIn(-1, rows.size - 1)
                 st.textPos = 0
             }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
@@ -649,16 +652,21 @@ object YmInstrumentView : SystemView() {
         if (v.state.ymPanel.editBlocked && v.editHeld) { v.useEdit(); return true }
         if (YmSoundFace.friendly(v.session.song, v.state) && (a == Action.PREV_CHANNEL || a == Action.NEXT_CHANNEL)) {
             val d = if (a == Action.NEXT_CHANNEL) 1 else -1
-            v.state.instField = 2 + ((v.state.instField - 2).coerceAtLeast(0) + d).mod(YmSoundControl.entries.size)
+            if (fmPages(v.session.song, v.state))
+                v.state.instField = 2 + ((v.state.instField - 2).coerceAtLeast(0) + d).mod(YmSoundControl.entries.size)
+            else YmAuxSoundControls.nextLane(v, d)
             return true
         }
-        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) v.state.ymPanel.invalidate()
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) {
+            v.state.ymPanel.invalidate()
+            if (v.editHeld) { v.useEdit(); v.state.ymPanel.editBlocked = true }
+        }
         val st = v.state
         val session = v.session
         val song = session.song
         val slot = st.instrument
         val row = row(song, st)
-        val kind = envelopeKind(song, st)
+        val kind = if (YmSoundFace.friendly(song, st)) null else envelopeKind(song, st)
         val onEnvelope = kind != null && row !in HEAD
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
@@ -752,7 +760,7 @@ object YmInstrumentView : SystemView() {
         val editLr = keys.held(Action.EDIT, lr)
         return listOf(
             "FM Sound face" to listOf(
-                "Sound / Advanced" to "Move up past Slot, then $lr selects the face. Both edit the same exact patch; opening either changes nothing. PSG and PCM keep their own editors",
+                "Sound / Advanced" to "$ud selects a slot; $lr selects a musical control, Name or the face selector. Hold $edit + $lr to edit. Both faces share the exact patch",
                 "Brightness" to "The large dial changes modulator strength, not carrier loudness. Its internal balance stays until a register reaches its limit",
                 "Structure" to "One deliberate routing and voice-balance choice, covering all eight algorithms. Ratios, envelopes, detune, sweep and FM 3 offsets stay",
                 "Harmonics" to "Round, Hollow, Reedy, Metal and Glass set only modulator multipliers to 1, 2, 3, 5 and 7. Carrier pitch and custom tuning stay",
@@ -760,7 +768,13 @@ object YmInstrumentView : SystemView() {
                 "Contour" to "Pluck, Held, Bloom or Short changes only carrier attack, decay, sustain level/rate and release. Other envelopes and rate scaling stay. SSG carrier envelopes require Advanced",
                 "Custom" to "No exact musical choice matches those fields. They remain untouched until you choose a value; Clear never normalizes a musical control",
                 "Four sines" to "There are no modulators, so Brightness and Harmonics are unavailable",
-                "Explore" to "Hold $edit with directions, or drag a dial horizontally. One continuous edit is one Undo. $channels selects a control; unheld $lr selects a slot",
+                "Explore" to "Hold $edit with directions, or drag a dial horizontally. One continuous edit is one Undo. In FM, $channels selects a control; in PSG/PCM it selects the listening lane",
+            ),
+            "PSG and PCM Sound faces" to listOf(
+                "PSG" to "Contour explicitly chooses a Held, Pluck or Swell volume recipe; Time changes only a recognized Pluck/Swell. Custom programs stay untouched until a recipe is chosen",
+                "Bend" to "An octave Drop or Rise at note start, or Still. Arpeggio and pitch programs remain unchanged",
+                "Noise" to "Select Noise with $channels or the listening-lane button. Grain chooses metal/air; Clock includes pitched noise, which borrows PSG 3",
+                "PCM" to "Choose a Key and existing Recording, tune that mapping, or set the whole kit's Level. Sources and other keys stay unchanged; Advanced retains import and chromatic spread",
             ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, type, page, then the page's settings",

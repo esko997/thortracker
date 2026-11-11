@@ -23,7 +23,8 @@ class VsuEditorTest {
         session.onReleaseAudition = { releases++ }
     }
 
-    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) = ViewController(session, ViewState(kind = kind).apply(setup))
+    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) =
+        ViewController(session, ViewState(kind = kind).apply { soundPanel("vsu").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 

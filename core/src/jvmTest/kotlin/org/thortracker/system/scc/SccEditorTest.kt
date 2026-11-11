@@ -25,7 +25,8 @@ class SccEditorTest {
         session.onAudition = { ch, note, ins, _ -> auditions += Triple(ch, note, ins) }
     }
 
-    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) = ViewController(session, ViewState(kind = kind).apply(setup))
+    private fun view(kind: ViewKind, setup: ViewState.() -> Unit = {}) =
+        ViewController(session, ViewState(kind = kind).apply { soundPanel("scc").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 
@@ -329,7 +330,7 @@ class SccEditorTest {
         assertTrue(0x2A in SccWaveView.sharedWaves(session.song))
 
         val plus = EditorSession(SccPlusSystem.blank())
-        val w = ViewController(plus, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1 })
+        val w = ViewController(plus, ViewState(kind = ViewKind.INSTRUMENT).apply { instrument = 1; soundPanel("scc").advanced = true })
         w.state.instField = SccInstrumentView.rows(w.state).indexOf(Row.LISTEN)
         repeat(3) { w.tap(Action.RIGHT) }
         assertNull(SccInstrumentView.channelNote(plus.song, w.state.listenChannel))

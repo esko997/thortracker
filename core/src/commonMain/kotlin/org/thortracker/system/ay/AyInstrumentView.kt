@@ -19,12 +19,11 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The AY-3-8910 / YM2149 instrument editor, controller-first: the one bank of [AySystem.SLOTS] sounds (each empty or an
- * [AyInstrument]). Head rows: slot, name, the channel Listen plays on, the page. *Sound* is the curated page (preset,
- * gates, noise period, hardware envelope shape, its period, tone sync, the drum sweep, with what the Listen note writes
- * to the chip); *Volume*, *Arpeggio*, *Pitch*, *Mixer* and *Noise* are the software envelopes, edited step by step as on
- * the NES; *Envelope* is the expert page of the hardware envelope (raw R13 shape, auto/manual period, octave, the 16-bit
- * period, sync, the chip's ramp drawn at its resolution).
+ * AY-3-8910 / YM2149 instruments: a musical Sound patchboard and the exact Advanced editor share the one bank of
+ * [AySystem.SLOTS] sounds (each empty or an [AyInstrument]). Advanced head rows select slot, name, Listen channel
+ * and page. Its Sound page retains presets, gates, noise, hardware envelope, tone sync and drum sweep; Volume,
+ * Arpeggio, Pitch, Mixer and Noise retain the step-by-step software envelopes; Envelope retains raw R13 shape,
+ * auto/manual period, octave, the 16-bit period, sync and the chip-resolution ramp.
  * State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope] (the page index in
  * [PAGES]), [ViewState.envStep] (envelope pages: the step, size = append), [ViewState.listenChannel].
  * Holding Edit on a sound row sounds the instrument and every change restarts it, so edits are heard as made.
@@ -260,17 +259,22 @@ object AyInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, AySystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, PAGES.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (AySoundFace.friendly(st)) AySoundControl.entries.size + 1 else rows(st).size - 1)
+        AySoundFace.settle(st)
         if (envelopeKind(st) != null) st.envStep = st.envStep.coerceIn(0, envelope(song, st)?.let(::lastStep) ?: 0)
     }
 
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
-        state.instrument = subject.coerceIn(1, AySystem.SLOTS)
+        val slot = subject.coerceIn(1, AySystem.SLOTS)
+        if (state.instrument != slot) state.soundPanel("ay").apply { invalidate(); editBlocked = true }
+        state.instrument = slot
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel)
+            state.soundPanel("ay").apply { invalidate(); editBlocked = true }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -297,6 +301,7 @@ object AyInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, AySystem.SLOTS)
         if (slot == st.instrument) return
+        st.soundPanel("ay").invalidate()
         st.instrument = slot
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         envelope(v.session.song, st)?.let { st.envStep = st.envStep.coerceAtMost(lastStep(it)) }
@@ -304,6 +309,7 @@ object AyInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (AySoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(st)
@@ -313,7 +319,7 @@ object AyInstrumentView : SystemView() {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> { v.useClear(); if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e)) }
             dy != 0 -> {
-                st.instField = (st.instField - dy).coerceIn(0, rows.size - 1)
+                st.instField = (st.instField - dy).coerceIn(-1, rows.size - 1)
                 st.textPos = 0
             }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
@@ -428,10 +434,23 @@ object AyInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        v.state.soundPanel("ay").editBlocked = false
+        if (v.state.instField < 0) return
+        if (AySoundFace.friendly(v.state)) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
         if (row(v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = v.state.soundPanel("ay")
+        if (panel.editBlocked) { panel.editBlocked = false; if (!v.auditionHeld) v.session.releaseAudition(); return }
+        if (v.state.instField < 0) {
+            if (tap) AySoundFace.selectMode(v, !panel.advanced, true)
+            return
+        }
+        if (AySoundFace.friendly(v.state)) { if (!v.auditionHeld) v.session.releaseAudition(); return }
         val st = v.state
         val session = v.session
         val row = row(st)
@@ -465,6 +484,8 @@ object AyInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || (v.state.soundPanel("ay").editBlocked && v.editHeld)) return
+        if (AySoundFace.friendly(v.state) && v.state.instField >= 2) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -509,6 +530,7 @@ object AyInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (AySoundFace.command(v, a)) return true
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -552,6 +574,7 @@ object AyInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (AySoundFace.friendly(v.state) || v.state.instField < 0) { AySoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(st)
@@ -609,6 +632,15 @@ object AyInstrumentView : SystemView() {
         val editLr = keys.held(Action.EDIT, lr)
         val editUd = keys.held(Action.EDIT, ud)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Select instrument slot; $lr cycles musical controls, Name and Sound/Advanced",
+                editLr to "Shape the selected control; on Name change a letter ($editUd moves the caret)",
+                channels to "Choose the audition channel A/B/C; $listen listens, octave shortcuts change pitch",
+                "Touch" to "Sound/Advanced tabs preserve the patch. Drag a control; compact panes have < > paging. + / - selects slots, Listen cycles channels",
+                "Recipes" to "Source owns mixer, Contour owns software volume, Noise colour owns noise, Buzzer owns hardware shape. Custom programs are replaced only by explicitly choosing that recipe",
+                "Shared buzzer" to "Latest requesting note wins the single noise/envelope generator. Contour is unavailable with hardware envelope; Buzzer register explicitly chooses note-following tuning and preserves the inactive manual period",
+                "Advanced" to "All original precise pages and presets remain available below",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, page, then the page's settings",
                 lr to "On settings: the sound slot; on envelope steps: the step",
@@ -644,5 +676,5 @@ object AyInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = AyInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = AySoundPainter(pane)
 }

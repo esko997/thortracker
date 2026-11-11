@@ -23,7 +23,8 @@ class SmsEditorTest {
 
     private val auditions = ArrayList<Triple<Int, Int, Int>>()
 
-    private fun EditorSession.controller(kind: ViewKind, setup: ViewState.() -> Unit = {}) = ViewController(this, ViewState(kind = kind).apply(setup))
+    private fun EditorSession.controller(kind: ViewKind, setup: ViewState.() -> Unit = {}) = ViewController(this,
+        ViewState(kind = kind).apply { soundPanel("sms").advanced = true }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 

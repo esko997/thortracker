@@ -123,7 +123,8 @@ object SaaInstrumentView : SystemView() {
         val song = v.session.song
         st.instrument = st.instrument.coerceIn(1, SaaSound.SLOTS)
         st.envelope = st.envelope.coerceIn(0, SaaEnvelopeKind.entries.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (SaaSoundFace.friendly(v)) SaaSoundControl.entries.size + 1 else rows(song, st).size - 1)
+        SaaSoundFace.settle(v)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envStep = st.envStep.coerceIn(0, lastStep(envelope(song, st)))
     }
@@ -131,10 +132,13 @@ object SaaInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("saa").apply { invalidate(); editBlocked = true }
         state.instrument = subject.coerceIn(1, SaaSound.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel)
+            state.soundPanel("saa").apply { invalidate(); editBlocked = true }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -162,6 +166,7 @@ object SaaInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, SaaSound.SLOTS)
         if (slot == st.instrument) return
+        st.soundPanel("saa").invalidate()
         val row = row(v.session.song, st)
         st.instrument = slot
         val rows = rows(v.session.song, st)
@@ -172,6 +177,7 @@ object SaaInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (SaaSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -284,7 +290,16 @@ object SaaInstrumentView : SystemView() {
         return ok
     }
 
+    override fun editPress(v: ViewController) {
+        SaaSoundFace.panel(v).editBlocked = false
+        if (SaaSoundFace.friendly(v) && v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+    }
+
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = SaaSoundFace.panel(v)
+        if (panel.editBlocked) { panel.editBlocked = false; if (!v.auditionHeld) v.session.releaseAudition(); return }
+        if (v.state.instField < 0) { if (tap) SaaSoundFace.selectMode(v, !panel.advanced, true); return }
+        if (SaaSoundFace.friendly(v)) { if (!v.auditionHeld) v.session.releaseAudition(); return }
         if (!tap) return
         val st = v.state
         val session = v.session
@@ -327,6 +342,8 @@ object SaaInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || SaaSoundFace.panel(v).editBlocked && v.editHeld) return
+        if (SaaSoundFace.friendly(v) && v.state.instField != 1) return
         val st = v.state
         val session = v.session
         val kind = kind(st)
@@ -374,6 +391,8 @@ object SaaInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (SaaSoundFace.command(v, a)) return true
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) SaaSoundFace.panel(v).invalidate()
         val st = v.state
         val session = v.session
         val kind = kind(st)
@@ -406,6 +425,7 @@ object SaaInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (SaaSoundFace.friendly(v) || v.state.instField == -1) { SaaSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -457,6 +477,14 @@ object SaaInstrumentView : SystemView() {
         val ud = keys.pair(Action.UP, Action.DOWN)
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose an instrument slot; $lr selects mode, name or a musical control",
+                keys.held(Action.EDIT, lr) to "Shape the selected control; on Name edit a letter, with $ud move the caret",
+                channels to "Choose the Listen lane (not an instrument edit)",
+                "Stereo stage" to "Source replaces only the mixer program; Contour only the volume program; Position only the two amplitudes. Custom stays exact until a recipe is chosen.",
+                "Grain and Motion" to "Grain claims the triple's shared noise clock: latest noise note wins. Motion explicitly chooses an external-clock envelope on lanes 3/6 of each chip; other lanes keep it unchanged. Internal clocks and custom hardware shapes remain in Advanced.",
+                "Advanced" to "The original precise editor, presets and every envelope remain available on the same exact patch.",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, preset, Listen lane, pan, noise clock, hardware envelope (and its settings while on), " +
                     "page, length, loop, release (volume), mode (pitch), then the steps",
@@ -505,5 +533,5 @@ object SaaInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = SaaInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = SaaSoundPainter(pane)
 }
