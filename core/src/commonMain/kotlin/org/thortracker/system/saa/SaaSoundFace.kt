@@ -80,7 +80,7 @@ internal object SaaSoundFace {
         return true
     }
     fun heard(v: ViewController) {
-        if (v.auditionHeld || v.editHeld && !panel(v).editBlocked) SaaInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld) SaaInstrumentView.audition(v)
     }
     fun command(v: ViewController, a: Action): Boolean {
         if (!friendly(v)) return false

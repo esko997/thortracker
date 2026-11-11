@@ -90,7 +90,7 @@ internal object CbmSoundFace {
         return true
     }
     fun heard(v: ViewController) {
-        if (v.auditionHeld || v.editHeld && !panel(v).editBlocked) CbmInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld) CbmInstrumentView.audition(v)
     }
     fun command(v: ViewController, a: Action): Boolean {
         if (!friendly(v)) return false

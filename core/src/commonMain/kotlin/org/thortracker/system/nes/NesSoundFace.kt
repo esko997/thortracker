@@ -136,7 +136,7 @@ internal object NesSoundFace {
     }
 
     fun heard(v: ViewController) {
-        if (v.auditionHeld || v.editHeld && !panel(v.state).editBlocked) NesInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld) NesInstrumentView.audition(v)
     }
 
     fun command(v: ViewController, a: Action): Boolean {

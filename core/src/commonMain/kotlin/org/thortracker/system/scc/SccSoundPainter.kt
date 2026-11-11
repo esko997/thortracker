@@ -210,7 +210,7 @@ internal class SccSoundPainter(v: PaneView) : Painter(v) {
         if (session.setSccInstrument(t.slot, result, "Shape SCC sound")) {
             t.expected = song.sccInstrument(t.slot)
             SccInstrumentView.publish(ctl)
-            if (ctl.auditionHeld) SccInstrumentView.audition(ctl)
+            if (ctl.auditionHeld || ctl.editHeld) SccInstrumentView.audition(ctl)
         }
     }
     override fun move(x: Float, y: Float) { if (advancedPointer) advanced.move(x, y) else setFromX(x) }

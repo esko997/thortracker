@@ -74,7 +74,7 @@ internal object SmsSoundFace {
         return true
     }
     fun heard(v: ViewController) {
-        if (v.auditionHeld || (v.editHeld && !v.state.soundPanel("sms").editBlocked)) SmsInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld) SmsInstrumentView.audition(v)
     }
     fun command(v: ViewController, action: Action): Boolean {
         val panel = v.state.soundPanel("sms")

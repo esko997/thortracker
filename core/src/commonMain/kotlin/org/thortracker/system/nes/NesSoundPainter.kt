@@ -14,6 +14,13 @@ import org.thortracker.ui.Surface
 
 /** A cartridge workbench: native signal memory on the left, playable shaping controls on the right. */
 internal class NesSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
+    private companion object {
+        val CABINET = 0xffd4d1c8.toInt()
+        val INK = 0xff25272a.toInt()
+        val MUTED = 0xff514e48.toInt()
+        val CONTROL_RED = 0xffa72b32.toInt()
+        val SCREEN_RED = 0xfff47d7f.toInt()
+    }
     private val precise = NesInstrumentPainter(v)
     private val modes = Array(2) { Rect() }
     private val body = Rect()
@@ -174,16 +181,17 @@ internal class NesSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         val left = bank.right + pad
         val right = area.right - pad
         val width = right - left
+        c.fillRect(left - pad / 2, bank.top, right + pad / 2, body.bottom, CABINET)
         nextSlot.set(right - touch, bank.top, right, bank.top + touch)
         previousSlot.set(nextSlot.left - touch, bank.top, nextSlot.left, nextSlot.bottom)
         nameBox.set(left, bank.top, previousSlot.left, previousSlot.bottom)
-        ink.label(c, ink.fit(ins.name.ifEmpty { "Unnamed" }, nameBox.width(), ink.unit, true), left, bank.top, touch, p.TEXT, true)
-        ink.label(c, "-", previousSlot.centerX(), bank.top, touch, p.TEXT, true, align = Align.CENTER)
-        ink.label(c, "+", nextSlot.centerX(), bank.top, touch, p.TEXT, true, align = Align.CENTER)
+        ink.label(c, ink.fit(ins.name.ifEmpty { "Unnamed" }, nameBox.width(), ink.unit, true), left, bank.top, touch, INK, true)
+        ink.label(c, "-", previousSlot.centerX(), bank.top, touch, INK, true, align = Align.CENTER)
+        ink.label(c, "+", nextSlot.centerX(), bank.top, touch, INK, true, align = Align.CENTER)
         if (st.instField == 1) {
-            ink.outline(c, nameBox, p.FOCUS, ink.dp(2f))
+            ink.outline(c, nameBox, CONTROL_RED, ink.dp(2f))
             val caretX = left + ink.labelWidth(ins.name.take(st.textPos).padEnd(st.textPos, ' '), ink.unit, true)
-            if (caretX < nameBox.right) c.line(caretX, nameBox.bottom - ink.dp(5f), minOf(caretX + ink.unit * 0.7f, nameBox.right), nameBox.bottom - ink.dp(5f), p.WRITE, ink.dp(2f))
+            if (caretX < nameBox.right) c.line(caretX, nameBox.bottom - ink.dp(5f), minOf(caretX + ink.unit * 0.7f, nameBox.right), nameBox.bottom - ink.dp(5f), CONTROL_RED, ink.dp(2f))
         }
         for (r in controls) r.set(0f, 0f, 0f, 0f)
         previousControl.set(0f, 0f, 0f, 0f); nextControl.set(0f, 0f, 0f, 0f)
@@ -191,18 +199,18 @@ internal class NesSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         val footer = maxOf(ink.dp(22f), ink.unit * 1.5f)
         val bottom = body.bottom - footer
         val rowCount = (specifications.size + 1) / 2
-        compact = width < ink.dp(420f) || bottom - top < ink.dp(64f) * rowCount
+        compact = width < ink.dp(360f) || bottom - top < ink.dp(64f) * rowCount
         if (compact) {
             val index = (st.instField - 2).coerceIn(0, specifications.lastIndex)
             previousControl.set(left, top, left + touch, bottom)
             nextControl.set(right - touch, top, right, bottom)
             controls[index].set(previousControl.right, top, nextControl.left, bottom)
-            drawControl(c, index, accent)
-            ink.label(c, "<", previousControl.centerX(), top, bottom - top, p.TEXT, true, align = Align.CENTER)
-            ink.label(c, ">", nextControl.centerX(), top, bottom - top, p.TEXT, true, align = Align.CENTER)
+            drawControl(c, index, CONTROL_RED)
+            ink.label(c, "<", previousControl.centerX(), top, bottom - top, INK, true, align = Align.CENTER)
+            ink.label(c, ">", nextControl.centerX(), top, bottom - top, INK, true, align = Align.CENTER)
         } else {
             picture.set(left, top, left + width * 0.44f, bottom)
-            drawSignal(c, picture, ins, accent)
+            drawSignal(c, picture, ins, SCREEN_RED)
             val controlLeft = picture.right + pad * 2
             val h = (bottom - top) / rowCount
             val columnWidth = (right - controlLeft - pad) / 2
@@ -210,12 +218,12 @@ internal class NesSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
                 val x = controlLeft + (i % 2) * (columnWidth + pad)
                 val y = top + (i / 2) * h
                 controls[i].set(x, y, x + columnWidth, y + h)
-                drawControl(c, i, accent)
+                drawControl(c, i, CONTROL_RED)
             }
         }
         val selected = specifications.getOrNull(st.instField - 2)
         val hint = selected?.hint ?: status
-        ink.label(c, ink.fit(hint, width, ink.unit * 0.75f), left, bottom, footer, p.DIM, size = ink.unit * 0.75f)
+        ink.label(c, ink.fit(hint, width, ink.unit * 0.75f), left, bottom, footer, MUTED, size = ink.unit * 0.75f)
     }
 
     private fun drawControl(c: Surface, i: Int, accent: Int) {
@@ -223,17 +231,18 @@ internal class NesSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         val p = ink.palette
         val textH = minOf(ink.dp(25f), r.height() * 0.3f)
         val focus = st.instField == i + 2
-        ink.label(c, specifications[i].label, r.left, r.top, textH, if (focus) p.TEXT else p.DIM, true)
-        ink.label(c, ink.fit(texts[i], r.width(), ink.unit * 0.85f), r.left, r.top + textH, textH, if (available[i]) accent else p.FAINT, size = ink.unit * 0.85f)
+        ink.label(c, specifications[i].label, r.left, r.top, textH, if (focus) INK else MUTED, true)
+        ink.label(c, ink.fit(texts[i], r.width(), ink.unit * 0.85f), r.left, r.top + textH, textH, if (available[i]) accent else MUTED, size = ink.unit * 0.85f)
         val y = r.bottom - ink.dp(14f)
         rails[i].set(r.left + ink.dp(10f), y, r.right - ink.dp(10f), y)
+        c.fillRect(rails[i].left - ink.dp(5f), y - ink.dp(7f), rails[i].right + ink.dp(5f), y + ink.dp(7f), INK)
         if (available[i] && values[i] >= 0 && maxima[i] > 0)
             PanelWidgets.rail(ink, c, rails[i].left, rails[i].right, y, values[i].toFloat() / maxima[i], maxima[i], accent, focus, ctl.editHeld || drag.target != null)
         else c.line(rails[i].left, y, rails[i].right, y, p.FAINT, ink.dp(2f))
-        if (focus) c.line(r.left, r.bottom - ink.dp(2f), r.right, r.bottom - ink.dp(2f), if (ctl.editHeld) p.WRITE else p.FOCUS, ink.dp(2f))
+        if (focus) c.line(r.left, r.bottom - ink.dp(2f), r.right, r.bottom - ink.dp(2f), accent, ink.dp(if (ctl.editHeld) 3f else 2f))
         if (compact && r.height() > ink.dp(145f)) {
             picture.set(r.left, r.top + textH * 2 + ink.dp(4f), r.right, y - ink.dp(14f))
-            cached?.let { drawSignal(c, picture, it, accent, small = true) }
+            cached?.let { drawSignal(c, picture, it, SCREEN_RED, small = true) }
         }
     }
 

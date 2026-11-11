@@ -179,6 +179,7 @@ internal class YmAuxSoundPainter(v: PaneView, private val advanced: YmInstrument
     }
 
     override fun down(x: Float, y: Float): Boolean {
+        val blockedAtEntry = st.ymPanel.editBlocked
         cancel()
         if (ctl.editHeld) { ctl.useEdit(); st.ymPanel.editBlocked = true }
         advanced.slotAt(x, y).takeIf { it > 0 }?.let { YmSoundFace.chooseSlot(ctl, it); return true }
@@ -191,7 +192,7 @@ internal class YmAuxSoundPainter(v: PaneView, private val advanced: YmInstrument
             st.instField = 2 + ((st.instField - 2).coerceIn(0, count - 1) + if (next.contains(x, y)) 1 else count - 1).mod(count)
             return true
         }
-        if (st.ymPanel.editBlocked) return true
+        if (blockedAtEntry) return true
         for (i in 0 until YmAuxSoundControls.count(song, st)) if (controls[i].contains(x, y)) {
             st.instField = i + 2
             if (!available[i]) return true

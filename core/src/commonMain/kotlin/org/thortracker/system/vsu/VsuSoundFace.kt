@@ -113,7 +113,7 @@ internal object VsuSoundFace {
         }
         return true
     }
-    fun heard(v: ViewController) { if (v.auditionHeld || (v.editHeld && !v.state.soundPanel("vsu").editBlocked)) VsuInstrumentView.audition(v) }
+    fun heard(v: ViewController) { if (v.auditionHeld || v.editHeld) VsuInstrumentView.audition(v) }
     fun hints(v: ViewController, h: MutableList<Hint>) {
         h += Hint(v.ud(), "Sound slot")
         h += Hint(v.lr(), "Parameter / face")

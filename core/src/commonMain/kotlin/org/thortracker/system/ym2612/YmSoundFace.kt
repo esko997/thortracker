@@ -88,7 +88,7 @@ internal object YmSoundFace {
     }
 
     fun heard(v: ViewController) {
-        if (v.auditionHeld || (v.editHeld && !v.state.ymPanel.editBlocked && v.state.instField >= 2)) YmInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld && v.state.instField >= 2) YmInstrumentView.audition(v)
     }
 
     fun hints(v: ViewController, h: MutableList<Hint>) {

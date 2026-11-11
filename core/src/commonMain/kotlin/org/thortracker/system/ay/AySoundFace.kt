@@ -58,7 +58,7 @@ internal object AySoundFace {
         return true
     }
     fun heard(v: ViewController) {
-        if (v.auditionHeld || (v.editHeld && !v.state.soundPanel("ay").editBlocked)) AyInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld) AyInstrumentView.audition(v)
     }
     fun command(v: ViewController, action: Action): Boolean {
         val panel = v.state.soundPanel("ay")

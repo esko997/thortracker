@@ -136,7 +136,7 @@ internal object WsSoundFace {
         }
         return true
     }
-    fun heard(v: ViewController) { if (v.auditionHeld || (v.editHeld && !v.state.soundPanel("ws").editBlocked)) WsInstrumentView.audition(v) }
+    fun heard(v: ViewController) { if (v.auditionHeld || v.editHeld) WsInstrumentView.audition(v) }
     fun hints(v: ViewController, h: MutableList<Hint>) {
         h += Hint(v.ud(), "Sound slot")
         h += Hint(v.lr(), "Parameter / face")

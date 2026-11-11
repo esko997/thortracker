@@ -268,6 +268,30 @@ class NesSoundFaceTest {
         }
     }
 
+    @Test fun acceptedTouchReauditionsWhileHeldDirectionsRemainGuarded() {
+        val session = EditorSession(NesSystem.blank())
+        val panel = Panel(session)
+        val controller = panel.pane.controller
+        panel.state.instField = 3
+        val before = session.song
+        var heard = before
+        session.onAudition = { _, _, _, _ -> heard = session.song }
+        controller.press(Action.EDIT)
+        val r = panel.painter.controlRect(1)!!
+        panel.painter.down(panel.painter.valueX(1, 0f), r.centerY())
+        panel.draw()
+        panel.painter.move(panel.painter.valueX(1, 1f), r.centerY())
+        panel.painter.up(0f, 0f)
+        val shaped = session.song
+        assertEquals(listOf(3), shaped.nesInstrument(1)!!.duty.values)
+        assertSame(shaped, heard)
+        controller.tap(Action.LEFT)
+        assertSame(shaped, session.song)
+        controller.release(Action.EDIT)
+        session.undo()
+        assertSame(before, session.song)
+    }
+
     @Test fun touchAndControllerProduceTheSameStoredWidth() {
         val touched = EditorSession(NesSystem.blank())
         val controlled = EditorSession(NesSystem.blank())

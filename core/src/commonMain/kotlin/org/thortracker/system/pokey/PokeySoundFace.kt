@@ -73,7 +73,7 @@ internal object PokeySoundFace {
         return true
     }
     fun heard(v: ViewController) {
-        if (v.auditionHeld || (v.editHeld && !panel(v.state).editBlocked && v.state.instField >= 2)) PokeyInstrumentView.audition(v)
+        if (v.auditionHeld || v.editHeld && v.state.instField >= 2) PokeyInstrumentView.audition(v)
     }
     fun command(v: ViewController, a: Action): Boolean {
         if (panel(v.state).editBlocked && v.editHeld) { v.useEdit(); return true }

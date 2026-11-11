@@ -218,7 +218,7 @@ internal class PceSoundPainter(v: PaneView) : Painter(v) {
         if (session.setPceInstrument(t.slot, result, "Shape PCE sound")) {
             t.expected = song.pceInstrument(t.slot)
             PceInstrumentView.publish(ctl)
-            if (ctl.auditionHeld) PceInstrumentView.audition(ctl)
+            if (ctl.auditionHeld || ctl.editHeld) PceInstrumentView.audition(ctl)
         }
         if (changedKind) PceSoundFace.invalidate(ctl)
     }
