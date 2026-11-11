@@ -19,8 +19,9 @@ import org.thortracker.ui.Rect
 import org.thortracker.ui.Surface
 
 /**
- * The Game Boy instrument shell. All three banks open Sound; this file's precise panel is Advanced.
- * Banks and slots sit on the left; narrow Advanced panes put their tabs and slots in a grid on top. Advanced
+ * The Game Boy instrument shell. All three banks open Sound; this file's precise panel is Advanced. Both faces share
+ * the header and the bank and slot list on the left (one rendering, one set of touch targets); only the right-hand
+ * panel changes. Narrow panes put the tabs and slots in a grid on top; short panes use a compact list. Advanced
  * opens with the timeline — the volume the APU outputs from the note's start (envelope steps, length cut, Pulse 1's
  * sweep at the listening note and its overflow) — beside the sound's character (the duty's real 8-step pattern, the
  * wave at its output level, the LFSR's bits at the listening note's NR43), a line stating the timing exactly, then one
@@ -93,18 +94,16 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
         val ins = s.bank(kind).getOrNull(st.instrument - 1) ?: return
         val u = ink.unit
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val top = if (GbSoundView.friendly(st)) area.top else header(c, area, "Sound ${hex2(st.instrument)}", "${bankName(kind)} bank$locked  ${usageText(kind, st.instrument)}")
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "${bankName(kind)} bank$locked  ${usageText(kind, st.instrument)}")
         val col = accent(kind)
         val pad = u * 0.9f
         previousSlot.set(0f, 0f, 0f, 0f)
         nextSlot.set(0f, 0f, 0f, 0f)
         cycleBanks = false
         val short = area.height() < ink.dp(360f)
-        if (area.width() >= u * NARROW_UNITS || GbSoundView.friendly(st) || short) {
-            val leftW = if (GbSoundView.friendly(st) || short) maxOf(ink.dp(96f), minOf(area.width() * 0.3f, u * 14f))
-                else minOf(area.width() * 0.3f, u * 14f)
-            if (short || GbSoundView.friendly(st))
-                drawCompactBank(c, area.left, top, area.left + leftW, area.bottom, kind)
+        if (area.width() >= u * NARROW_UNITS || short) {
+            val leftW = if (short) maxOf(ink.dp(96f), minOf(area.width() * 0.3f, u * 14f)) else minOf(area.width() * 0.3f, u * 14f)
+            if (short) drawCompactBank(c, area.left, top, area.left + leftW, area.bottom, kind)
             else drawBankColumn(c, area.left, top, area.left + leftW, area.bottom, kind, col)
             panel.set(area.left + leftW + pad, top + u * 0.4f, area.right - pad, area.bottom)
         } else {
@@ -147,14 +146,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
     /** Short panes keep bank and slot navigation physical-size instead of squeezing fifteen tiny rows. */
     private fun drawCompactBank(c: Surface, l: Float, t: Float, r: Float, b: Float, kind: GbBank) {
         val touch = ink.dp(48f)
-        val lcdMode = GbSoundView.friendly(st)
-        val contrast = ink.palette.id == Palette.CONTRAST.id
-        val bg = if (contrast) ink.palette.BG else GbLcdColors.INK
-        val fg = if (contrast) ink.palette.TEXT else GbLcdColors.LIGHT
-        val px = (ink.unit / 9f).coerceAtLeast(1f)
-        if (lcdMode) ink.rect(c, l, t, r, b, bg)
-        val horizontal = r - l >= touch * 3
-        cycleBanks = !horizontal
+        cycleBanks = r - l < touch * 3
         val tabsBottom = t + touch
         for (k in GbBank.entries) {
             val rect = tabRects[k.ordinal]
@@ -162,16 +154,10 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
                 rect.set(0f, 0f, 0f, 0f)
                 if (k != kind) continue
                 rect.set(l, t, r, tabsBottom)
-                if (lcdMode) {
-                    PixelLabels.draw(c, bankName(k), l + px * 4, t + touch * 0.2f, px, fg, r - l - px * 8)
-                    PixelLabels.draw(c, "Next bank", l + px * 4, t + touch * 0.6f, px, fg, r - l - px * 8)
-                } else {
-                    ink.label(c, bankName(k), rect.centerX(), t, touch * 0.5f, ink.palette.TEXT, true, align = Align.CENTER)
-                    ink.label(c, "Next bank", rect.centerX(), t + touch * 0.5f, touch * 0.5f, ink.palette.DIM, size = ink.unit * 0.8f, align = Align.CENTER)
-                }
+                ink.label(c, bankName(k), rect.centerX(), t, touch * 0.5f, ink.palette.TEXT, true, align = Align.CENTER)
+                ink.label(c, "Next bank", rect.centerX(), t + touch * 0.5f, touch * 0.5f, ink.palette.DIM, size = ink.unit * 0.8f, align = Align.CENTER)
             } else {
-                if (horizontal) rect.set(l + (r - l) * k.ordinal / 3, t, l + (r - l) * (k.ordinal + 1) / 3, tabsBottom)
-                else rect.set(l, t + touch * k.ordinal, r, t + touch * (k.ordinal + 1))
+                rect.set(l + (r - l) * k.ordinal / 3, t, l + (r - l) * (k.ordinal + 1) / 3, tabsBottom)
                 drawTab(c, k, rect, kind)
             }
         }
@@ -185,30 +171,18 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             val slot = slotRects[index]
             slot.set(l, tabsBottom + (index - first) * rowH, r, tabsBottom + (index - first + 1) * rowH)
             val selected = index + 1 == st.instrument
-            if (lcdMode) {
-                ink.rect(c, slot, if (selected) fg else bg)
-                val color = if (selected) bg else fg
-                PixelLabels.draw(c, hex2(index + 1), l + px * 3, slot.top + rowH * 0.22f, px, color)
-                PixelLabels.draw(c, bank[index].name, l + px * 3, slot.top + rowH * 0.57f, px, color, r - l - px * 6)
-            } else {
-                ink.rect(c, slot, if (selected) ink.palette.CURSOR_FILL else ink.palette.LANE)
-                val size = minOf(ink.unit, rowH * 0.7f)
-                ink.mono(c, hex2(index + 1), l + ink.unit * 0.4f, slot.top, rowH,
-                    if (selected) accent(kind) else ink.palette.DIM, selected, size)
-                val nameX = l + ink.unit * 2.4f
-                ink.label(c, ink.fit(bank[index].name, maxOf(0f, r - nameX - ink.unit * 0.4f), size),
-                    nameX, slot.top, rowH, if (selected) ink.palette.TEXT else ink.palette.DIM, size = size)
-            }
+            ink.rect(c, slot, if (selected) ink.palette.CURSOR_FILL else ink.palette.LANE)
+            val size = minOf(ink.unit, rowH * 0.7f)
+            ink.mono(c, hex2(index + 1), l + ink.unit * 0.4f, slot.top, rowH,
+                if (selected) accent(kind) else ink.palette.DIM, selected, size)
+            val nameX = l + ink.unit * 2.4f
+            ink.label(c, ink.fit(bank[index].name, maxOf(0f, r - nameX - ink.unit * 0.4f), size),
+                nameX, slot.top, rowH, if (selected) ink.palette.TEXT else ink.palette.DIM, size = size)
         }
         previousSlot.set(l, b - touch, (l + r) * 0.5f, b)
         nextSlot.set(previousSlot.right, b - touch, r, b)
-        if (lcdMode) {
-            PixelLabels.draw(c, "Prev", previousSlot.left + px * 3, previousSlot.centerY() - px * 3, px, fg, previousSlot.width() - px * 6)
-            PixelLabels.draw(c, "Next", nextSlot.left + px * 3, nextSlot.centerY() - px * 3, px, fg, nextSlot.width() - px * 6)
-        } else {
-            ink.label(c, "Prev", previousSlot.centerX(), previousSlot.top, touch, ink.palette.TEXT, align = Align.CENTER)
-            ink.label(c, "Next", nextSlot.centerX(), nextSlot.top, touch, ink.palette.TEXT, align = Align.CENTER)
-        }
+        ink.label(c, "Prev", previousSlot.centerX(), previousSlot.top, touch, ink.palette.TEXT, align = Align.CENTER)
+        ink.label(c, "Next", nextSlot.centerX(), nextSlot.top, touch, ink.palette.TEXT, align = Align.CENTER)
     }
 
     internal fun slotNavigationRect(forward: Boolean): Rect? =
@@ -909,7 +883,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             st.gbPanel.invalidate()
             if (ctl.editHeld) { ctl.useEdit(); st.gbPanel.editBlocked = true }
             if (ctl.clearHeld) ctl.useClear()
-            st.instField = 0
+            if (!GbSoundView.friendly(st)) st.instField = 0 // Sound keeps its focused control.
             GbSoundView.publish(ctl)
             return true
         }
@@ -934,7 +908,7 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             if (ctl.editHeld) { ctl.useEdit(); st.gbPanel.editBlocked = true }
             if (ctl.clearHeld) ctl.useClear()
             st.instrument = i
-            st.instField = 0
+            if (!GbSoundView.friendly(st)) st.instField = 0
             GbSoundView.publish(ctl)
             return true
         }

@@ -34,17 +34,25 @@ class GbPulseSoundViewTest {
 
     @Test
     fun defaultModeAndBothControllerSwitchPathsPreserveExactBytesAndHistory() {
-        val v = controller(0)
+        val v = controller(2)
         val before = session.song
         val export = GbSystem.exports.first { it.extension == "uge" }
         val bytes = export.export(before)
         assertTrue(GbSoundView.friendly(v.state))
-        v.tap(Action.UP)
-        assertEquals(-1, v.state.instField)
-        v.tap(Action.RIGHT)
-        assertTrue(v.state.gbPanel.advanced)
         v.tap(Action.LEFT)
+        assertEquals(1, v.state.instField)
+        v.tap(Action.LEFT)
+        assertEquals(-1, v.state.instField)
+        v.tap(Action.RIGHT) // Bare Left/Right leave Sound's mode row through the ring; they never switch mode.
         assertFalse(v.state.gbPanel.advanced)
+        assertEquals(1, v.state.instField)
+        v.tap(Action.LEFT)
+        v.press(Action.EDIT); v.tap(Action.RIGHT); v.release(Action.EDIT)
+        assertTrue(v.state.gbPanel.advanced)
+        assertEquals(-1, v.state.instField)
+        v.tap(Action.LEFT) // Advanced keeps its precise mode row: bare Left returns to Sound.
+        assertFalse(v.state.gbPanel.advanced)
+        assertEquals(-1, v.state.instField)
         v.tap(Action.EDIT)
         assertTrue(v.state.gbPanel.advanced)
         v.tap(Action.EDIT)
@@ -53,6 +61,7 @@ class GbPulseSoundViewTest {
         v.tap(Action.LEFT) // Selecting the already-active Sound tab consumes the hold, not a release toggle.
         v.release(Action.EDIT)
         assertFalse(v.state.gbPanel.advanced)
+        assertEquals(-1, v.state.instField)
         assertSame(before, session.song)
         assertArrayEquals(bytes, export.export(session.song))
         assertFalse(session.canUndo)
@@ -292,19 +301,165 @@ class GbPulseSoundViewTest {
     }
 
     @Test
-    fun compactBankShowsSelectableNeighboursAndKeepsLaterSlotsVisible() {
+    fun soundUpDownChooseSlotsAndLeftRightRingModeNameAndControlsInEveryBank() {
+        val before = session.song
+        for (kind in GbBank.entries) {
+            val v = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT, bank = kind.ordinal, instField = 3))
+            assertTrue(GbSoundView.friendly(v.state))
+            v.tap(Action.DOWN); v.tap(Action.DOWN)
+            assertEquals(3, v.state.instrument)
+            assertEquals("$kind: choosing a slot keeps the focused control", 3, v.state.instField)
+            v.tap(Action.UP)
+            assertEquals(2, v.state.instrument)
+            val last = GbMusicalMacros.count(kind) + 1
+            for (field in (4..last) + listOf(-1, 1, 2, 3)) {
+                v.tap(Action.RIGHT)
+                assertEquals("$kind ring forward", field, v.state.instField)
+            }
+            for (field in listOf(2, 1, -1) + (last downTo 3)) {
+                v.tap(Action.LEFT)
+                assertEquals("$kind ring back", field, v.state.instField)
+            }
+            repeat(3) { v.tap(Action.LEFT) }
+            assertEquals(-1, v.state.instField)
+            v.tap(Action.DOWN) // The mode row keeps its focus while Up/Down choose the slot.
+            assertEquals(3, v.state.instrument)
+            repeat(4) { v.tap(Action.UP) }
+            assertEquals(1, v.state.instrument)
+            assertEquals(-1, v.state.instField)
+            assertTrue(GbSoundView.friendly(v.state))
+            v.tap(Action.NEXT_CHANNEL) // L1/R1 still choose the bank.
+            assertEquals((kind.ordinal + 1) % GbBank.entries.size, v.state.bank)
+        }
+        assertSame(before, session.song)
+        assertFalse(session.canUndo)
+        assertTrue(heard.isEmpty())
+    }
+
+    @Test
+    fun soundNameEditsLettersWithEditLeftRightAndMovesTheClampedCaretWithEditUpDown() {
+        session.setInstrument(GbBank.PULSE, 1, session.song.gb.pulse[0].copy(name = "Lead"))
+        val v = controller(1)
+        v.press(Action.EDIT)
+        repeat(4) { v.tap(Action.DOWN) }
+        assertEquals(4, v.state.textPos)
+        assertEquals("Edit+Down moves the caret, not the slot", 1, v.state.instrument)
+        v.tap(Action.RIGHT); v.tap(Action.RIGHT)
+        v.release(Action.EDIT)
+        assertEquals("LeadB", session.song.gb.pulse[0].name)
+        v.tap(Action.CLEAR)
+        assertEquals("Lead", session.song.gb.pulse[0].name)
+        v.press(Action.EDIT)
+        repeat(40) { v.tap(Action.DOWN) }
+        assertEquals(EditorSession.MAX_NAME - 1, v.state.textPos)
+        v.tap(Action.UP)
+        assertEquals(EditorSession.MAX_NAME - 2, v.state.textPos)
+        repeat(40) { v.tap(Action.UP) }
+        assertEquals(0, v.state.textPos)
+        v.release(Action.EDIT)
+        assertEquals("Lead", session.song.gb.pulse[0].name)
+        assertTrue(heard.isEmpty())
+        v.tap(Action.RIGHT) // Bare Left/Right leave the name through the ring.
+        assertEquals(2, v.state.instField)
+        assertEquals(0, v.state.textPos)
+        val hints = ArrayList<org.thortracker.editor.Hint>()
+        v.state.instField = 1
+        GbSoundView.hints(v, hints)
+        assertTrue(hints.any { it.text.startsWith("Move letter cursor") })
+    }
+
+    @Test
+    fun soundEditUpDownStillShapesTheFocusedControlLikeEditLeftRight() {
+        session.onAudition = { _, _, _, _ -> }
+        val other = EditorSession(GbSystem.blank())
+        val before = session.song
+        val vertical = controller(2)
+        val horizontal = ViewController(other, ViewState(kind = ViewKind.INSTRUMENT, instField = 2))
+        vertical.press(Action.EDIT); vertical.tap(Action.UP); vertical.tap(Action.UP); vertical.tap(Action.DOWN); vertical.release(Action.EDIT)
+        horizontal.press(Action.EDIT); horizontal.tap(Action.RIGHT); horizontal.tap(Action.RIGHT); horizontal.tap(Action.LEFT); horizontal.release(Action.EDIT)
+        assertNotSame(before, session.song)
+        assertEquals(other.song, session.song)
+        assertEquals(1, vertical.state.instrument)
+        session.undo()
+        assertSame(before, session.song)
+    }
+
+    @Test
+    fun advancedKeepsItsPreciseVerticalFieldsAndHorizontalSlots() {
+        val v = controller(2)
+        val before = session.song
+        GbSoundView.setAdvanced(v, true)
+        assertEquals(2, v.state.instField)
+        v.tap(Action.DOWN)
+        assertEquals(3, v.state.instField)
+        assertEquals(1, v.state.instrument)
+        v.tap(Action.RIGHT)
+        assertEquals(2, v.state.instrument)
+        assertEquals(3, v.state.instField)
+        repeat(3) { v.tap(Action.UP) }
+        assertEquals(0, v.state.instField)
+        v.tap(Action.UP)
+        assertEquals(-1, v.state.instField)
+        v.tap(Action.DOWN); v.tap(Action.DOWN)
+        assertEquals(1, v.state.instField)
+        v.tap(Action.RIGHT) // Advanced's name keeps Left/Right as its letter cursor.
+        assertEquals(1, v.state.textPos)
+        assertEquals(2, v.state.instrument)
+        assertTrue(v.state.gbPanel.advanced)
+        assertSame(before, session.song)
+    }
+
+    @Test
+    fun soundSlotTapsKeepTheFocusedControlWhileAdvancedSlotTapsFocusTheSlot() {
         val p = panel()
         val before = session.song
-        assertInside(p.painter.slotRect(2), p.area, 48 * 2.3f)
-        p.tap(p.painter.slotRect(2))
-        assertEquals(2, p.state.instrument)
-        repeat(13) {
-            p.tap(p.painter.slotNavigationRect(true)!!)
-            p.draw()
-            assertInside(p.painter.slotRect(p.state.instrument), p.area, 48 * 2.3f)
-        }
-        assertEquals(15, p.state.instrument)
+        p.state.instField = 4
+        p.draw()
+        p.tap(p.painter.slotRect(5))
+        assertEquals(5, p.state.instrument)
+        assertEquals(4, p.state.instField)
+        val short = panel(320, 240, 1f)
+        short.state.instField = 3
+        short.draw()
+        short.tap(short.painter.slotNavigationRect(true)!!)
+        assertEquals(2, short.state.instrument)
+        assertEquals(3, short.state.instField)
+        p.tap(p.painter.modeRect(true))
+        p.draw()
+        p.tap(p.painter.slotRect(6))
+        assertEquals(6, p.state.instrument)
+        assertEquals(0, p.state.instField)
         assertSame(before, session.song)
+    }
+
+    @Test
+    fun everyBankSharesTheAdvancedHeaderAndSidebarInBothFaces() {
+        // Wide column, narrow grid on top, and short compact lists (cycling and tabbed banks).
+        val displays = listOf(Triple(1240, 1080, 2.3f), Triple(400, 900, 1f), Triple(320, 240, 1f), Triple(640, 320, 1f))
+        for ((w, h, d) in displays) for (kind in GbBank.entries) {
+            val p = panel(w, h, d)
+            p.state.bank = kind.ordinal
+            p.state.instrument = 2
+            p.state.instField = 2
+            fun sidebar(): Pair<List<RecordingSurface.Op>, List<String>> {
+                p.draw()
+                val edge = p.painter.modeRect(false)
+                val ops = p.surface.ops.filter { it.x < edge.left || it.y < edge.top }
+                val targets = GbBank.entries.map { p.painter.tabRect(it).toString() } +
+                    (1..HugeRules.INSTRUMENT_SLOTS).map { p.painter.slotRect(it).toString() } +
+                    listOf(false, true).map { p.painter.slotNavigationRect(it).toString() }
+                return ops to targets
+            }
+            val where = "${w}x$h@$d $kind"
+            val sound = sidebar()
+            assertTrue(where, GbSoundView.friendly(p.state))
+            assertTrue("$where header", sound.first.any { it.text == "Sound 02" })
+            assertTrue("$where slot names", sound.first.any { it.text == session.song.bank(kind)[1].name })
+            p.state.gbPanel.advanced = true
+            val advanced = sidebar()
+            assertEquals(where, advanced.first, sound.first)
+            assertEquals(where, advanced.second, sound.second)
+        }
     }
 
     @Test
@@ -432,7 +587,7 @@ class GbPulseSoundViewTest {
         fun draw() {
             pane.ink.layout(width, height, state.zoom)
             area.set(0f, 0f, width.toFloat(), height - pane.ink.unit * 1.9f)
-            surface.texts.clear(); surface.colors.clear()
+            surface.texts.clear(); surface.colors.clear(); surface.ops.clear()
             pane.controller.normalise()
             painter.draw(surface, area)
         }
@@ -445,16 +600,32 @@ class GbPulseSoundViewTest {
     private fun panel(w: Int = 1240, h: Int = 1080, d: Float = 2.3f, zoom: PaneZoom = PaneZoom.NORMAL) = Panel(w, h, d, zoom).also { it.draw() }
 
     private class RecordingSurface : Surface {
+        /** One primitive, located by its centre (text: anchor x and row centre) and fully described by [detail]. */
+        data class Op(val x: Float, val y: Float, val text: String?, val color: Int, val detail: String)
         val texts = ArrayList<String>()
         val colors = HashSet<Int>()
-        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) { colors += color }
-        override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) { colors += color }
-        override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) {}
-        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) {}
+        val ops = ArrayList<Op>()
+        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) {
+            colors += color; ops += Op((l + r) / 2, (t + b) / 2, null, color, "rect $l $t $r $b")
+        }
+        override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) {
+            colors += color; ops += Op((l + r) / 2, (t + b) / 2, null, color, "round $l $t $r $b $radius")
+        }
+        override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) {
+            ops += Op((l + r) / 2, (t + b) / 2, null, color, "stroke $l $t $r $b $width $radius")
+        }
+        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) {
+            ops += Op((x0 + x1) / 2, (y0 + y1) / 2, null, color, "line $x0 $y0 $x1 $y1 $width")
+        }
         override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) {}
         override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) {}
-        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {}
-        override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) { texts += s; colors += color }
+        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {
+            if (count > 0) ops += Op(xs[0], ys[0], null, color, "polyline ${xs.take(count)} ${ys.take(count)} $width")
+        }
+        override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) {
+            texts += s; colors += color
+            ops += Op(x, top + h / 2, s, color, "text $top $h $face $bold $size $align")
+        }
         override fun textWidth(s: String, face: Face, bold: Boolean, size: Float) = s.length * size / 2
     }
 }

@@ -16,9 +16,11 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The Game Boy's three typed banks share musical Sound and precise Advanced faces.
+ * The Game Boy's three typed banks share musical Sound and precise Advanced faces beside one bank and slot list.
  * The mode and its cursors live only in the pane. Field -1 is the mode row, 0 bank/slot, 1 name,
  * and 2+ the current mode's controls. Holding Edit on a control listens and groups changes into one Undo.
+ * Sound moves between slots vertically and between its mode, name and controls horizontally; Advanced keeps
+ * its precise vertical field list with slots horizontal.
  */
 object GbSoundView : SystemView() {
     fun kind(state: ViewState): GbBank = GbSystem.kindOf(state.bank)
@@ -77,6 +79,7 @@ object GbSoundView : SystemView() {
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
+        if (friendly(st)) { soundDirection(v, dx, dy); return }
         when {
             st.instField == -1 && dx != 0 -> {
                 if (v.editHeld) v.useEdit()
@@ -85,12 +88,36 @@ object GbSoundView : SystemView() {
             v.editHeld -> { v.useEdit(); if (!st.gbPanel.editBlocked) adjust(v, dx, dy) }
             dy != 0 -> navigateSetting(st, -dy)
             st.instField == 1 -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
-            else -> {
-                st.instrument = (st.instrument + dx).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
-                st.gbPanel.invalidate()
-                publish(v)
-            }
+            else -> moveSlot(v, dx)
         }
+    }
+
+    /**
+     * Sound: bare Up/Down chooses the slot and keeps the focused setting; bare Left/Right walks the ring of mode,
+     * name and musical controls. Edit+Left/Right switches mode, changes a letter or shapes the control; Edit+Up/Down
+     * moves the name's caret or shapes the control.
+     */
+    private fun soundDirection(v: ViewController, dx: Int, dy: Int) {
+        val st = v.state
+        if (v.editHeld) {
+            v.useEdit()
+            when {
+                st.instField == -1 -> if (dx != 0) setAdvanced(v, dx > 0, keepModeFocus = true)
+                st.gbPanel.editBlocked -> Unit
+                st.instField == 1 && dy != 0 -> st.textPos = (st.textPos - dy).coerceIn(0, EditorSession.MAX_NAME - 1)
+                else -> adjust(v, dx, dy)
+            }
+            return
+        }
+        if (dy != 0) moveSlot(v, -dy)
+        else MusicalPanelMode.cycleSoundField(v, st.gbPanel, GbMusicalMacros.count(kind(st)), dx)
+    }
+
+    private fun moveSlot(v: ViewController, delta: Int) {
+        val st = v.state
+        st.instrument = (st.instrument + delta).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
+        st.gbPanel.invalidate()
+        publish(v)
     }
 
     /** Shared controller/touch field order; navigation never edits the selected sound. */
@@ -237,7 +264,7 @@ object GbSoundView : SystemView() {
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
         val st = v.state
-        when (st.instField) {
+        if (friendly(st)) soundHints(v, h) else when (st.instField) {
             -1 -> {
                 h += Hint(v.lr(), "Sound / Advanced (same patch)")
                 h += Hint(v.k(Action.EDIT), "Switch mode")
@@ -245,21 +272,47 @@ object GbSoundView : SystemView() {
             0 -> { h += Hint(v.lr(), "Sound slot"); h += Hint(v.editUd(), "Bank"); h += Hint(v.channels(), "Bank"); h += Hint(v.k(Action.CLEAR), "Reset sound") }
             1 -> { h += Hint(v.lr(), "Letter position"); h += Hint(v.editLr(), "Change letter"); h += Hint(v.k(Action.CLEAR), "Delete letter") }
             else -> {
-                if (friendly(st)) {
-                    val control = st.instField - 2
-                    if (control in 0 until GbMusicalMacros.count(kind(st))) h += Hint(v.editLr(), GbMusicalMacros.help(kind(st), control))
-                } else {
-                    val p = params(st).getOrNull(st.instField - 2)
-                    if (p != null) h += Hint(v.editLr(), p.help)
-                }
+                val p = params(st).getOrNull(st.instField - 2)
+                if (p != null) h += Hint(v.editLr(), p.help)
                 h += Hint(v.lr(), "Sound slot")
                 h += Hint(v.k(Action.CLEAR), "Default value")
             }
         }
-        h += Hint(v.ud(), "Controls; top row: Sound / Advanced")
+        if (!friendly(st)) h += Hint(v.ud(), "Controls; top row: Sound / Advanced")
         h += Hint(v.k(Action.AUDITION), "Listen")
         h += Hint(v.octaves(), "Listen at ${GbSystem.noteName(v.defaultNote())}")
         h += Hint(v.copyPaste(), "Copy/paste sound")
+    }
+
+    private fun soundHints(v: ViewController, h: MutableList<Hint>) {
+        val st = v.state
+        h += Hint(v.ud(), "Sound slot")
+        when (st.instField) {
+            -1 -> {
+                h += Hint(v.lr(), "Name and controls")
+                h += Hint(v.editLr(), "Sound / Advanced (same patch)")
+                h += Hint(v.k(Action.EDIT), "Switch mode")
+            }
+            0 -> {
+                h += Hint(v.lr(), "Mode, name and controls")
+                h += Hint(v.editLr(), "Sound slot")
+                h += Hint(v.editUd(), "Bank")
+                h += Hint(v.k(Action.CLEAR), "Reset sound")
+            }
+            1 -> {
+                h += Hint(v.lr(), "Mode and controls")
+                h += Hint(v.editLr(), "Change letter")
+                h += Hint(v.editUd(), "Move letter cursor: up back, down forward")
+                h += Hint(v.k(Action.CLEAR), "Delete letter")
+            }
+            else -> {
+                val control = st.instField - 2
+                if (control in 0 until GbMusicalMacros.count(kind(st))) h += Hint(v.editLr(), GbMusicalMacros.help(kind(st), control))
+                h += Hint(v.lr(), "Mode, name and controls")
+                h += Hint(v.k(Action.CLEAR), "Default value")
+            }
+        }
+        h += Hint(v.channels(), "Bank")
     }
 
     override fun painter(pane: PaneView): Painter = SoundPainter(pane)

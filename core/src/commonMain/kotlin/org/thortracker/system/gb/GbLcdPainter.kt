@@ -91,7 +91,12 @@ internal class GbLcdPainter(v: PaneView) : Painter(v) {
         val nameH = minOf(line * 1.5f, maxOf(0f, controlsTop - area.top - pad))
         readout.set(l, area.top + pad, r, area.top + pad + nameH)
         if (nameH >= pixel * 7) text(c, ins.name, l, readout.top, width)
-        if (st.instField == 1) ink.outline(c, readout, dark, pixel)
+        if (st.instField == 1) {
+            ink.outline(c, readout, dark, pixel)
+            // The letter cursor Edit+Up/Down moves, under the 6-pixel character cell it edits.
+            val caret = l.roundToInt() + st.textPos * 6 * pixel
+            if (nameH >= pixel * 9 && caret + pixel * 5 <= r) ink.rect(c, caret, readout.top + pixel * 8, caret + pixel * 5, readout.top + pixel * 9, dark)
+        }
         diagram.set(l, readout.bottom, r, controlsTop - pad)
         if (diagram.height() >= line * 3) drawDiagrams(c, ins)
         if (compact) {
