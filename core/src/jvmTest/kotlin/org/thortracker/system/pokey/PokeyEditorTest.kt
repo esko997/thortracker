@@ -33,7 +33,9 @@ class PokeyEditorTest {
     }
 
     private fun view(slot: Int, setup: ViewState.() -> Unit = {}) =
-        ViewController(session, ViewState(kind = ViewKind.INSTRUMENT, instrument = slot).apply(setup))
+        ViewController(session, ViewState(kind = ViewKind.INSTRUMENT, instrument = slot).apply {
+            soundPanel("pokey").advanced = true
+        }.apply(setup))
 
     private fun ViewController.tap(a: Action) { press(a); release(a) }
 

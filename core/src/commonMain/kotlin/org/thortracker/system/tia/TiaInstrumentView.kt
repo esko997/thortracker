@@ -125,7 +125,8 @@ object TiaInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, TiaSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, PAGES.size - 1)
-        st.instField = st.instField.coerceIn(0, rows(st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (TiaSoundFace.friendly(st)) TiaSoundFace.COUNT + 1 else rows(st).size - 1)
+        TiaSoundFace.settle(st)
         val e = envelope(song, st)
         st.envStep = if (e != null) st.envStep.coerceIn(0, TiaEnvelopes.lastStep(e)) else st.envStep.coerceIn(0, TiaRules.AUDF_MAX)
     }
@@ -133,10 +134,18 @@ object TiaInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) {
+            TiaSoundFace.panel(state).invalidate()
+            TiaSoundFace.panel(state).editBlocked = true
+        }
         state.instrument = subject.coerceIn(1, TiaSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument) {
+            TiaSoundFace.panel(state).invalidate()
+            TiaSoundFace.panel(state).editBlocked = true
+        }
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -171,6 +180,7 @@ object TiaInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, TiaSystem.SLOTS)
         if (slot == st.instrument) return
+        TiaSoundFace.invalidate(v)
         st.instrument = slot
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
         normalise(v)
@@ -178,6 +188,7 @@ object TiaInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (TiaSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(st)
@@ -187,7 +198,7 @@ object TiaInstrumentView : SystemView() {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> { v.useClear(); if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, TiaEnvelopes.lastStep(e)) }
             dy != 0 -> {
-                st.instField = (st.instField - dy).coerceIn(0, rows.size - 1)
+                st.instField = (st.instField - dy).coerceIn(-1, rows.size - 1)
                 st.textPos = 0
             }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
@@ -305,10 +316,30 @@ object TiaInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        TiaSoundFace.panel(v.state).editBlocked = false
+        if (v.state.instField < 0) return
+        if (TiaSoundFace.friendly(v.state)) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
         if (row(v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = TiaSoundFace.panel(v.state)
+        if (panel.editBlocked) {
+            panel.editBlocked = false
+            if (!v.auditionHeld) v.session.releaseAudition()
+            return
+        }
+        if (v.state.instField < 0) {
+            if (tap) TiaSoundFace.selectMode(v, !panel.advanced, true)
+            return
+        }
+        if (TiaSoundFace.friendly(v.state)) {
+            if (!v.auditionHeld) v.session.releaseAudition()
+            return
+        }
         val st = v.state
         val session = v.session
         val row = row(st)
@@ -354,6 +385,8 @@ object TiaInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || (TiaSoundFace.panel(v.state).editBlocked && v.editHeld)) return
+        if (TiaSoundFace.friendly(v.state) && v.state.instField >= 2) return
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -385,6 +418,8 @@ object TiaInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (TiaSoundFace.command(v, a)) return true
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) TiaSoundFace.invalidate(v)
         val st = v.state
         val session = v.session
         val slot = st.instrument
@@ -415,6 +450,7 @@ object TiaInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (TiaSoundFace.friendly(v.state) || v.state.instField == -1) { TiaSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(st)
@@ -459,6 +495,13 @@ object TiaInstrumentView : SystemView() {
         val editLr = keys.held(Action.EDIT, lr)
         val editUd = keys.held(Action.EDIT, ud)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Choose an instrument slot; $lr cycles mode, name and musical controls",
+                editLr to "Shape the selected control; on Name change a letter, $editUd moves the caret",
+                "Sound / Advanced" to "Switch faces without changing the patch. Advanced retains sequences and the pitch guide",
+                "Tracking" to "Nearest note uses only 32 real dividers; Divider steps treats notes as a repeating 32-step cycle",
+                "Custom" to "Waveform sequences own Character. Choosing Contour or Step motion replaces only that sequence",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, waveform, pitch mode, preset, page, then the page's settings",
                 lr to "On settings: the sound slot; on envelope steps: the step; on the pitch guide: the divider",
