@@ -15,13 +15,31 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The Game Boy's sound editor: the three typed banks, the selected sound's name and one row per register setting
- * ([SoundParams]). State: [ViewState.bank] (bank index = [GbBank] ordinal), [ViewState.instrument] and
- * [ViewState.instField] (0 slot/bank, 1 name, 2+ parameters). Holding Edit on a setting sounds the sound, and every
- * change made while Edit or Listen is held sounds it again, so edits are heard as they are made.
+ * The Game Boy's three typed banks. Pulse has a musical Sound pilot and the precise Advanced editor; Wave/Noise
+ * retain Advanced. The mode and its cursors live only in the pane. Field -1 is the mode row, 0 bank/slot, 1 name,
+ * and 2+ the current mode's controls. Holding Edit on a control listens and groups changes into one Undo.
  */
 object GbSoundView : SystemView() {
     fun kind(state: ViewState): GbBank = GbSystem.kindOf(state.bank)
+
+    fun friendly(state: ViewState): Boolean = kind(state) == GbBank.PULSE && !state.gbAdvanced
+
+    private fun lastField(state: ViewState) = if (friendly(state)) 5 else 1 + params(state).size
+
+    /** Switching presentation never writes a patch or creates an undo step. Keep physical holds owned by input. */
+    internal fun setAdvanced(v: ViewController, advanced: Boolean, keepModeFocus: Boolean = false) {
+        val st = v.state
+        if (kind(st) != GbBank.PULSE || st.gbAdvanced == advanced) return
+        st.cancelGbSoundTouch?.invoke()
+        if (st.instField >= 0) {
+            if (st.gbAdvanced) st.gbAdvancedField = st.instField else st.gbSoundField = st.instField
+        }
+        st.gbAdvanced = advanced
+        st.gbSoundRevision++
+        st.instField = if (keepModeFocus) -1 else if (advanced) st.gbAdvancedField else st.gbSoundField
+        if (v.editHeld) { v.useEdit(); st.gbModeEditBlocked = true }
+        if (v.clearHeld) v.useClear()
+    }
 
     fun params(state: ViewState): List<SoundParam> = SoundParams.forKind(kind(state))
 
@@ -32,23 +50,32 @@ object GbSoundView : SystemView() {
     override fun normalise(v: ViewController) {
         val st = v.state
         st.bank = st.bank.coerceIn(0, GbBank.entries.size - 1)
-        st.instField = st.instField.coerceIn(0, 1 + params(st).size)
+        st.instField = st.instField.coerceIn(-1, lastField(st))
     }
 
     override fun subject(state: ViewState): Int = state.bank * 16 + state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (this.subject(state) != subject) {
+            state.cancelGbSoundTouch?.invoke()
+            state.gbSoundRevision++
+        }
         state.bank = (subject / 16).coerceIn(0, GbBank.entries.size - 1)
         state.instrument = (subject % 16).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.bank != selection.bank || state.instrument != selection.instrument) {
+            state.cancelGbSoundTouch?.invoke()
+            state.gbSoundRevision++
+        }
         state.bank = selection.bank
         state.instrument = selection.instrument
     }
 
     fun publish(v: ViewController) {
         val st = v.state
+        st.cancelGbSoundTouch?.invoke()
         val kind = kind(st)
         v.syncLock()
         val session = v.session
@@ -61,16 +88,21 @@ object GbSoundView : SystemView() {
     override fun direction(v: ViewController, dx: Int, dy: Int) {
         val st = v.state
         when {
-            v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
+            st.instField == -1 && dx != 0 -> setAdvanced(v, dx > 0, keepModeFocus = true)
+            v.editHeld -> { v.useEdit(); if (!st.gbModeEditBlocked) adjust(v, dx, dy) }
             dy != 0 -> navigateSetting(st, -dy)
             st.instField == 1 -> st.textPos = (st.textPos + dx).coerceIn(0, EditorSession.MAX_NAME - 1)
-            else -> { st.instrument = (st.instrument + dx).coerceIn(1, HugeRules.INSTRUMENT_SLOTS); publish(v) }
+            else -> {
+                st.instrument = (st.instrument + dx).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
+                st.gbSoundRevision++
+                publish(v)
+            }
         }
     }
 
     /** Shared controller/touch field order; navigation never edits the selected sound. */
     internal fun navigateSetting(st: ViewState, delta: Int) {
-        st.instField = (st.instField + delta).coerceIn(0, 1 + params(st).size)
+        st.instField = (st.instField + delta).coerceIn(-1, lastField(st))
         st.textPos = 0
     }
 
@@ -79,8 +111,10 @@ object GbSoundView : SystemView() {
         val session = v.session
         val kind = kind(st)
         when (st.instField) {
+            -1 -> Unit
             0 -> {
                 st.instrument = (st.instrument + dx).coerceIn(1, HugeRules.INSTRUMENT_SLOTS)
+                st.gbSoundRevision++
                 if (dy != 0) {
                     st.bank = (st.bank - dy).mod(GbBank.entries.size)
                     st.instField = 0
@@ -91,6 +125,19 @@ object GbSoundView : SystemView() {
                 it.copy(name = NameEdit.edit(it.name, st.textPos, dx + 26 * dy, EditorSession.MAX_NAME))
             }
             else -> {
+                if (friendly(st)) {
+                    val control = GbPulseControl.entries.getOrNull(st.instField - 2) ?: return
+                    val delta = dx + dy
+                    if (delta == 0) return
+                    val changed = session.editInstrument(kind, st.instrument, "Set ${controlLabel(control).lowercase()}") {
+                        val current = GbPulseMacros.value(control, it)
+                        val next = if (current == null) { if (delta > 0) 0 else GbPulseMacros.steps(control) - 1 }
+                            else (current + delta).coerceIn(0, GbPulseMacros.steps(control) - 1)
+                        GbPulseMacros.apply(control, it, next)
+                    }
+                    if (changed) heard(v)
+                    return
+                }
                 val p = params(st).getOrNull(st.instField - 2) ?: return
                 val changed = session.editInstrument(kind, st.instrument, "Set ${p.label.lowercase()}") { p.adjust(it, dx + p.coarse * dy) }
                 if (p === SoundParams.wave) publish(v)
@@ -105,17 +152,21 @@ object GbSoundView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        v.state.gbModeEditBlocked = false
         if (v.state.instField >= 2) audition(v)
     }
 
     // Releasing Edit ends the audition its press started (ViewController stops it after this).
     override fun editRelease(v: ViewController, tap: Boolean) {
-        if (!tap) return
         val st = v.state
+        if (st.gbModeEditBlocked) { st.gbModeEditBlocked = false; return }
+        if (!tap) return
         when (st.instField) {
+            -1 -> setAdvanced(v, !st.gbAdvanced, keepModeFocus = true)
             0 -> { publish(v); v.session.note("Sound ${EditorSession.hex2(st.instrument)} selected for entry") }
             1 -> Unit
             else -> {
+                if (friendly(st)) return
                 val p = params(st).getOrNull(st.instField - 2) ?: return
                 if (p.max - p.min == 1) {
                     v.session.editInstrument(kind(st), st.instrument, "Toggle ${p.label.lowercase()}") {
@@ -128,12 +179,21 @@ object GbSoundView : SystemView() {
 
     override fun clear(v: ViewController) {
         val st = v.state
+        if (st.instField < 0 || st.gbModeEditBlocked) return
         val session = v.session
         val kind = kind(st)
         val changed = when (st.instField) {
             0 -> session.setInstrument(kind, st.instrument, defaultSound(kind, st.instrument))
             1 -> session.editInstrument(kind, st.instrument, "Rename sound") { it.copy(name = ViewController.deleteChar(it.name, st.textPos)) }
             else -> {
+                if (friendly(st)) {
+                    val control = GbPulseControl.entries.getOrNull(st.instField - 2) ?: return
+                    val changed = session.editInstrument(kind, st.instrument, "Reset ${controlLabel(control).lowercase()}") {
+                        GbPulseMacros.reset(control, it)
+                    }
+                    if (changed) heard(v)
+                    return
+                }
                 val p = params(st).getOrNull(st.instField - 2) ?: return
                 val def = p.get(defaultSound(kind, st.instrument))
                 session.editInstrument(kind, st.instrument, "Reset ${p.label.lowercase()}") { p.set(it, def) }
@@ -154,7 +214,9 @@ object GbSoundView : SystemView() {
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 st.bank = (st.bank + if (a == Action.NEXT_CHANNEL) 1 else -1).mod(GbBank.entries.size)
-                st.instField = st.instField.coerceAtMost(1 + params(st).size)
+                st.gbSoundRevision++
+                if (v.editHeld) { v.useEdit(); st.gbModeEditBlocked = true }
+                st.instField = st.instField.coerceAtMost(lastField(st))
                 publish(v)
             }
             Action.COPY -> session.copyInstrument(kind, st.instrument)
@@ -168,6 +230,7 @@ object GbSoundView : SystemView() {
                 val src = sound(session.song, st) ?: return true
                 session.setInstrument(kind, st.instrument + 1, src.copy(name = (src.name + "+").take(EditorSession.MAX_NAME)))
                 st.instrument++
+                st.gbSoundRevision++
                 publish(v)
             }
             else -> return false
@@ -178,21 +241,38 @@ object GbSoundView : SystemView() {
     override fun hints(v: ViewController, h: MutableList<Hint>) {
         val st = v.state
         when (st.instField) {
+            -1 -> {
+                h += Hint(v.lr(), if (kind(st) == GbBank.PULSE) "Sound / Advanced (same patch)" else "Sound pilot: Pulse only")
+                if (kind(st) == GbBank.PULSE) h += Hint(v.k(Action.EDIT), "Switch mode")
+            }
             0 -> { h += Hint(v.lr(), "Sound slot"); h += Hint(v.editUd(), "Bank"); h += Hint(v.channels(), "Bank"); h += Hint(v.k(Action.CLEAR), "Reset sound") }
             1 -> { h += Hint(v.lr(), "Letter position"); h += Hint(v.editLr(), "Change letter"); h += Hint(v.k(Action.CLEAR), "Delete letter") }
             else -> {
-                val p = params(st).getOrNull(st.instField - 2)
-                if (p != null) h += Hint(v.editLr(), p.help)
+                if (friendly(st)) {
+                    val control = GbPulseControl.entries.getOrNull(st.instField - 2)
+                    if (control != null) h += Hint(v.editLr(), GbPulseMacros.help(control))
+                } else {
+                    val p = params(st).getOrNull(st.instField - 2)
+                    if (p != null) h += Hint(v.editLr(), p.help)
+                }
                 h += Hint(v.lr(), "Sound slot")
                 h += Hint(v.k(Action.CLEAR), "Default value")
             }
         }
+        h += Hint(v.ud(), "Controls; top row: Sound / Advanced")
         h += Hint(v.k(Action.AUDITION), "Listen")
         h += Hint(v.octaves(), "Listen at ${GbSystem.noteName(v.defaultNote())}")
         h += Hint(v.copyPaste(), "Copy/paste sound")
     }
 
     override fun painter(pane: PaneView): Painter = SoundPainter(pane)
+
+    internal fun controlLabel(control: GbPulseControl): String = when (control) {
+        GbPulseControl.CHARACTER -> "Character"
+        GbPulseControl.SHAPE -> "Shape"
+        GbPulseControl.LENGTH -> "Length"
+        GbPulseControl.MOTION -> "Motion"
+    }
 
     private fun defaultSound(kind: GbBank, slot: Int) = GbInstrument(name = "Sound ${EditorSession.hex2(slot)}", kind = kind)
 }

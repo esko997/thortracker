@@ -126,7 +126,7 @@ class GbSoundPanelTest {
 
     // ---- controller: held Edit listens, one Undo per hold ---------------------------------------------------------
 
-    private fun view(setup: ViewState.() -> Unit) = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT).apply(setup))
+    private fun view(setup: ViewState.() -> Unit) = ViewController(session, ViewState(kind = ViewKind.INSTRUMENT, gbAdvanced = true).apply(setup))
 
     @Test
     fun heldEditSoundsTheSoundAndEveryChangeAgainAsOneUndo() {
@@ -223,6 +223,7 @@ class GbSoundPanelTest {
     private class Panel(val pane: PaneView, val painter: SoundPainter, val area: Rect)
 
     private fun panel(state: ViewState, width: Int = 1240, height: Int = 1080, density: Float = 2.3f, zoom: PaneZoom = PaneZoom.NORMAL): Panel {
+        state.gbAdvanced = true // This suite exercises the preserved precise panel, not the pulse Sound pilot.
         val pane = PaneView(session, state, density, surface, { 0L }, {})
         val painter = SoundPainter(pane)
         state.zoom = zoom

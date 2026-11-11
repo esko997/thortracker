@@ -411,7 +411,7 @@ class ViewControllerTest {
 
     @Test
     fun instrumentParameterHoldIsOneUndo() {
-        val v = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 3 }
+        val v = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = 0; instrument = 1; instField = 3 }
         assertEquals("Volume", GbSoundView.params(v.state)[1].label)
         v.hold(Action.EDIT, Action.LEFT, Action.LEFT)
         assertEquals(13, session.song.gb.pulse[0].volume)
@@ -426,7 +426,7 @@ class ViewControllerTest {
     @Test
     fun everyInstrumentParameterStaysInRange() {
         for (kind in GbBank.entries) {
-            val v = view(ViewKind.INSTRUMENT) { bank = kind.ordinal; instrument = 2 }
+            val v = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = kind.ordinal; instrument = 2 }
             for ((i, p) in GbSoundView.params(v.state).withIndex()) {
                 v.state.instField = i + 2
                 v.hold(Action.EDIT, *Array(40) { Action.UP })
@@ -790,7 +790,7 @@ class ViewControllerTest {
         assertEquals(cell(0, 0, 4), cell(0, 0, 20))
 
         // Shape the lead sound and draw a wave the wave sound uses.
-        val sounds = view(ViewKind.INSTRUMENT) { bank = 0; instrument = 1; instField = 2 }
+        val sounds = view(ViewKind.INSTRUMENT) { gbAdvanced = true; bank = 0; instrument = 1; instField = 2 }
         sounds.hold(Action.EDIT, Action.RIGHT) // duty 25%
         assertEquals(1, session.song.gb.pulse[0].duty)
         val waves = view(ViewKind.WAVE) { wave = 0; waveRow = 0; waveCol = 1 }
