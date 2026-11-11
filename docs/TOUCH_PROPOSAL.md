@@ -89,6 +89,10 @@ exact UGE preservation, grouped controller Undo, two-pointer dock editing, latch
 and automatic hiding for the actual built-in controller. Eight private entries are cold-restored
 and independently verified. See [Verification](VERIFICATION.md) for scope and limitations.
 
+The separate **0.43.0 three-pilot review** replaces the first GB face below and extends Sound to
+Wave/Noise, SID and YM2612. See [the current gallery and mappings](INSTRUMENT_PANELS.md).
+The following pulse-only section records the earlier approved design and its measurements.
+
 ### Game Boy pulse Sound playground
 
 The earlier accurate instrument panel remains **Advanced**. This pilot adds a different,

@@ -10,6 +10,10 @@ Without a usable physical controller, Android shows a two-thumb controller dock 
 drawer; attaching a controller hides the dock. Game Boy pulse instruments offer musical
 Sound controls beside the precise Advanced editor. Both edit the same instrument and Undo history.
 
+**This branch is the 0.43.0 three-instrument review:** Game Boy pixel LCD, C64 SID synth deck
+and Mega Drive YM2612 tone console. [Screenshots, musical controls and review limits](docs/INSTRUMENT_PANELS.md).
+The APK still updates the normal **Thor Tracker** app; no new preview identity is introduced.
+
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
 *Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. This clip was captured in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom), without audio. Other captures identify their own device or synthetic viewport.*

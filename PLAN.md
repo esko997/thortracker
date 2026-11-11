@@ -13,11 +13,11 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**Current priority (0.42.0/code 58):** promote the approved touch dock and Game Boy Sound/Advanced
-workflow into the normal Thor Tracker app, then review **three artistic/musical pilots only**:
-Game Boy LCD (Pulse/Wave/Noise), C64 SID and Mega Drive YM2612. Pause for joint review before
-expanding to other chips. Use distinct musical controls and machine-evocative faces, with
-shared input/history infrastructure and exact patches retained in Advanced.
+**Current review (0.43.0/code 59):** the approved touch dock and Game Boy Sound/Advanced workflow
+are on `main` in 0.42.0. The separate review branch implements **three artistic/musical pilots only**:
+Game Boy LCD (Pulse/Wave/Noise), C64 SID and Mega Drive YM2612. See
+[review gallery and musical mappings](docs/INSTRUMENT_PANELS.md). **Pause for joint review before
+expanding to other chips.** Distinct controls/faces share input/history and retain exact patches in Advanced.
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
