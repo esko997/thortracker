@@ -62,6 +62,18 @@ PSG/wavetable/Atari layout refinements; final publication checks gate the merge 
 These checks are not physical Deck/Brick operation or Fold8 thumb-reach measurements.
 All local builds were serialized and capped; Kotlin/Native linking ran only in CI.
 
+Final pre-merge CI [43059420097](https://github.com/esko997/thortracker/actions/runs/43059420097)
+passes build, Deck and Brick at `1397799`; Documentation Pages also passes. Its checksum-verified
+AppImage passes six additional actual-binary scenarios covering the final POKEY, TIA, Sega,
+SCC, WonderSwan and OPL3 layouts, with inspected screens, nonzero audition PCM and advancing
+playback. Evidence: `native-evidence/final-ef3b71fbd7b34d7f893e3dc989a092f3/`.
+
+The first main publication attempt passed build/Deck/Brick but exhausted the signing job's
+default 1 GiB Java heap during a clean core compile. Signing now explicitly uses the same
+bounded 2 GiB heap as the successful CI build; workstation defaults and resource caps are
+unchanged. Native attachment additionally requires the signing job to succeed, avoiding a
+second failure against a release that was never created. No app behavior changes in this fix.
+
 ## 0.43.0 — musical instrument faces and stable pattern headers
 
 The approved Game Boy, SID and YM2612 Sound pilots are promoted to main with normal Thor Tracker

@@ -248,7 +248,9 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$THORTRACKER_SIGNING_DIR/thortracker-release.p12"
           printf '%s\n' "$KEYSTORE_PASSWORD" > "$THORTRACKER_SIGNING_DIR/store-password"
           unset KEYSTORE_BASE64 KEYSTORE_PASSWORD
-          tools/release.sh
+          # Match the bounded heap used by the clean CI build; keep local defaults unchanged.
+          tools/release.sh --max-workers=1 \
+            '-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8'
       - name: Release notes from docs/VERIFICATION.md
         if: steps.publish.outputs.publish == 'true'
         shell: bash
@@ -273,7 +275,7 @@ jobs:
   # Preserve APK-first publishing. Attach successful native builds in one job so release-note updates cannot race.
   release-native:
     needs: [build, release, deck, brick]
-    if: always() && needs.release.outputs.published == 'true' && (needs.deck.result == 'success' || needs.brick.result == 'success')
+    if: always() && needs.release.result == 'success' && needs.release.outputs.published == 'true' && (needs.deck.result == 'success' || needs.brick.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

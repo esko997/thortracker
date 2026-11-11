@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the signed release APK into dist/thor-tracker-<versionName>.apk with its .sha256.
-# Usage: tools/release.sh
+# Usage: tools/release.sh [Gradle options...]
 # Signing key: $THORTRACKER_SIGNING_DIR (default ${XDG_DATA_HOME:-$HOME/.local/share}/thortracker/signing) holding
 # thortracker-release.p12 and store-password (one line), both private to their owner and outside the repository.
 # The APK must verify as signed by exactly the Thor Tracker release certificate and not be debuggable; there is no
@@ -29,7 +29,7 @@ awk 'NR == 1 { n = length($0) } /\r/ { bad = 1 } END { exit !(NR == 1 && n >= 6 
 version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versionName \"$version\" in app/build.gradle.kts is not x.y.z"
 
-tools/build.sh --no-daemon assembleRelease -PthortrackerSigningDir="$dir"
+tools/build.sh --no-daemon assembleRelease -PthortrackerSigningDir="$dir" "$@"
 apk=app/build/outputs/apk/release/app-release.apk
 [ -f "$apk" ] || die "$apk was not built (is the signing config applied?)"
 
