@@ -31,11 +31,10 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     /** Shape levels by (R13, steps, ramps): drawn every frame, computed once. */
     private val levels = HashMap<Int, IntArray>()
 
-    override fun draw(c: Surface, area: Rect) {
+    internal fun drawSidebar(c: Surface, area: Rect, focused: Boolean): Rect {
         val s = song
         val variant = s.ay.variant
         val ins = AyInstrumentView.sound(s, st)
-        val page = AyInstrumentView.page(st)
         val listen = st.listenChannel.coerceIn(0, s.system.channels.size - 1)
         val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
@@ -45,13 +44,31 @@ internal class AyInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             else -> "software volume"
         }
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "${variant.label} (${variant.chip}) · $kind$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, AySystem.SLOTS, col, focused) { i -> s.ay.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } } }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (slotScroll + ((y - slotTop) / slotH).toInt() + 1).coerceIn(1, AySystem.SLOTS) else -1
+
+    internal fun slotBounds(slot: Int): Rect? {
+        val y = slotTop + (slot - slotScroll - 1) * slotH
+        return if (y >= slotRect.top && y + slotH <= slotRect.bottom) Rect(slotRect.left, y, slotRect.right, y + slotH) else null
+    }
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val variant = s.ay.variant
+        val ins = AyInstrumentView.sound(s, st)
+        val page = AyInstrumentView.page(st)
+        val listen = st.listenChannel.coerceIn(0, s.system.channels.size - 1)
+        val col = ink.palette.channel(listen)
         val row = AyInstrumentView.row(st)
         val allRows = AyInstrumentView.rows(st)
         rowRects.clear()
         gridCells.clear()
         plot.hide()
-
-        val left = drawBank(c, area, top, AySystem.SLOTS, col, row == Row.SLOT) { i -> s.ay.instrument(i)?.let { it.name.ifEmpty { "(unnamed)" } } }
+        val left = drawSidebar(c, area, row == Row.SLOT && st.instField >= 0)
+        val top = left.top
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad

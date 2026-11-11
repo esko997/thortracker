@@ -28,11 +28,10 @@ import org.thortracker.ui.Surface
 internal class SmsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
     private val plot = EnvelopePlot(ink)
 
-    override fun draw(c: Surface, area: Rect) {
+    internal fun drawSidebar(c: Surface, area: Rect, focused: Boolean): Rect {
         val s = song
         val layout = s.sms.layout
         val ins = SmsInstrumentView.sound(s, st)
-        val page = SmsInstrumentView.page(s, st)
         val listen = SmsInstrumentView.listenChannel(s, st, ins)
         val col = ink.palette.channel(listen)
         val locked = if (st.lockedSubject >= 0) "  locked" else ""
@@ -43,17 +42,35 @@ internal class SmsInstrumentPainter(v: PaneView) : FmInstrumentPainter(v) {
             null -> "empty slot"
         }
         val top = header(c, area, "Sound ${hex2(st.instrument)}", "${layout.displayName.substringBefore(" (")} · $kindText$locked  ${usageText(st.instrument)}")
+        return drawBank(c, area, top, SmsSystem.SLOTS, col, focused) { i ->
+            s.sms.instrument(i)?.let {
+                it.name.ifEmpty { "(unnamed)" } + when (it) { is SmsFmInstrument -> " ᶠᴹ"; is SmsDrumKit -> " ᴷ"; else -> "" }
+            }
+        }
+    }
+
+    internal fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (slotScroll + ((y - slotTop) / slotH).toInt() + 1).coerceIn(1, SmsSystem.SLOTS) else -1
+
+    internal fun slotBounds(slot: Int): Rect? {
+        val y = slotTop + (slot - slotScroll - 1) * slotH
+        return if (y >= slotRect.top && y + slotH <= slotRect.bottom) Rect(slotRect.left, y, slotRect.right, y + slotH) else null
+    }
+
+    override fun draw(c: Surface, area: Rect) {
+        val s = song
+        val layout = s.sms.layout
+        val ins = SmsInstrumentView.sound(s, st)
+        val page = SmsInstrumentView.page(s, st)
+        val listen = SmsInstrumentView.listenChannel(s, st, ins)
+        val col = ink.palette.channel(listen)
         val row = SmsInstrumentView.row(s, st)
         val allRows = SmsInstrumentView.rows(s, st)
         rowRects.clear()
         gridCells.clear()
         plot.hide()
-
-        val left = drawBank(c, area, top, SmsSystem.SLOTS, col, row == Row.SLOT) { i ->
-            s.sms.instrument(i)?.let {
-                it.name.ifEmpty { "(unnamed)" } + when (it) { is SmsFmInstrument -> " ᶠᴹ"; is SmsDrumKit -> " ᴷ"; else -> "" }
-            }
-        }
+        val left = drawSidebar(c, area, row == Row.SLOT && st.instField >= 0)
+        val top = left.top
 
         val pad = ink.unit * 0.9f
         val rx = left.right + pad

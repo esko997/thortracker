@@ -19,11 +19,10 @@ import org.thortracker.ui.PaneView
 import org.thortracker.ui.Painter
 
 /**
- * The Master System instrument editor, controller-only: one bank of [SmsSystem.SLOTS] sounds, each empty, a PSG sound,
- * an FM voice (FM unit layouts) or a drum kit (rhythm mode). Head rows: slot, name, the channel Listen plays on, the
- * sound's type, the page. A PSG sound has the NES editor's envelopes (volume, arpeggio, pitch, noise mode), an FM voice
- * a *Voice* page (built-in instrument or the custom voice's registers as a modulator/carrier grid) and its volume and
- * arpeggio envelopes, a drum kit its *Kit* page (pitched by notes or three fixed pitches).
+ * Sega 8-bit instruments: a musical cartridge Sound face and the exact Advanced editor share one bank of
+ * [SmsSystem.SLOTS] sounds, each empty, PSG, an FM voice (FM layouts) or a rhythm kit (rhythm layouts).
+ * Advanced keeps slot, name, Listen channel, type and page rows; PSG volume/arpeggio/pitch/noise macros; the
+ * OPLL built-in/custom Voice register grid plus volume and arpeggio; and note-following or fixed rhythm-kit pitches.
  * State: [ViewState.instrument], [ViewState.instField] (a [Row] of [rows]), [ViewState.envelope] (the page index),
  * [ViewState.envStep] (Voice grid: the operator 0 modulator / 1 carrier; envelopes: the step), [ViewState.listenChannel].
  */
@@ -129,7 +128,8 @@ object SmsInstrumentView : SystemView() {
         st.instrument = st.instrument.coerceIn(1, SmsSystem.SLOTS)
         st.listenChannel = st.listenChannel.coerceIn(0, song.system.channels.size - 1)
         st.envelope = st.envelope.coerceIn(0, pages(song, st).size - 1)
-        st.instField = st.instField.coerceIn(0, rows(song, st).size - 1)
+        st.instField = st.instField.coerceIn(-1, if (SmsSoundFace.friendly(st)) SmsSoundFace.controls(song, st).size + 1 else rows(song, st).size - 1)
+        SmsSoundFace.settle(song, st)
         when {
             page(song, st) == Page.VOICE -> st.envStep = st.envStep.coerceIn(0, 1)
             envelopeKind(song, st) != null -> st.envStep = st.envStep.coerceIn(0, envelope(song, st)?.let(::lastStep) ?: 0)
@@ -139,10 +139,12 @@ object SmsInstrumentView : SystemView() {
     override fun subject(state: ViewState): Int = state.instrument
 
     override fun applyLock(state: ViewState, subject: Int) {
+        if (state.instrument != subject) state.soundPanel("sms").invalidate()
         state.instrument = subject.coerceIn(1, SmsSystem.SLOTS)
     }
 
     override fun follow(state: ViewState, selection: Selection, song: Song) {
+        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) state.soundPanel("sms").invalidate()
         state.instrument = selection.instrument
         state.listenChannel = selection.channel
     }
@@ -178,6 +180,7 @@ object SmsInstrumentView : SystemView() {
         val st = v.state
         val slot = (st.instrument + delta).coerceIn(1, SmsSystem.SLOTS)
         if (slot == st.instrument) return
+        st.soundPanel("sms").invalidate()
         val row = row(v.session.song, st)
         st.instrument = slot
         FmControls.mostUsedChannel(v.session.song, slot)?.let { st.listenChannel = it }
@@ -186,6 +189,7 @@ object SmsInstrumentView : SystemView() {
     }
 
     override fun direction(v: ViewController, dx: Int, dy: Int) {
+        if (SmsSoundFace.direction(v, dx, dy)) return
         val st = v.state
         val song = v.session.song
         val rows = rows(song, st)
@@ -195,7 +199,7 @@ object SmsInstrumentView : SystemView() {
             v.editHeld -> { v.useEdit(); adjust(v, dx, dy) }
             row == Row.STEPS && v.clearHeld -> { v.useClear(); if (e != null) st.envStep = (st.envStep + COARSE * dx).coerceIn(0, lastStep(e)) }
             dy != 0 -> {
-                st.instField = (st.instField - dy).coerceIn(0, rows.size - 1)
+                st.instField = (st.instField - dy).coerceIn(-1, rows.size - 1)
                 st.textPos = 0
             }
             row == Row.NAME -> st.textPos = (st.textPos + dx).coerceIn(0, NAME_MAX - 1)
@@ -326,6 +330,8 @@ object SmsInstrumentView : SystemView() {
 
     /** The next kind the layout plays: the slot gets its starting sound (keeping its name); undo brings the old one back. */
     private fun switchType(v: ViewController, d: Int): Boolean {
+        v.state.soundPanel("sms").invalidate()
+        if (v.editHeld) v.state.soundPanel("sms").editBlocked = true
         val st = v.state
         val session = v.session
         val layout = layout(session.song)
@@ -367,10 +373,23 @@ object SmsInstrumentView : SystemView() {
     }
 
     override fun editPress(v: ViewController) {
+        v.state.soundPanel("sms").editBlocked = false
+        if (v.state.instField < 0) return
+        if (SmsSoundFace.friendly(v.state)) {
+            if (v.state.instField >= 2 && sound(v.session.song, v.state) != null) audition(v)
+            return
+        }
         if (row(v.session.song, v.state) in SOUND_ROWS && sound(v.session.song, v.state) != null) audition(v)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
+        val panel = v.state.soundPanel("sms")
+        if (panel.editBlocked) { panel.editBlocked = false; if (!v.auditionHeld) v.session.releaseAudition(); return }
+        if (v.state.instField < 0) {
+            if (tap) SmsSoundFace.selectMode(v, !panel.advanced, true)
+            return
+        }
+        if (SmsSoundFace.friendly(v.state)) { if (!v.auditionHeld) v.session.releaseAudition(); return }
         val st = v.state
         val session = v.session
         val row = row(session.song, st)
@@ -407,6 +426,8 @@ object SmsInstrumentView : SystemView() {
     }
 
     override fun clear(v: ViewController) {
+        if (v.state.instField < 0 || v.state.soundPanel("sms").editBlocked) return
+        if (SmsSoundFace.friendly(v.state) && v.state.instField >= 2) return
         val st = v.state
         val session = v.session
         val song = session.song
@@ -472,6 +493,8 @@ object SmsInstrumentView : SystemView() {
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
+        if (SmsSoundFace.command(v, a)) return true
+        if (a == Action.PASTE || a == Action.CUT || a == Action.DUPLICATE) v.state.soundPanel("sms").invalidate()
         val st = v.state
         val session = v.session
         val song = session.song
@@ -507,6 +530,7 @@ object SmsInstrumentView : SystemView() {
     }
 
     override fun hints(v: ViewController, h: MutableList<Hint>) {
+        if (SmsSoundFace.friendly(v.state) || v.state.instField < 0) { SmsSoundFace.hints(v, h); return }
         val st = v.state
         val song = v.session.song
         val row = row(song, st)
@@ -555,6 +579,17 @@ object SmsInstrumentView : SystemView() {
         val channels = keys.pair(Action.PREV_CHANNEL, Action.NEXT_CHANNEL)
         val editLr = keys.held(Action.EDIT, lr)
         return listOf(
+            "Sound face" to listOf(
+                ud to "Select sound slot; $lr cycles musical controls, Name and Sound/Advanced",
+                editLr to "Shape the selected sound control; on Name change a letter, Edit+Up/Down moves the caret",
+                channels to "Choose the audition channel; on empty slots this also chooses PSG, FM or kit. $listen listens, octave shortcuts change pitch",
+                "Touch" to "Drag a control; compact panes have < > paging. + / - selects slots, Listen cycles channels. Sound/Advanced never changes the patch",
+                "PSG" to "Contour chooses Held, Pluck or Swell, Chord an arpeggio, Grain a noise recipe. Complex programs stay Custom until explicitly replaced; Grain is unavailable when a pitch macro occupies the extra envelope",
+                "Game Gear" to "Stereo belongs to pattern pan effects, not instruments; the Sound face never invents a patch pan",
+                "FM" to "Voice recalls built-ins or the preserved custom patch. Brightness, Harmonics, Edge and Contour edit only Custom; one shared custom voice means the latest instrument load wins",
+                "Rhythm" to "Tuning chooses notes or a fixed kit. Kick owns its pitch; snare/hat and tom/cymbal each share a pitch. Fixed pitches remain stored while note tracking is active",
+                "Advanced" to "The original pages below retain all registers, macros, presets and PSG/FM/kit Type creation",
+            ),
             "Instruments" to listOf(
                 ud to "Sound slot, name, Listen channel, type, page, then the page's settings",
                 lr to "On settings: the sound slot; on the voice grid: modulator or carrier; on envelope steps: the step",
@@ -581,5 +616,5 @@ object SmsInstrumentView : SystemView() {
         )
     }
 
-    override fun painter(pane: PaneView): Painter = SmsInstrumentPainter(pane)
+    override fun painter(pane: PaneView): Painter = SmsSoundPainter(pane)
 }
