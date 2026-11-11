@@ -16,18 +16,114 @@ import org.thortracker.ui.Rect
 import org.thortracker.ui.Surface
 
 /**
- * SID instrument editor. Left: the 63 slots of the shared bank with how often each is used. Right: name, the voice
- * Listen plays on, page tabs, then the page: the envelope settings over the drawn ADSR curve; a program as rows of
- * columns (the cursor on one column), its loops marked, with the pulse width or cutoff it plays over time; vibrato
- * and hard restart; or the song's tables as the player reads them, each row with the program that owns it.
+ * The header and the left column shared by Sound and Advanced: the 63 slots of the shared bank with how often each is
+ * used. One instance serves both faces, so switching face never changes the list, its scroll or its hit testing.
  */
-internal class SidAdvancedPainter(v: PaneView) : Painter(v) {
-    private val tabs = ArrayList<Pair<Rect, Int>>()
-    private val tableTabs = ArrayList<Pair<Rect, Int>>()
+internal class SidBankPainter(v: PaneView) : Painter(v) {
     private var slotTop = 0f
     private var slotH = 0f
-    private var slotRect = Rect()
+    private val slotRect = Rect()
+    private val outline = Rect()
     private var slotScroll = 0
+    /** The face's area after [draw]: below the header, right of the bank. */
+    val content = Rect()
+
+    private var usageSong: Song? = null
+    private val usage = HashMap<Int, Int>()
+
+    override fun draw(c: Surface, area: Rect) = draw(c, area, false)
+
+    /** [focused]: the bank itself holds the cursor, outlined in [cursorColor]. */
+    fun draw(c: Surface, area: Rect, focused: Boolean) {
+        val s = song
+        val col = ink.palette.channel(st.listenChannel)
+        val locked = if (st.lockedSubject >= 0) "  locked" else ""
+        val top = header(c, area, "Sound ${hex2(st.instrument)}", "C64 SID · ${s.sid.chip.label}$locked  ${usageText(st.instrument)}")
+
+        // scrolled to keep the selected slot in view
+        val leftW = minOf(area.width() * 0.28f, ink.unit * 13f)
+        val left = area.left
+        val right = area.left + leftW
+        ink.rect(c, left, top, right, area.bottom, ink.palette.LANE)
+        slotTop = top + ink.unit * 0.2f
+        slotH = ink.unit * 1.45f
+        val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
+        slotScroll = slotScroll.coerceIn(maxOf(0, st.instrument - visible), minOf(st.instrument - 1, SidSystem.SLOTS - visible).coerceAtLeast(0))
+        slotRect.set(left, slotTop, right, slotTop + slotH * visible)
+        val bank = s.sid.instruments
+        for (k in 0 until minOf(visible, SidSystem.SLOTS - slotScroll)) {
+            val i = slotScroll + k + 1
+            val y = slotTop + k * slotH
+            val sel = i == st.instrument
+            if (sel) {
+                ink.rect(c, left, y, right, y + slotH, ink.palette.CURSOR_FILL)
+                ink.rect(c, left, y, left + ink.dp(3f), y + slotH, col)
+            }
+            val sz = minOf(ink.unit, slotH * 0.72f)
+            ink.mono(c, hex2(i), left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
+            val used = usage(i)
+            val nameColor = if (sel) ink.palette.TEXT else if (used > 0) ink.palette.DIM else ink.palette.FAINT
+            ink.label(c, ink.fit(bank[i - 1].name, leftW - ink.unit * 4.6f, sz), left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
+            if (used > 0) ink.mono(c, used.toString(), right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
+        }
+        if (focused) {
+            val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
+            outline.set(left + 2, y + 1, right - 2, y + slotH - 1)
+            ink.outline(c, outline, cursorColor(), ink.dp(2f), ink.dp(3f))
+        }
+        content.set(right, top, area.right, area.bottom)
+    }
+
+    fun cursorColor() = when {
+        ctl.editHeld -> ink.palette.WRITE
+        ctl.auditionHeld -> ink.palette.LISTEN
+        v.controllerFocused -> ink.palette.FOCUS
+        else -> ink.palette.DIM
+    }
+
+    /** The slot drawn at ([x], [y]), or 0. */
+    fun slotAt(x: Float, y: Float): Int =
+        if (slotRect.contains(x, y)) (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, SidSystem.SLOTS) else 0
+
+    /** Where [slot] is drawn, written to [out]; null while it is scrolled out of the list. */
+    fun slotBounds(slot: Int, out: Rect): Rect? {
+        val k = slot - 1 - slotScroll
+        if (slotH <= 0f || slot !in 1..SidSystem.SLOTS || k < 0 || slotTop + (k + 1) * slotH > slotRect.bottom) return null
+        out.set(slotRect.left, slotTop + k * slotH, slotRect.right, slotTop + (k + 1) * slotH)
+        return out
+    }
+
+    private fun usage(slot: Int): Int {
+        val s = song
+        if (s !== usageSong) {
+            usage.clear()
+            val counted = HashSet<Int>()
+            for (pat in s.orders) {
+                if (!counted.add(pat)) continue
+                for (ch in 0 until s.channelCount()) for (cell in s.patterns[pat].tracks[ch]) {
+                    if (cell.instrument > 0) usage[cell.instrument] = (usage[cell.instrument] ?: 0) + 1
+                }
+            }
+            usageSong = s
+        }
+        return usage[slot] ?: 0
+    }
+
+    private fun usageText(slot: Int): String {
+        val n = usage(slot)
+        return if (n == 0) "not used in the arrangement yet" else "used on $n row${if (n == 1) "" else "s"}"
+    }
+}
+
+/**
+ * SID instrument editor. Left: the shared [SidBankPainter]. Right: name, the voice Listen plays on, page tabs, then
+ * the page: the envelope settings over the drawn ADSR curve; a program as rows of columns (the cursor on one column),
+ * its loops marked, with the pulse width or cutoff it plays over time; vibrato and hard restart; or the song's tables
+ * as the player reads them, each row with the program that owns it.
+ */
+internal class SidAdvancedPainter(v: PaneView, private val bank: SidBankPainter) : Painter(v) {
+    private val tabs = ArrayList<Pair<Rect, Int>>()
+    private val tableTabs = ArrayList<Pair<Rect, Int>>()
     private var listRect = Rect()
     private var listRowH = 0f
     private var listScroll = 0
@@ -35,51 +131,19 @@ internal class SidAdvancedPainter(v: PaneView) : Painter(v) {
     /** Right end of the settings column, for fitting values. */
     private var rightEdge = 0f
 
-    private var usageSong: Song? = null
-    private val usage = HashMap<Int, Int>()
-
     override fun draw(c: Surface, area: Rect) {
         val s = song
         val ins = SidInstrumentView.sound(s, st) ?: return
         val page = SidInstrumentView.page(st)
         val col = ink.palette.channel(st.listenChannel)
-        val locked = if (st.lockedSubject >= 0) "  locked" else ""
-        val top = header(c, area, "Sound ${hex2(st.instrument)}", "C64 SID · ${s.sid.chip.label}$locked  ${usageText(st.instrument)}")
         val row = SidInstrumentView.row(st)
-
-        // left column: the bank, scrolled to keep the selected slot in view
-        val leftW = minOf(area.width() * 0.28f, ink.unit * 13f)
-        val left = Rect(area.left, top, area.left + leftW, area.bottom)
-        ink.rect(c, left, ink.palette.LANE)
-        slotTop = top + ink.unit * 0.2f
-        slotH = ink.unit * 1.45f
-        val visible = maxOf(1, ((area.bottom - slotTop) / slotH).toInt())
-        slotScroll = slotScroll.coerceIn(maxOf(0, st.instrument - visible), minOf(st.instrument - 1, SidSystem.SLOTS - visible).coerceAtLeast(0))
-        slotRect = Rect(left.left, slotTop, left.right, slotTop + slotH * visible)
-        val bank = s.sid.instruments
-        for (k in 0 until minOf(visible, SidSystem.SLOTS - slotScroll)) {
-            val i = slotScroll + k + 1
-            val y = slotTop + k * slotH
-            val sel = i == st.instrument
-            if (sel) {
-                ink.rect(c, left.left, y, left.right, y + slotH, ink.palette.CURSOR_FILL)
-                ink.rect(c, left.left, y, left.left + ink.dp(3f), y + slotH, col)
-            }
-            val sz = minOf(ink.unit, slotH * 0.72f)
-            ink.mono(c, hex2(i), left.left + ink.unit * 0.6f, y, slotH, if (sel) col else ink.palette.FAINT, sel, sz)
-            val used = usage(i)
-            val nameColor = if (sel) ink.palette.TEXT else if (used > 0) ink.palette.DIM else ink.palette.FAINT
-            ink.label(c, ink.fit(bank[i - 1].name, leftW - ink.unit * 4.6f, sz), left.left + ink.unit * 2.4f, y, slotH, nameColor, size = sz)
-            if (used > 0) ink.mono(c, used.toString(), left.right - ink.unit * 0.5f, y, slotH, ink.palette.FAINT, size = sz * 0.8f, align = Align.RIGHT)
-        }
-        if (row == Row.SLOT) {
-            val y = slotTop + (st.instrument - 1 - slotScroll) * slotH
-            ink.outline(c, Rect(left.left + 2, y + 1, left.right - 2, y + slotH - 1), cursorColor(), ink.dp(2f), ink.dp(3f))
-        }
+        // The Slot row only: the mode row's focus (-1) is drawn on the tabs, the same in both faces.
+        bank.draw(c, area, st.instField == 0)
+        val top = bank.content.top
 
         // right column: settings rows
         val pad = ink.unit * 0.9f
-        val rx = left.right + pad
+        val rx = bank.content.left + pad
         val rw = area.right - pad - rx
         rightEdge = rx + rw
         val rowH = ink.unit * 1.5f
@@ -166,12 +230,7 @@ internal class SidAdvancedPainter(v: PaneView) : Painter(v) {
         ink.label(c, ink.fit(value, max, ink.unit, sel), vx, y, h, if (sel) (if (off) ink.palette.DIM else ink.palette.TEXT) else (if (off) ink.palette.FAINT else ink.palette.DIM), sel)
     }
 
-    private fun cursorColor() = when {
-        ctl.editHeld -> ink.palette.WRITE
-        ctl.auditionHeld -> ink.palette.LISTEN
-        v.controllerFocused -> ink.palette.FOCUS
-        else -> ink.palette.DIM
-    }
+    private fun cursorColor() = bank.cursorColor()
 
     /** Page tabs; program tabs carry their row count. */
     private fun drawTabs(c: Surface, ins: SidInstrument, r: Rect, col: Int) {
@@ -483,29 +542,6 @@ internal class SidAdvancedPainter(v: PaneView) : Painter(v) {
             " · or funktempo $l/$r"
     }
 
-    // ---- usage ----------------------------------------------------------------------------------------
-
-    private fun usage(slot: Int): Int {
-        val s = song
-        if (s !== usageSong) {
-            usage.clear()
-            val counted = HashSet<Int>()
-            for (pat in s.orders) {
-                if (!counted.add(pat)) continue
-                for (ch in 0 until s.channelCount()) for (cell in s.patterns[pat].tracks[ch]) {
-                    if (cell.instrument > 0) usage[cell.instrument] = (usage[cell.instrument] ?: 0) + 1
-                }
-            }
-            usageSong = s
-        }
-        return usage[slot] ?: 0
-    }
-
-    private fun usageText(slot: Int): String {
-        val n = usage(slot)
-        return if (n == 0) "not used in the arrangement yet" else "used on $n row${if (n == 1) "" else "s"}"
-    }
-
     // ---- touch ----------------------------------------------------------------------------------------
 
     override fun down(x: Float, y: Float): Boolean {
@@ -515,8 +551,9 @@ internal class SidAdvancedPainter(v: PaneView) : Painter(v) {
             st.instField = SidInstrumentView.rows(st).indexOf(Row.TABLE)
             return true
         }
-        if (slotRect.contains(x, y)) {
-            st.instrument = (((y - slotTop) / slotH).toInt() + slotScroll + 1).coerceIn(1, SidSystem.SLOTS)
+        val slot = bank.slotAt(x, y)
+        if (slot > 0) {
+            st.instrument = slot
             st.instField = 0
             SidInstrumentView.publish(ctl)
             return true

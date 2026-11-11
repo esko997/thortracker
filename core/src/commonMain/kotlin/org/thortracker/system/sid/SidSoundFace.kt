@@ -37,37 +37,43 @@ internal object SidSoundFace {
         set(v, v.state.instrument, control, next)
     }
 
-    /** Handles the shared mode row in either face, and all navigation in Sound. */
+    /**
+     * Handles the shared mode row in either face, and all navigation in Sound: Up/Down choose the slot wherever the
+     * cursor is, Left/Right walk mode, name and controls, and Edit+direction changes what is focused. On the name,
+     * Edit+Left/Right changes the letter and Edit+Up/Down moves between letters.
+     */
     fun direction(v: ViewController, dx: Int, dy: Int): Boolean {
         val st = v.state
         val panel = st.sidPanel
         panel.invalidate()
         if (panel.editBlocked && v.editHeld) { v.useEdit(); return true }
-        if (st.instField == -1) {
-            if (v.editHeld) v.useEdit()
-            if (dx != 0) selectMode(v, dx > 0, true)
-            else if (dy < 0) st.instField = 0
-            return true
-        }
         if (panel.advanced) {
+            if (st.instField == -1) {
+                if (v.editHeld) v.useEdit()
+                if (dx != 0) selectMode(v, dx > 0, true)
+                else if (dy < 0) st.instField = 0
+                return true
+            }
             if (!v.editHeld && st.instField == 0 && dy > 0) { st.instField = -1; return true }
             return false
         }
         if (v.editHeld) {
             v.useEdit()
             when (st.instField) {
-                0 -> SidInstrumentView.moveSlot(v, dx + dy * 8)
-                1 -> v.session.editSidInstrument(st.instrument, "Rename sound") {
-                    it.copy(name = NameEdit.edit(it.name, st.textPos, dx + 26 * dy, SidInstrument.NAME_MAX))
+                -1 -> if (dx != 0) selectMode(v, dx > 0, true)
+                0 -> SidInstrumentView.moveSlot(v, dx - dy * 8)
+                1 -> if (dx != 0) {
+                    v.session.editSidInstrument(st.instrument, "Rename sound") {
+                        it.copy(name = NameEdit.edit(it.name, st.textPos, dx, SidInstrument.NAME_MAX))
+                    }
+                } else {
+                    st.textPos = (st.textPos - dy).coerceIn(0, SidInstrument.NAME_MAX - 1)
                 }
                 else -> step(v, dx + dy)
             }
         } else if (dy != 0) {
-            st.instField = (st.instField - dy).coerceIn(-1, SidSoundControl.entries.size + 1)
-            st.textPos = 0
-        } else if (st.instField == 1) {
-            st.textPos = (st.textPos + dx).coerceIn(0, SidInstrument.NAME_MAX - 1)
-        } else SidInstrumentView.moveSlot(v, dx)
+            SidInstrumentView.moveSlot(v, -dy)
+        } else MusicalPanelMode.cycleSoundField(v, panel, SidSoundControl.entries.size, dx)
         return true
     }
 
@@ -108,15 +114,30 @@ internal object SidSoundFace {
     }
 
     fun hints(v: ViewController, h: MutableList<Hint>): Boolean {
-        if (v.state.instField == -1) {
+        val st = v.state
+        if (st.sidPanel.advanced) {
+            if (st.instField != -1) return false
             h += Hint(v.lr(), "Sound / Advanced")
             h += Hint(v.k(Action.EDIT), "Switch face")
             return true
         }
-        if (v.state.sidPanel.advanced) return false
-        h += Hint(v.ud(), "Choose control")
-        h += Hint(v.editLr(), if (v.state.instField == 1) "Change letter" else "Shape sound")
-        h += Hint(v.lr(), if (v.state.instField == 1) "Letter position" else "Sound slot")
+        h += Hint(v.ud(), "Sound slot")
+        when (st.instField) {
+            -1 -> {
+                h += Hint(v.lr(), "Name and controls")
+                h += Hint(v.editLr(), "Sound / Advanced")
+                h += Hint(v.k(Action.EDIT), "Switch face")
+                return true
+            }
+            1 -> {
+                h += Hint(v.lr(), "Choose control")
+                h += Hint(v.editLr(), "Change letter")
+                h += Hint(v.editUd(), "Previous / next letter")
+                return true
+            }
+        }
+        h += Hint(v.lr(), "Choose control")
+        h += Hint(v.editLr(), "Shape sound")
         h += Hint(v.channels(), "Listen voice")
         h += Hint(v.k(Action.AUDITION), "Listen")
         h += Hint(v.octaves(), "Listen pitch")

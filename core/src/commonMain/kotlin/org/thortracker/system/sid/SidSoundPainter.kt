@@ -14,8 +14,10 @@ import org.thortracker.ui.Surface
 
 /** The mode switch is presentation only. The original complete program editor is kept behind Advanced. */
 internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
-    private val advanced = SidAdvancedPainter(v)
-    private val sound = SidSoundPainter(v)
+    /** One header and slot list for both faces: identical drawing, scroll and hit testing in Sound and Advanced. */
+    private val bank = SidBankPainter(v)
+    private val advanced = SidAdvancedPainter(v, bank)
+    private val sound = SidSoundPainter(v, bank)
     private val modes = Array(2) { Rect() }
     private val body = Rect()
     private var wasAdvanced = st.sidPanel.advanced
@@ -49,7 +51,9 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
     internal fun navigationRect(forward: Boolean): Rect? = sound.navigationRect(forward)
     internal fun slotNavigationRect(forward: Boolean): Rect = sound.slotNavigationRect(forward)
     internal fun listenRect(): Rect = sound.listenRect()
-    internal fun slotRect(slot: Int): Rect? = sound.slotRect(slot)
+    internal fun nameRect(): Rect = sound.nameRect()
+    /** The shared list's row for [slot] in either face, or null while it is scrolled out. */
+    internal fun slotRect(slot: Int): Rect? = bank.slotBounds(slot, Rect())
 
     override fun down(x: Float, y: Float): Boolean {
         cancel()
@@ -67,8 +71,9 @@ internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
 /**
  * A small programmable synth: blue signal display, beige waveform keys, amber fader caps on one continuous deck.
  * Deliberately not five interchangeable cards. Traces show the patch's oscillator/ADSR, never an invented spectrum.
+ * The header and slot list are Advanced's own [SidBankPainter]; only the deck right of it is themed.
  */
-internal class SidSoundPainter(v: PaneView) : Painter(v) {
+internal class SidSoundPainter(v: PaneView, private val bank: SidBankPainter) : Painter(v) {
     private companion object {
         const val BLUE = 0xFF25216B.toInt()
         const val VIOLET = 0xFF706DE8.toInt()
@@ -76,7 +81,7 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
         const val BEIGE = 0xFFD8CEB5.toInt()
         const val AMBER = 0xFFF0B35C.toInt()
         const val KEY_INK = 0xFF25213A.toInt()
-        val SLOT_NUMBERS = Array(SidSystem.SLOTS) { org.thortracker.editor.EditorSession.hex2(it + 1) }
+        val SLOT_STEPS = arrayOf("↑", "↓")
         val VOICES = arrayOf("Listen 1", "Listen 2", "Listen 3")
         val EDIT_LABELS = Array(5) { "Set SID ${SidSoundControl.entries[it].label.lowercase()}" }
     }
@@ -87,7 +92,6 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
     private val controls = Array(5) { Rect() }
     private val rails = Array(5) { Rect() }
     private val keys = Array(4) { Rect() }
-    private val slotRows = Array(SidSystem.SLOTS) { Rect() }
     private val previous = Rect()
     private val next = Rect()
     private val slotPrevious = Rect()
@@ -95,21 +99,16 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
     private val nameRect = Rect()
     private val listen = Rect()
     private val screen = Rect()
-    private val bank = Rect()
     private val deck = Rect()
-    private val fittedNames = Array(SidSystem.SLOTS) { "" }
+    private val caret = Rect()
     private val values = Array(5) { "" }
     private val indices = IntArray(5)
     private val enabled = BooleanArray(5)
     private val overridden = BooleanArray(5)
     private var cachedIns: SidInstrument? = null
-    private var cachedSound: SidSound? = null
-    private var cachedWidth = -1f
     private var cachedTitleWidth = -1f
     private var cachedUnit = -1f
     private var name = ""
-    private var slotStart = 1
-    private var slotCount = 1
     private var compact = false
     private var waveform = -1
     private var pulseWidth = 0.5f
@@ -121,16 +120,11 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
 
     private fun selected(): Int = (st.instField - 2).coerceIn(0, 4)
 
-    private fun cache(ins: SidInstrument, width: Float) {
-        val titleWidth = deck.width() - ink.dp(94.4f)
+    private fun cache(ins: SidInstrument) {
+        val titleWidth = nameRect.width()
         if (cachedIns !== ins || cachedTitleWidth != titleWidth || cachedUnit != ink.unit) {
             name = ink.fit(ins.name.ifEmpty { "(unnamed)" }, titleWidth, ink.unit * 0.9f, true)
             cachedTitleWidth = titleWidth
-        }
-        if (cachedSound !== song.sid || cachedWidth != width || cachedUnit != ink.unit) {
-            for (i in fittedNames.indices) fittedNames[i] = ink.fit(song.sid.instruments[i].name, width - ink.dp(30f), ink.unit * 0.8f)
-            cachedSound = song.sid
-            cachedWidth = width
             cachedUnit = ink.unit
         }
         if (cachedIns === ins) return
@@ -172,19 +166,21 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
         val beige = if (contrast) p.LANE else BEIGE
         val touch = ink.dp(48f)
         val gap = ink.dp(8f)
-        val leftW = minOf(maxOf(area.width() * 0.28f, ink.dp(96f)), ink.dp(172f), area.width() * 0.4f)
-        bank.set(area.left, area.top, area.left + leftW, area.bottom)
-        deck.set(bank.right + gap, area.top, area.right, area.bottom)
-        ink.rect(c, bank, p.LANE)
+        bank.draw(c, area, st.instField == 0)
+        deck.set(bank.content.left + gap, bank.content.top, area.right, area.bottom)
         ink.rect(c, deck, blue)
-        cache(ins, bank.width())
-        drawBank(c, touch)
+        // Title row: slot steps (every slot reachable by touch at touch size), name, and the voice Listen plays on.
         val titleH = touch
-        nameRect.set(deck.left + gap, deck.top, deck.right - touch * 1.8f, deck.top + titleH)
+        slotPrevious.set(deck.left, deck.top, deck.left + touch, deck.top + titleH)
+        slotNext.set(slotPrevious.right, deck.top, slotPrevious.right + touch, deck.top + titleH)
+        nameRect.set(slotNext.right + gap, deck.top, deck.right - touch * 1.8f, deck.top + titleH)
         listen.set(nameRect.right, deck.top, deck.right, deck.top + titleH)
+        cache(ins)
+        ink.label(c, SLOT_STEPS[0], slotPrevious.centerX(), slotPrevious.top, titleH, signal, true, align = Align.CENTER)
+        ink.label(c, SLOT_STEPS[1], slotNext.centerX(), slotNext.top, titleH, signal, true, align = Align.CENTER)
         ink.label(c, name, nameRect.left, nameRect.top, nameRect.height(), signal, true, size = ink.unit * 0.9f)
         ink.label(c, VOICES[st.listenChannel.coerceIn(0, 2)], listen.centerX(), listen.top, listen.height(), signal, align = Align.CENTER, size = ink.unit * 0.8f)
-        if (st.instField == 1) ink.outline(c, nameRect, p.FOCUS, ink.dp(2f))
+        if (st.instField == 1) drawNameFocus(c, ins.name, p.FOCUS)
         compact = deck.height() < touch * 6.4f || deck.width() < ink.dp(340f)
         for (r in controls) r.set(0f, 0f, 0f, 0f)
         previous.set(0f, 0f, 0f, 0f); next.set(0f, 0f, 0f, 0f)
@@ -221,27 +217,17 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
         ink.label(c, detail, deck.left + gap, footY + footer / 2, footer / 2, signal, size = ink.unit * 0.65f)
     }
 
-    private fun drawBank(c: Surface, touch: Float) {
-        val p = ink.palette
-        slotPrevious.set(bank.left, bank.top, bank.centerX(), bank.top + touch)
-        slotNext.set(bank.centerX(), bank.top, bank.right, bank.top + touch)
-        ink.label(c, "‹", slotPrevious.centerX(), slotPrevious.top, touch, p.TEXT, true, align = Align.CENTER)
-        ink.label(c, "›", slotNext.centerX(), slotNext.top, touch, p.TEXT, true, align = Align.CENTER)
-        slotCount = maxOf(1, ((bank.height() - touch) / touch).toInt())
-        slotStart = slotStart.coerceIn(maxOf(1, st.instrument - slotCount + 1), st.instrument)
-        slotStart = slotStart.coerceAtMost(maxOf(1, SidSystem.SLOTS - slotCount + 1))
-        for (r in slotRows) r.set(0f, 0f, 0f, 0f)
-        for (i in 0 until slotCount) {
-            val slot = slotStart + i
-            if (slot > SidSystem.SLOTS) break
-            val r = slotRows[slot - 1]
-            r.set(bank.left, slotPrevious.bottom + i * touch, bank.right, slotPrevious.bottom + (i + 1) * touch)
-            val on = slot == st.instrument
-            if (on) ink.rect(c, r, p.CURSOR_FILL)
-            ink.mono(c, SLOT_NUMBERS[slot - 1], r.left + ink.dp(4f), r.top, r.height(), if (on) p.TEXT else p.FAINT, size = ink.unit * 0.75f)
-            ink.label(c, fittedNames[slot - 1], r.left + ink.dp(28f), r.top, r.height(), if (on) p.TEXT else p.DIM, size = ink.unit * 0.8f)
-            if (on && st.instField == 0) ink.outline(c, r, p.FOCUS, ink.dp(2f))
-        }
+    /** The letter Edit+Left/Right changes, at the position Edit+Up/Down moves (blank past the end of the name). */
+    private fun drawNameFocus(c: Surface, text: String, focus: Int) {
+        ink.outline(c, nameRect, focus, ink.dp(2f))
+        val size = ink.unit * 0.9f
+        val pos = st.textPos
+        val cx = nameRect.left + if (pos <= text.length) ink.labelWidth(text.substring(0, pos), size, true)
+            else ink.labelWidth(text, size, true) + (pos - text.length) * ink.labelWidth(" ", size, true)
+        val w = maxOf(if (pos < text.length) ink.labelWidth(text.substring(pos, pos + 1), size, true) else 0f, size * 0.5f)
+        if (cx + w > nameRect.right) return // Past the fitted text: the outline alone marks the name.
+        caret.set(cx - 1, nameRect.top + ink.dp(6f), cx + w + 1, nameRect.bottom - ink.dp(6f))
+        ink.outline(c, caret, focus, ink.dp(2f), ink.dp(2f))
     }
 
     private fun drawControl(c: Surface, i: Int, beige: Int, signal: Int, contrast: Boolean) {
@@ -359,20 +345,20 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
     internal fun navigationRect(forward: Boolean): Rect? = (if (forward) next else previous).takeIf { it.width() > 0f }
     internal fun slotNavigationRect(forward: Boolean): Rect = if (forward) slotNext else slotPrevious
     internal fun listenRect(): Rect = listen
-    internal fun slotRect(slot: Int): Rect? = slotRows.getOrNull(slot - 1)?.takeIf { it.height() > 0f }
+    internal fun nameRect(): Rect = nameRect
 
     override fun down(x: Float, y: Float): Boolean {
         finish()
         if (st.sidPanel.advanced) return false
         if (ctl.editHeld) ctl.useEdit()
+        // Slot changes keep the focused control: the list chooses what is edited, not what has focus.
         if (slotPrevious.contains(x, y) || slotNext.contains(x, y)) {
-            SidInstrumentView.moveSlot(ctl, if (slotNext.contains(x, y)) slotCount else -slotCount)
-            st.instField = 0
+            SidInstrumentView.moveSlot(ctl, if (slotNext.contains(x, y)) 1 else -1)
             return true
         }
-        for (i in slotRows.indices) if (slotRows[i].contains(x, y)) {
-            SidInstrumentView.moveSlot(ctl, i + 1 - st.instrument)
-            st.instField = 0
+        val slot = bank.slotAt(x, y)
+        if (slot > 0) {
+            if (slot == st.instrument) SidInstrumentView.publish(ctl) else SidInstrumentView.moveSlot(ctl, slot - st.instrument)
             return true
         }
         if (previous.contains(x, y) || next.contains(x, y)) {
@@ -386,7 +372,11 @@ internal class SidSoundPainter(v: PaneView) : Painter(v) {
             if (ctl.auditionHeld) SidInstrumentView.audition(ctl)
             return true
         }
-        if (nameRect.contains(x, y)) { st.instField = 1; return true }
+        if (nameRect.contains(x, y)) {
+            if (st.instField != 1) st.textPos = 0
+            st.instField = 1
+            return true
+        }
         val ins = SidInstrumentView.sound(song, st) ?: return false
         for (control in SidSoundControl.entries) {
             val i = control.ordinal

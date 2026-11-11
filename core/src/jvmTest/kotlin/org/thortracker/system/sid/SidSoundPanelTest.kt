@@ -31,21 +31,156 @@ class SidSoundPanelTest {
         press(a); for (m in moves) tap(m); release(a)
     }
 
-    @Test fun nameCursorStopsAtTheLastEditableCharacter() {
+    @Test fun nameCaretMovesWithEditUpDownAndStopsAtTheLastEditableCharacter() {
         val s = EditorSession(SidSystem.blank())
         val original = "ABCDEFGHIJKLMNOP"
         s.setSidInstrument(1, SidInstrument(name = original))
         val p = panel(s)
         p.state.instField = 1
-        repeat(32) { p.ctl.tap(Action.RIGHT) }
+        val before = s.song
+        p.ctl.hold(Action.EDIT, *Array(32) { Action.DOWN })
         assertEquals(SidInstrument.NAME_MAX - 1, p.state.textPos)
+        assertEquals(1, p.state.instField)
+        assertEquals(1, p.state.instrument)
+        assertSame(before, s.song) // Moving between letters never edits.
         p.ctl.hold(Action.EDIT, Action.RIGHT)
         assertEquals("ABCDEFGHIJKLMNOQ", s.song.sid.instruments[0].name)
         s.undo()
         assertEquals(original, s.song.sid.instruments[0].name)
-        repeat(32) { p.ctl.tap(Action.LEFT) }
+        p.ctl.hold(Action.EDIT, Action.UP)
+        assertEquals(SidInstrument.NAME_MAX - 2, p.state.textPos)
+        p.ctl.hold(Action.EDIT, *Array(32) { Action.UP })
         assertEquals(0, p.state.textPos)
+        assertSame(before, s.song)
+        assertTrue(p.ctl.hints().any { it.text == "Previous / next letter" })
+        assertTrue(p.ctl.hints().any { it.text == "Change letter" })
+        // Bare directions on the name navigate: vertical chooses the slot, horizontal walks the fields.
+        p.ctl.tap(Action.DOWN)
+        assertEquals(2, p.state.instrument)
+        assertEquals(1, p.state.instField)
+        p.ctl.tap(Action.RIGHT)
+        assertEquals(2, p.state.instField)
+        p.ctl.tap(Action.LEFT)
+        assertEquals(1, p.state.instField)
+        assertEquals(0, p.state.textPos)
+        p.ctl.tap(Action.LEFT)
+        assertEquals(-1, p.state.instField)
+        assertSame(before, s.song)
     }
+
+    @Test fun soundUpDownChoosesSlotsAndLeftRightWalksModeNameAndControls() {
+        val s = EditorSession(SidSystem.blank())
+        val p = panel(s)
+        val before = s.song
+        p.state.instField = 4
+        p.ctl.tap(Action.DOWN)
+        assertEquals(2, p.state.instrument)
+        assertEquals(4, p.state.instField)
+        p.ctl.tap(Action.UP)
+        p.ctl.tap(Action.UP)
+        assertEquals(1, p.state.instrument)
+        assertEquals(4, p.state.instField)
+        val ring = ArrayList<Int>()
+        repeat(8) { p.ctl.tap(Action.RIGHT); ring += p.state.instField }
+        assertEquals(listOf(5, 6, -1, 1, 2, 3, 4, 5), ring)
+        repeat(6) { p.ctl.tap(Action.LEFT) }
+        assertEquals(6, p.state.instField)
+        // The mode row keeps its focus while Up/Down choose the slot; only Edit changes the face.
+        p.state.instField = -1
+        p.ctl.tap(Action.DOWN)
+        assertEquals(2, p.state.instrument)
+        assertEquals(-1, p.state.instField)
+        assertFalse(p.state.sidPanel.advanced)
+        p.ctl.hold(Action.EDIT, Action.RIGHT)
+        assertTrue(p.state.sidPanel.advanced)
+        assertEquals(-1, p.state.instField)
+        p.ctl.hold(Action.EDIT, Action.LEFT)
+        assertFalse(p.state.sidPanel.advanced)
+        assertEquals(-1, p.state.instField)
+        p.ctl.tap(Action.EDIT)
+        assertTrue(p.state.sidPanel.advanced)
+        p.ctl.tap(Action.EDIT)
+        assertFalse(p.state.sidPanel.advanced)
+        assertEquals(-1, p.state.instField)
+        p.ctl.tap(Action.LEFT)
+        assertEquals(6, p.state.instField)
+        assertFalse(p.state.sidPanel.advanced)
+        // A fresh view starts on the slot (field 0); the walk joins the ring from there.
+        p.state.instField = 0
+        p.ctl.tap(Action.RIGHT)
+        assertEquals(2, p.state.instField)
+        assertSame(before, s.song)
+    }
+
+    @Test fun advancedKeepsItsPreciseRowNavigation() {
+        val s = EditorSession(SidSystem.blank())
+        s.setSidInstrument(1, SidInstrument(name = "ABC"))
+        val p = panel(s)
+        SidSoundFace.selectMode(p.ctl, true)
+        p.state.instField = 0
+        val before = s.song
+        p.ctl.tap(Action.RIGHT)
+        assertEquals(2, p.state.instrument)
+        assertEquals(0, p.state.instField)
+        p.ctl.tap(Action.LEFT)
+        p.ctl.tap(Action.DOWN)
+        assertEquals(SidInstrumentView.Row.NAME, SidInstrumentView.row(p.state))
+        p.ctl.tap(Action.RIGHT)
+        assertEquals(1, p.state.textPos)
+        assertEquals(1, p.state.instrument)
+        p.ctl.tap(Action.UP)
+        assertEquals(0, p.state.instField)
+        p.ctl.tap(Action.UP)
+        assertEquals(-1, p.state.instField)
+        p.ctl.tap(Action.DOWN)
+        assertEquals(0, p.state.instField)
+        assertTrue(p.state.sidPanel.advanced)
+        assertSame(before, s.song)
+    }
+
+    @Test fun soundAndAdvancedShareTheIdenticalListAndItsHitTestingOnBothChips() {
+        for (chip in SidChip.entries) {
+            val s = EditorSession(SidSystem.blank())
+            s.editSidSound("Chip") { it.copy(chip = chip) }
+            s.setSidInstrument(1, arbitrary())
+            s.setSidInstrument(30, SidInstrument(name = "Far away"))
+            for ((width, height) in listOf(1000 to 700, 480 to 300)) {
+                val p = panel(s, width, height)
+                p.state.instrument = 30
+                for ((soundField, advancedField) in listOf(3 to 2, 0 to 0, -1 to -1)) {
+                    SidSoundFace.selectMode(p.ctl, false)
+                    p.state.instField = soundField
+                    p.draw()
+                    val listRight = p.painter.slotRect(30)!!.right
+                    val sound = p.surface.ops.filter { it.first < listRight - 0.01f }.map { it.second }
+                    SidSoundFace.selectMode(p.ctl, true)
+                    p.state.instField = advancedField
+                    p.draw()
+                    val advanced = p.surface.ops.filter { it.first < listRight - 0.01f }.map { it.second }
+                    assertEquals("$chip ${width}x$height", sound, advanced)
+                    assertTrue(sound.any { it.contains("Far away") })
+                    assertTrue(sound.any { it.contains("C64 SID · ${chip.label}") })
+                }
+                // One hit test: Sound keeps the focused control, Advanced moves to its Slot row.
+                val row = p.painter.slotRect(29)!!
+                SidSoundFace.selectMode(p.ctl, false)
+                p.state.instField = 5
+                p.draw()
+                assertEquals(row.bounds(), p.painter.slotRect(29)!!.bounds())
+                p.tap(row)
+                assertEquals(29, p.state.instrument)
+                assertEquals(5, p.state.instField)
+                SidSoundFace.selectMode(p.ctl, true)
+                p.state.instField = 3
+                p.draw()
+                p.tap(p.painter.slotRect(30)!!)
+                assertEquals(30, p.state.instrument)
+                assertEquals(0, p.state.instField)
+            }
+        }
+    }
+
+    private fun Rect.bounds() = listOf(left, top, right, bottom)
 
     @Test fun arbitraryReadbackAndEveryFaceSwitchAreReadOnlyOnBothChips() {
         for (chip in SidChip.entries) {
@@ -258,7 +393,7 @@ class SidSoundPanelTest {
         }
     }
 
-    @Test fun compactControlsAndNamedSlotsAreReachableAtTouchSize() {
+    @Test fun compactControlsAndEverySlotAreReachableAtTouchSize() {
         val p = panel(EditorSession(SidSystem.blank()), 480, 300)
         for (i in 0..4) {
             p.draw()
@@ -270,14 +405,25 @@ class SidSoundPanelTest {
             assertTrue(nav.width() >= 48f && nav.height() >= 48f)
             p.tap(nav)
         }
+        val focus = p.state.instField
         var last = 1
         repeat(63) {
             p.draw()
             assertNotNull(p.painter.slotRect(p.state.instrument))
+            val step = p.painter.slotNavigationRect(true)
+            assertTrue(step.width() >= 48f && step.height() >= 48f)
+            assertTrue(step.right <= p.area.right && step.bottom <= p.area.bottom)
             last = p.state.instrument
-            p.tap(p.painter.slotNavigationRect(true))
+            p.tap(step)
         }
         assertEquals(63, last)
+        assertEquals(focus, p.state.instField)
+        p.draw()
+        p.tap(p.painter.slotNavigationRect(false))
+        assertEquals(62, p.state.instrument)
+        assertEquals(focus, p.state.instField)
+        p.tap(p.painter.nameRect())
+        assertEquals(1, p.state.instField)
         assertTrue(p.surface.texts.any { it.startsWith("Sound") })
     }
 
@@ -316,15 +462,22 @@ class SidSoundPanelTest {
     private class RecordingSurface : Surface {
         val texts = ArrayList<String>()
         val colors = HashSet<Int>()
-        fun clear() { texts.clear(); colors.clear() }
-        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) { colors += color }
-        override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) { colors += color }
-        override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) { colors += color }
-        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) { colors += color }
-        override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) { colors += color }
-        override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) { colors += color }
-        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) { colors += color }
-        override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) { texts += s; colors += color }
+        /** Every drawing command with its leftmost x, to compare one region of two frames exactly. */
+        val ops = ArrayList<Pair<Float, String>>()
+        fun clear() { texts.clear(); colors.clear(); ops.clear() }
+        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) { colors += color; ops += l to "rect $l $t $r $b $color" }
+        override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) { colors += color; ops += l to "round $l $t $r $b $radius $color" }
+        override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) { colors += color; ops += l to "stroke $l $t $r $b $color $width $radius" }
+        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) { colors += color; ops += minOf(x0, x1) to "line $x0 $y0 $x1 $y1 $color $width" }
+        override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) { colors += color; ops += cx - radius to "circle $cx $cy $radius $color" }
+        override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) { colors += color; ops += cx - radius to "ring $cx $cy $radius $color $width" }
+        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {
+            colors += color
+            ops += (xs.take(count).minOrNull() ?: 0f) to "polyline ${xs.take(count)} ${ys.take(count)} $color $width"
+        }
+        override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) {
+            texts += s; colors += color; ops += x to "text $s $x $top $h $color $face $bold $size $align"
+        }
         override fun textWidth(s: String, face: Face, bold: Boolean, size: Float) = s.length * size / 2
     }
     private class Panel(val pane: PaneView, val painter: SidInstrumentPainter, val surface: RecordingSurface, val width: Int, val height: Int) {
