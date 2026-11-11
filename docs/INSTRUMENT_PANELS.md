@@ -1,9 +1,9 @@
 # Three musical instrument pilots
 
-**Review revision 3: 0.43.0/code 61.** The three pilots have been reviewed; this revision
-applies the shared-list and navigation feedback before expanding to more chip families.
-The approved touch controls and first Game Boy Sound/Advanced workflow are on `main` in
-0.42.0. The redesigned Game Boy, C64 SID and Mega Drive YM2612 faces remain on the review branch.
+**0.43.0/code 61:** the reviewed Game Boy LCD, C64 SID and Mega Drive YM2612 Sound faces are
+approved for main, including the identical instrument list and spatial controller navigation.
+The next phase covers every supported chip/channel family, retaining Advanced and verifying
+each family before periodic integration. Touch controls remain the approved production interface.
 
 The APK remains **Thor Tracker**, package `org.thortracker`, with the production signing key.
 It updates the normal app rather than installing another similarly named app. The older

@@ -13,12 +13,13 @@ The first backend is explicitly GB/hUGE. Backend extensibility means modular sof
 Sound families: Game Boy, NES + DPCM and expansions, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY/YM computers and PC Engine. VRC6, VRC7, N163, Sunsoft 5B, FDS, MMC5 and EPSM extend the NES family.
 Order below is the current intent; design notes for the chip work live in `docs/BACKENDS.md`.
 
-**Current review (0.43.0/code 61, revision 3):** the approved touch dock and Game Boy Sound/Advanced workflow
-are on `main` in 0.42.0. The three redesigned pilots—Game Boy LCD (Pulse/Wave/Noise), C64 SID and
-Mega Drive YM2612—have received positive review. This revision keeps the instrument list identical
-between faces and makes Sound's vertical axis select slots and horizontal axis select parameters.
-See [the refreshed gallery, mappings and wider rollout approach](docs/INSTRUMENT_PANELS.md).
-Expand in chip-family batches, preserving exact patches and the existing Advanced editors.
+**0.43.0/code 61:** the redesigned Game Boy LCD (Pulse/Wave/Noise), C64 SID and Mega Drive
+YM2612 Sound faces are approved for main. Both faces retain the same instrument list;
+Sound's vertical axis selects slots and its horizontal axis selects parameters.
+The user authorized autonomous implementation, runtime testing, visual/functionality refinement
+and periodic main integration for all supported chip/channel families, beginning with NES.
+See [the gallery, mappings and rollout contract](docs/INSTRUMENT_PANELS.md).
+Preserve exact patches, Advanced editors and the existing audition/Undo workflow.
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,

@@ -1,9 +1,10 @@
 # Thor Tracker verification — 2026-11-11
 
-## 0.43.0 review revision 3 — stable lists and spatial Sound navigation
+## 0.43.0 — musical instrument faces and stable pattern headers
 
-Review branch only; normal Thor Tracker identity, `org.thortracker`, **code 61** and the existing
-production certificate. No musical mapping, native engine, project schema or export changes.
+The approved Game Boy, SID and YM2612 Sound pilots are promoted to main with normal Thor Tracker
+identity, `org.thortracker`, **code 61** and the existing production certificate. The final review
+revision below changes no musical mapping, native engine, project schema or export behavior.
 
 - Sound reuses each pilot's Advanced instrument list, including typography, responsive geometry
   and hit testing. Themed artwork remains in the editing area.
