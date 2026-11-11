@@ -194,23 +194,53 @@ class CbmSoundFaceTest {
 
     private class Canvas : Surface {
         val bank = ArrayList<String>()
-        private fun save(x: Float, y: Float, value: String) { if (x < 100f && y >= 85f) bank += value }
+        private var bounds: Rect? = null
+        private var area = Rect()
+        private var bankColor = 0
+        fun begin(area: Rect, bankColor: Int) {
+            this.area = area
+            this.bankColor = bankColor
+            bounds = null
+            bank.clear()
+        }
+        private fun save(x: Float, y: Float, value: String) {
+            val r = bounds ?: return
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) bank += value
+        }
         override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) = save(x, top, "$s/$x/$top/$h/$color/$face/$bold/$size/$align")
         override fun textWidth(s: String, face: Face, bold: Boolean, size: Float) = s.length * size / 2
-        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) = save(l, t, "$l/$t/$r/$b/$color")
+        override fun fillRect(l: Float, t: Float, r: Float, b: Float, color: Int) {
+            // The real bank background reaches the body's bottom; the full-width header does not.
+            // Discover its bounds from rendering rather than duplicating drawBank's layout formula.
+            if (bounds == null && l == area.left && r < area.right && b == area.bottom && color == bankColor)
+                bounds = Rect(l, t, r, b)
+            save(l, t, "$l/$t/$r/$b/$color")
+        }
         override fun fillRound(l: Float, t: Float, r: Float, b: Float, radius: Float, color: Int) = save(l, t, "$l/$t/$r/$b/$radius/$color")
         override fun strokeRect(l: Float, t: Float, r: Float, b: Float, color: Int, width: Float, radius: Float) = save(l, t, "$l/$t/$r/$b/$color/$width/$radius")
-        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) = Unit
-        override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) = Unit
-        override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) = Unit
-        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) = Unit
+        override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) =
+            save(minOf(x0, x1), minOf(y0, y1), "line/$x0/$y0/$x1/$y1/$color/$width")
+        override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) =
+            save(cx - radius, cy - radius, "circle/$cx/$cy/$radius/$color")
+        override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) =
+            save(cx - radius, cy - radius, "ring/$cx/$cy/$radius/$color/$width")
+        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {
+            if (count > 0) save((0 until count).minOf { xs[it] }, (0 until count).minOf { ys[it] },
+                "poly/${xs.take(count)}/${ys.take(count)}/$color/$width")
+        }
     }
     private class Panel(val session: EditorSession, val width: Int = 360, val height: Int = 270) {
         val canvas = Canvas()
         val state = ViewState(kind = ViewKind.INSTRUMENT, instrument = 1, instField = 2)
         val pane = PaneView(session, state, 1f, canvas, { 0L }, {})
         val painter = CbmSoundPainter(pane)
-        fun draw() { pane.ink.layout(width, height, state.zoom); pane.controller.normalise(); painter.draw(canvas, Rect(0f, 0f, width.toFloat(), height - pane.ink.unit * 1.9f)) }
+        fun draw() {
+            pane.ink.layout(width, height, state.zoom)
+            pane.controller.normalise()
+            val area = Rect(0f, 0f, width.toFloat(), height - pane.ink.unit * 1.9f)
+            canvas.begin(area, pane.ink.palette.LANE)
+            painter.draw(canvas, area)
+        }
         fun tap(r: Rect) { assertTrue(painter.down(r.centerX(), r.centerY())); painter.up(r.centerX(), r.centerY()) }
         init { draw() }
     }
@@ -231,9 +261,9 @@ class CbmSoundFaceTest {
             }
             assertEquals(2, p.state.instField)
             p.tap(p.painter.nameTarget()); assertEquals(1, p.state.instField)
-            p.canvas.bank.clear(); p.draw(); val bank = p.canvas.bank.toList()
-            assertTrue(bank.isNotEmpty())
-            p.tap(p.painter.modeRect(true)); p.canvas.bank.clear(); p.draw()
+            p.draw(); val bank = p.canvas.bank.toList()
+            assertTrue("Capture includes the selected first slot, not just lower rows", bank.any { it.startsWith("01/") })
+            p.tap(p.painter.modeRect(true)); p.draw()
             assertEquals(bank, p.canvas.bank)
             p.tap(p.painter.modeRect(false)); p.draw()
             p.tap(p.painter.slotNavigationRect(true)); assertEquals(2, p.state.instrument)
