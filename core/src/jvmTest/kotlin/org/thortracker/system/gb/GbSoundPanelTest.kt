@@ -14,6 +14,8 @@ import org.thortracker.editor.PaneZoom
 import org.thortracker.editor.ViewController
 import org.thortracker.editor.ViewKind
 import org.thortracker.editor.ViewState
+import org.thortracker.model.Cell
+import org.thortracker.model.Pattern
 import org.thortracker.ui.Align
 import org.thortracker.ui.Face
 import org.thortracker.ui.PaneView
@@ -176,6 +178,26 @@ class GbSoundPanelTest {
         assertEquals(ViewKind.WAVE, session.selection.context)
     }
 
+    @Test
+    fun heldEditHearsResetImmediatelyButNotAnUnchangedReset() {
+        session.setInstrument(GbBank.PULSE, 2, session.song.gb.pulse[1].copy(volume = 4))
+        val heardVolumes = ArrayList<Int>()
+        session.onAudition = { _, _, _, _ -> heardVolumes += session.song.gb.pulse[1].volume }
+        val v = view { bank = GbBank.PULSE.ordinal; instrument = 2; instField = 3 }
+        val before = session.song
+        v.press(Action.EDIT)
+        assertFalse(v.auditionHeld)
+        v.press(Action.CLEAR); v.release(Action.CLEAR)
+        assertEquals(listOf(4, 12), heardVolumes)
+        assertEquals(12, session.song.gb.pulse[1].volume)
+        v.press(Action.CLEAR); v.release(Action.CLEAR)
+        assertEquals("an unchanged reset does not retrigger", listOf(4, 12), heardVolumes)
+        v.release(Action.EDIT)
+        assertTrue(releases > 0)
+        session.undo()
+        assertSame(before, session.song)
+    }
+
     // ---- touch ----------------------------------------------------------------------------------------------------
 
     private class RecordingSurface : Surface {
@@ -319,6 +341,111 @@ class GbSoundPanelTest {
         assertEquals(other.song, touched)
         val uge = GbSystem.exports.first { it.extension == "uge" }
         assertArrayEquals(uge.export(other.song), uge.export(touched))
+    }
+
+    @Test
+    fun compactTouchNavigationReachesEverySettingAndReturnsWithoutEditing() {
+        val displays = listOf(Triple(1024, 768, 2f), Triple(360, 270, 1f))
+        for ((w, h, density) in displays) for (zoom in listOf(PaneZoom.NORMAL, PaneZoom.LARGEST)) {
+            // The larger 4:3 pane needs navigation at 150%; at 100% all rows already fit.
+            if (w == 1024 && zoom == PaneZoom.NORMAL) continue
+            val state = ViewState(kind = ViewKind.INSTRUMENT, bank = GbBank.PULSE.ordinal, instrument = 1)
+            val p = panel(state, w, h, density, zoom)
+            val before = session.song
+            val where = "${w}x$h@$density $zoom"
+            assertEquals(0, state.instField)
+            for (down in listOf(false, true)) {
+                val r = p.painter.navigationRect(down)!!
+                assertTrue("$where target width", r.width() >= 48 * density)
+                assertTrue("$where target height", r.height() >= 48 * density)
+                assertTrue("$where target inside", r.left >= 0f && r.right <= w && r.top >= 0f && r.bottom <= p.area.bottom)
+            }
+            p.tap(p.painter.navigationRect(false)!!) // disabled at the first field
+            assertEquals(0, state.instField)
+            for (field in 1..10) {
+                p.tap(p.painter.navigationRect(true)!!)
+                assertEquals("$where Down", field, state.instField)
+                repeat(2) { // A second repaint must not pull the scrolled row back out of view.
+                    draw(p, w, h)
+                    val row = assertNotNullRow(p.painter.rowRect(field), "$where field $field")
+                    assertTrue(row.top >= 0f && row.bottom <= p.painter.navigationRect(true)!!.top)
+                }
+                assertSame("$where navigation edits nothing", before, session.song)
+            }
+            p.tap(p.painter.navigationRect(true)!!) // disabled at the last field
+            assertEquals(10, state.instField)
+            assertSame(before, session.song)
+            // The formerly unreachable final sweep setting is now actually editable by touch.
+            val last = p.painter.rowRect(10)!!
+            assertTrue(p.painter.down(p.painter.railX(10, 1f)!!, last.centerY()))
+            p.painter.up(0f, 0f)
+            assertEquals(7, session.song.gb.pulse[0].sweepShift)
+            session.undo()
+            assertSame(before, session.song)
+            for (field in 9 downTo 0) {
+                p.tap(p.painter.navigationRect(false)!!)
+                assertEquals("$where Up", field, state.instField)
+                draw(p, w, h)
+                if (field > 0) assertNotNullRow(p.painter.rowRect(field), "$where field $field")
+                assertSame(before, session.song)
+            }
+            p.tap(p.painter.navigationRect(false)!!)
+            assertEquals(0, state.instField)
+            assertSame(before, session.song)
+        }
+    }
+
+    @Test
+    fun touchSettingNavigationNeverBecomesHeldEditAdjustmentOrReleaseToggle() {
+        val state = ViewState(kind = ViewKind.INSTRUMENT, bank = GbBank.PULSE.ordinal, instrument = 1)
+        val p = panel(state, 360, 270, 1f)
+        val before = session.song
+        p.pane.controller.press(Action.EDIT)
+        repeat(4) {
+            p.tap(p.painter.navigationRect(true)!!)
+            draw(p, 360, 270)
+        }
+        assertEquals(4, state.instField) // binary envelope direction, normally toggled by an Edit tap
+        p.pane.controller.release(Action.EDIT)
+        assertSame(before, session.song)
+        assertTrue(auditions.isEmpty())
+        // Growing the pane removes both the visible controls and their old touch targets.
+        draw(p, 1240, 1080)
+        assertNull(p.painter.navigationRect(false))
+        assertNull(p.painter.navigationRect(true))
+    }
+
+    @Test
+    fun usageAndRegisterCachesTrackEditsUndoAndArrangementChanges() {
+        val state = ViewState(kind = ViewKind.INSTRUMENT, bank = GbBank.PULSE.ordinal, instrument = 1)
+        val p = panel(state)
+        val bytesField = SoundPainter::class.java.getDeclaredField("registerBytes").apply { isAccessible = true }
+        val usageSongField = SoundPainter::class.java.getDeclaredField("usageSong").apply { isAccessible = true }
+        val initialBytes = bytesField.get(p.painter)
+        val initialUsageSong = usageSongField.get(p.painter)
+        draw(p, 1240, 1080)
+        assertSame(initialBytes, bytesField.get(p.painter))
+        session.setInstrument(GbBank.PULSE, 1, session.song.gb.pulse[0].copy(volume = 4))
+        draw(p, 1240, 1080)
+        val changedBytes = bytesField.get(p.painter) as ByteArray
+        assertArrayEquals(org.thortracker.backend.HugeLowering.dutyBytes(session.song.gb.pulse[0]), changedBytes)
+        assertSame("sound edits do not rescan patterns", initialUsageSong, usageSongField.get(p.painter))
+        session.setCell(0, 0, 0, Cell(note = note(12), instrument = 1))
+        draw(p, 1240, 1080)
+        assertSame("pattern edits do not lower the sound", changedBytes, bytesField.get(p.painter))
+        assertTrue(surface.texts.any { it.value.contains("used on 1 row") })
+        session.insertOrder(1, 0)
+        draw(p, 1240, 1080)
+        assertTrue("repeated orders do not double-count", surface.texts.any { it.value.contains("used on 1 row") })
+        val withUsage = session.song
+        session.replaceSong(withUsage.copy(patterns = withUsage.patterns + Pattern.blank(4)))
+        session.setOrderPattern(0, withUsage.patterns.size)
+        session.setOrderPattern(1, withUsage.patterns.size)
+        draw(p, 1240, 1080)
+        assertTrue(surface.texts.any { it.value.contains("not used in the arrangement yet") })
+        session.undo()
+        draw(p, 1240, 1080)
+        assertTrue(surface.texts.any { it.value.contains("used on 1 row") })
     }
 
     // ---- layout on the target displays --------------------------------------------------------------------------
