@@ -345,22 +345,25 @@ because:
   a 1024×768 Brick.
 - Rotary knobs are hard to drag precisely by touch and add nothing for a D-pad; linear rails match the
   existing Game Boy touch slider (`SoundPainter.kt:324-328`) and read at small sizes.
-- Console case colours, logos, badge shapes and typography are the clearest way to copy trade dress.
+- Direct copies of console logos, badge shapes, case layouts and manufacturer typography are avoided.
+  Restrained console-inspired accents are a separate, still-open design choice.
 
 What replaces them: boldness spent once per panel, on a hero that only that chip could have (the Game
 Boy's envelope staircase and length cut on one time axis, the SCC's wave sequence as a reel, the OPM's
-operator routing with each operator's envelope inside its node). Charm comes from the sound itself made
-visible, not from imitation hardware.
+operator routing with each operator's envelope inside its node). For this pilot, charm comes from
+making the sound visible. That choice does not rule out console-inspired styling in later review.
 
 ### Originality and trade dress
 
 - Draw every motif in code from the synthesis data; no imported artwork.
 - Chip and console names appear as plain text labels (as today), never as logos or lettering styles.
-- Do not reproduce console case colour schemes, controller or cartridge silhouettes, manufacturer
-  typefaces, or the UI art of FamiStudio, Furnace, DefleMask, GoatTracker, BRIXEQ (no declared licence)
-  or hardware synthesizers. Functional conventions (ADSR curves, operator diagrams, waveform plots) are
-  fine; distinctive decoration is not.
-- This is a design rule, not legal advice.
+- Do not copy manufacturer logos, typefaces, console/controller silhouettes or another product's UI
+  artwork. Functional conventions (ADSR curves, operator diagrams, waveform plots) remain useful.
+- A restrained per-system accent layer is still open for review: for example, LCD-inspired greens
+  for Game Boy or cartridge-inspired accents for SCC. It would sit above the semantic `Palette`
+  roles, retain Slate/Paper/Contrast and their state distinctions, and need small-screen contrast checks.
+  It is not implemented in this pilot or a commitment to reproduce a console's complete appearance.
+- These are conservative design choices, not a legal conclusion that colour inspiration is prohibited.
 
 ### Readability, theme and zoom
 
@@ -612,7 +615,7 @@ codec tests.
 | Draw-time allocation on the Brick | Reuse `Rect`s and arrays; `PanelHits` preallocated; usage cached by song identity. |
 | Regressing controller-only flows and help | Keep `Row` order and hints; update `helpSections` text in the same change. |
 | Scope creep to 17 editors | Review gate after each pilot; coverage table is explicitly not a commitment. |
-| Trade-dress resemblance | Motifs from synthesis data only; review each panel against the originality rules. |
+| Trade-dress resemblance | Original synthesis motifs; review any console-inspired accents separately from copying logos, case layouts or artwork. |
 
 ## Phased acceptance
 
@@ -672,6 +675,8 @@ replace on-device Brick acceptance; the Brick and Thor were not used for this ro
 5. Are one-shot "character" actions (undoable Apply, like presets) wanted, given that persistent
    non-invertible macros are ruled out?
 6. Pilot order: A → B → C as proposed, or OPM first because FM gains most from a hero diagram?
+7. How much console styling feels right: the current synthesis-led look, or restrained per-system
+   accents layered over the selected theme? This remains open; the pilot does not settle it.
 
 ## How this was researched
 
