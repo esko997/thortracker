@@ -3797,7 +3797,8 @@ static void update_envelopes(Emulator* e) {
         envelope->timer = envelope->period;
         u8 delta = envelope->direction == ENVELOPE_ATTENUATE ? -1 : 1;
         u8 volume = envelope->volume + delta;
-        if (volume < ENVELOPE_MAX_VOLUME) {
+        /* THOR-TRACKER LOCAL CHANGE: the 4-bit envelope includes volume 15. */
+        if (volume <= ENVELOPE_MAX_VOLUME) {
           envelope->volume = volume;
         } else {
           envelope->automatic = FALSE;
