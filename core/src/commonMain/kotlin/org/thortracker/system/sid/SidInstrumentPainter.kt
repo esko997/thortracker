@@ -21,7 +21,7 @@ import org.thortracker.ui.Surface
  * columns (the cursor on one column), its loops marked, with the pulse width or cutoff it plays over time; vibrato
  * and hard restart; or the song's tables as the player reads them, each row with the program that owns it.
  */
-internal class SidInstrumentPainter(v: PaneView) : Painter(v) {
+internal class SidAdvancedPainter(v: PaneView) : Painter(v) {
     private val tabs = ArrayList<Pair<Rect, Int>>()
     private val tableTabs = ArrayList<Pair<Rect, Int>>()
     private var slotTop = 0f
