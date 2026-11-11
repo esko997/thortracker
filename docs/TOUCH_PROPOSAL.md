@@ -1,7 +1,7 @@
 # Touch interface proposals
 
 Status: **isolated Android controller-dock preview; not merged into production**.
-The 0.42.0-touch-preview.1 candidate integrates the current editor, audio engines and file paths under a distinct Android
+The 0.42.0-touch-preview.2 candidate integrates the current editor, audio engines and file paths under a distinct Android
 identity. **Galaxy Fold8 is the design target. Pocket DMG is only a functional testbed**, not
 a substitute for the phone's screen geometry or a human two-thumb ergonomics trial.
 The landscape study and browser evidence below remain historical proposals, not a native
@@ -90,7 +90,68 @@ root are app-scoped and **removed when the preview is uninstalled**; export anyt
 keeping to a deliberately chosen separate backup before cleanup. No storage permission,
 production URI grant, production FileProvider authority or production backup is reused.
 
-### 0.42.0 executed verification
+### Game Boy pulse Sound playground
+
+The earlier accurate instrument panel remains **Advanced**. This pilot adds a different,
+approachable **Sound** face inside Instrument view—not another document or a patch conversion.
+Select an instrument on the left; explore four musical controls on the right. Pulse starts
+in Sound; Wave and Noise retain Advanced. Mode choice and remembered cursors are pane-local
+for this session, not part of the song or saved workspace.
+
+| Control | Musical choices | What changes |
+| --- | --- | --- |
+| Character | Thin, Reedy, Square | Pulse duty only. The equivalent 25% and 75% timbres both read Reedy; selecting the current choice preserves the exact original. |
+| Shape | Pluck, Held, Swell | Loudness envelope and length gate. Pluck fades; Held stays steady; Swell grows, then holds. |
+| Length | Short, Medium, Long, Longest | Pluck fade / Swell rise: about 188 / 375 / 750 / 1313 ms. Held: about 63 / 125 / 250 ms or until the next note/OFF. |
+| Motion | Still, Falling, Rising | Hardware pitch sweep on **Pulse 1 only**. Pulse 2 ignores it; rising notes can reach the hardware cutoff. |
+
+These are discrete real-chip settings, not filters, ADSR emulation or additional synthesis.
+Shape keeps a recognized Length choice; otherwise it starts at Medium. Length keeps a
+recognized Shape. **Changing Length on a Custom Shape deliberately makes a Pluck**; the
+panel warns about this before editing. Neither changes Character, Motion, name or other-bank
+fields. Selecting a control's already-current choice preserves the entire patch exactly.
+
+Opening Sound or Advanced never rewrites an instrument. Unrepresented advanced settings
+show **Custom**, with no invented slider position. Existing factory sounds can legitimately
+show Custom because their exact level differs from these musical presets. Find a sound here,
+then switch to Advanced to refine it; both faces edit the same stored instrument and Undo history.
+
+**Touch:** tap Sound/Advanced; slide a control horizontally. Hold X on the dock to hear changes.
+**Controller:** Up/Down selects controls, held A + direction adjusts and auditions, X listens.
+Move above the slot row to the editor tabs, then Left/Right (or A) switches modes. L1/R1 still
+switch banks. One continuous edit is one Undo; Undo, slot navigation and mode changes invalidate
+an old pointer drag. A held across a mode switch must be released before it can edit again.
+
+The console-inspired face uses a neutral shell, olive readout and burgundy controls; Contrast
+uses the workspace's high-contrast roles. Short panes show one control with 48dp Previous/Next
+targets; instrument slots remain selectable on the left, with paging rather than tiny rows.
+
+![Game Boy pulse Sound face on Pocket DMG](media/gb-pulse-sound-dmg.png)
+
+Actual Pocket DMG capture, with a transient recovery-status message still visible.
+[Custom advanced patch, untouched in Sound](media/gb-pulse-custom-dmg.png).
+These are not Galaxy Fold8 captures or evidence of physical two-thumb comfort.
+
+**Verified for preview.2:** 1,154 shared-core tests and 24 Android host tests; signed APK
+installed and exercised on reserved Pocket DMG. Actual Activity key/touch dispatch covers
+musical edits, X audition, mode switching, grouped Undo, pointer invalidation and exact Custom
+patch preservation. All three themes were captured. Six native WAV renders confirm fading,
+steady and swelling loudness, steady/falling/rising pitch, and the rising sweep's eventual cutoff.
+Live diagnostics: zero xruns and driver faults in this short scenario; max callback 0.923 ms.
+This is not a long-session or physical speaker-listening claim.
+
+The eight original private recovery/workspace entries were cold-restored and independently
+byte-verified; test APK and UUID-owned external artifacts were removed, timeout restored to
+60000 ms, and DMG returned Home/asleep. Production app data and `/ThorTunez` were untouched.
+Builds were serialized and bounded; no emulator or local Kotlin/Native linking was used.
+No new Deck/Brick runtime proof is claimed for this Android preview.
+
+APK: `thor-tracker-0.42.0-touch-preview.2.apk`, code 57, arm64-v8a and x86_64.
+SHA-256: `5fbbf32f6185ebdb8e058f3124e5dd77e7301f800d79d5454504a5988300bdc8`.
+Install over the existing preview, without uninstalling. Review the musical controls and
+Sound → Advanced workflow before expanding this approach to Wave, Noise or other chips.
+
+### Previous 0.42.0-touch-preview.1 verification
 
 The production-signed preview passes **1,130 shared-core and 24 Android host tests**. The final
 segmented-cell boundary correction also passes the targeted Game Boy panel suite and signed build.

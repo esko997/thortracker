@@ -17,8 +17,8 @@ android {
         applicationId = "org.thortracker.touchpreview"
         minSdk = 26
         targetSdk = 32
-        versionCode = 56
-        versionName = "0.42.0-touch-preview.1"
+        versionCode = 57
+        versionName = "0.42.0-touch-preview.2"
         testApplicationId = "org.thortracker.touchpreview.test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }

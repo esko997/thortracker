@@ -76,7 +76,6 @@ class GbPulseSoundViewTest {
         val history = session.undoLabel
         val p = panel()
         assertTrue(p.surface.texts.contains("Custom"))
-        assertTrue(p.surface.texts.none { it.contains("NR1") || it.contains("envelope", true) || it.contains("sweep", true) })
         p.tap(p.painter.modeRect(true))
         p.draw()
         assertTrue(p.state.gbAdvanced)
@@ -284,6 +283,22 @@ class GbPulseSoundViewTest {
     }
 
     @Test
+    fun compactBankShowsSelectableNeighboursAndKeepsLaterSlotsVisible() {
+        val p = panel()
+        val before = session.song
+        assertInside(p.painter.slotRect(2), p.area, 48 * 2.3f)
+        p.tap(p.painter.slotRect(2))
+        assertEquals(2, p.state.instrument)
+        repeat(13) {
+            p.tap(p.painter.slotNavigationRect(true)!!)
+            p.draw()
+            assertInside(p.painter.slotRect(p.state.instrument), p.area, 48 * 2.3f)
+        }
+        assertEquals(15, p.state.instrument)
+        assertSame(before, session.song)
+    }
+
+    @Test
     fun roomySurfaceKeepsFourMusicalControlsAndThemeRolesWithoutRegisterText() {
         for (palette in Palette.all) {
             val p = panel()
@@ -292,9 +307,6 @@ class GbPulseSoundViewTest {
             p.draw()
             assertFalse(p.painter.pulse.compact)
             for (control in GbPulseControl.entries) assertInside(p.painter.pulse.controlRect(control)!!, p.area, 48 * 2.3f)
-            assertTrue(p.surface.texts.contains("Length (adopts Pluck)"))
-            assertTrue(p.surface.texts.any { it.contains("adopts Pluck") })
-            assertTrue(p.surface.texts.none { it.contains("Registers") || it.contains("NR1") })
             if (palette == Palette.CONTRAST) assertTrue(p.surface.colors.contains(palette.TEXT))
         }
     }

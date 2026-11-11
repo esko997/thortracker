@@ -161,10 +161,23 @@ internal class SoundPainter(v: PaneView) : Painter(v) {
             }
         }
         for (rect in slotRects) rect.set(0f, 0f, 0f, 0f)
-        val slot = slotRects[st.instrument - 1]
-        slot.set(l, tabsBottom, r, maxOf(tabsBottom, b - touch))
-        ink.rect(c, slot, ink.palette.CURSOR_FILL)
-        ink.label(c, "Slot ${hex2(st.instrument)}", slot.centerX(), slot.top, slot.height(), ink.palette.TEXT, true, align = Align.CENTER)
+        val available = maxOf(0f, b - touch - tabsBottom)
+        val visible = (available / touch).toInt().coerceIn(1, SLOTS)
+        val first = minOf((st.instrument - 1) / visible * visible, SLOTS - visible)
+        val rowH = available / visible
+        val bank = song.bank(kind)
+        for (index in first until first + visible) {
+            val slot = slotRects[index]
+            slot.set(l, tabsBottom + (index - first) * rowH, r, tabsBottom + (index - first + 1) * rowH)
+            val selected = index + 1 == st.instrument
+            ink.rect(c, slot, if (selected) ink.palette.CURSOR_FILL else ink.palette.LANE)
+            val size = minOf(ink.unit, rowH * 0.7f)
+            ink.mono(c, hex2(index + 1), l + ink.unit * 0.4f, slot.top, rowH,
+                if (selected) accent(kind) else ink.palette.DIM, selected, size)
+            val nameX = l + ink.unit * 2.4f
+            ink.label(c, ink.fit(bank[index].name, maxOf(0f, r - nameX - ink.unit * 0.4f), size),
+                nameX, slot.top, rowH, if (selected) ink.palette.TEXT else ink.palette.DIM, size = size)
+        }
         previousSlot.set(l, b - touch, (l + r) * 0.5f, b)
         nextSlot.set(previousSlot.right, b - touch, r, b)
         ink.label(c, "Prev", previousSlot.centerX(), previousSlot.top, touch, ink.palette.TEXT, align = Align.CENTER)

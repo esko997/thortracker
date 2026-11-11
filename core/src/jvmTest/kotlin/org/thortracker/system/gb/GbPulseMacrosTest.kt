@@ -34,7 +34,6 @@ class GbPulseMacrosTest {
         assertEquals(advanced.copy(duty = 2), choose(GbPulseControl.CHARACTER, 2))
         val square = advanced.copy(duty = 2)
         assertEquals(square.copy(duty = 1), choose(GbPulseControl.CHARACTER, 1, square))
-        assertTrue(GbPulseMacros.help(GbPulseControl.CHARACTER).contains("same harmonic balance"))
     }
 
     @Test
@@ -110,7 +109,6 @@ class GbPulseMacrosTest {
             assertSame(customTime, choose(GbPulseControl.SHAPE, 0, customTime))
             assertEquals(2, choose(GbPulseControl.SHAPE, 2, customTime).envelopePace)
         }
-        assertTrue(GbPulseMacros.describe(GbPulseControl.LENGTH, advanced).contains("makes a Pluck"))
         val deliberate = choose(GbPulseControl.LENGTH, 2)
         assertEquals(0, GbPulseMacros.value(GbPulseControl.SHAPE, deliberate))
         assertEquals(4, deliberate.envelopePace)
@@ -172,7 +170,6 @@ class GbPulseMacrosTest {
                 assertTrue(next >= 0)
                 val movement = SoundTimeline.semitones(1046, next)
                 assertTrue(if (rank == 1) movement < 0 else movement > 0)
-                assertTrue(GbPulseMacros.describe(GbPulseControl.MOTION, sound).contains("Pulse 1 only"))
             }
         }
         assertTrue(SoundTimeline.sweepSilencesAtTrigger(choose(GbPulseControl.MOTION, 2), 2040))

@@ -23,9 +23,9 @@ internal object GbPulseMacros {
     private val PACES = intArrayOf(1, 2, 4, 7)
     private val GATES = intArrayOf(48, 32, 0)
     private val CHARACTER_TEXT = arrayOf(
-        "Thin pulse: 12.5% duty",
-        "Reedy pulse: 25% or 75%, the same harmonic balance",
-        "Classic square: 50% duty",
+        "A thin, buzzy pulse",
+        "A hollow, reedy pulse",
+        "The classic square-wave tone",
     )
     private val PLUCK_TEXT = arrayOf(
         "Fades to silence in about 188 ms",
@@ -46,8 +46,8 @@ internal object GbPulseMacros {
         "Rises for about 1.31 s, then holds until note/OFF",
     )
     private val MOTION_TEXT = arrayOf(
-        "No pitch sweep; Motion is Pulse 1 only",
-        "Falling pitch on Pulse 1 only; note-dependent steps",
+        "Steady pitch; Motion works on Pulse 1 only",
+        "Falling pitch on Pulse 1 only",
         "Rising pitch on Pulse 1 only; high notes can cut off",
     )
 
@@ -107,17 +107,17 @@ internal object GbPulseMacros {
         if (instrument.kind != GbBank.PULSE) return "Sound controls are for pulse instruments only"
         return when (control) {
             GbPulseControl.CHARACTER -> value(control, instrument)?.let { CHARACTER_TEXT[it] }
-                ?: "Custom duty; use Advanced for exact settings"
+                ?: "Custom character; use Advanced for exact settings"
             GbPulseControl.SHAPE -> when (shape(instrument)) {
-                0 -> "Pluck: starts at 12, fades to silence"
-                1 -> "Held: steady level 12; Length sets the gate"
-                2 -> "Swell: rises from 3 to 15, then holds"
-                else -> "Custom envelope/gate; choosing Shape replaces these only"
+                0 -> "Pluck: starts strong, then fades away"
+                1 -> "Held: steady tone; Length sets when it stops"
+                2 -> "Swell: starts soft, grows louder, then holds"
+                else -> "Custom shape; choosing Shape replaces its loudness and timing"
             }
             GbPulseControl.LENGTH -> {
                 val rank = length(instrument)
                 if (rank == null) {
-                    if (shape(instrument) == null) "Custom envelope/gate; choosing Length makes a Pluck"
+                    if (shape(instrument) == null) "Custom shape; choosing Length makes a Pluck"
                     else "Custom timing; choosing Length keeps this Shape"
                 } else when (shape(instrument)) {
                     0 -> PLUCK_TEXT[rank]
@@ -126,7 +126,7 @@ internal object GbPulseMacros {
                 }
             }
             GbPulseControl.MOTION -> motion(instrument)?.let { MOTION_TEXT[it] }
-                ?: "Custom sweep; Pulse 1 only, may cut off high notes"
+                ?: "Custom pitch movement; Pulse 1 only, high notes may cut off"
         }
     }
 

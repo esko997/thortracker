@@ -29,7 +29,12 @@ internal class PulseSoundPainter(v: PaneView) : Painter(v) {
     private val next = Rect()
     private val labels = Array(4) { GbSoundView.controlLabel(GbPulseControl.entries[it]) }
     private val editLabels = Array(4) { "Set ${labels[it].lowercase()}" }
-    private val helps = Array(4) { GbPulseMacros.help(GbPulseControl.entries[it]) }
+    private val helps = arrayOf(
+        "Pick a flavour, then hold X to listen. Slide a control left or right, or hold A with a direction, to explore.",
+        "Pluck fades away. Held stays steady. Swell grows louder. Try Length next to change its timing.",
+        "Give a pluck more room to ring, a swell more time to grow, or a held tone a shorter ending. A swell keeps sounding after it grows.",
+        "Keep the pitch steady, let it fall, or send it rising. Pulse 1 can do this; Pulse 2 stays steady. Very high rising notes can stop.",
+    )
     private val values = arrayOfNulls<String>(4)
     private val descriptions = arrayOfNulls<String>(4)
     private val indices = IntArray(4)
@@ -59,8 +64,8 @@ internal class PulseSoundPainter(v: PaneView) : Painter(v) {
         }
         name = ink.fit(ins.name, width, ink.unit * 1.05f)
         caption = ink.fit(descriptions[focus] ?: "", width, ink.unit * 0.8f)
-        val text = if (focus == GbPulseControl.LENGTH.ordinal && indices[focus] < 0)
-            "Custom length: choosing Length adopts Pluck. ${helps[focus]}" else helps[focus]
+        val text = if (focus == GbPulseControl.LENGTH.ordinal && indices[GbPulseControl.SHAPE.ordinal] < 0)
+            "This is a custom shape. Changing Length makes a Pluck; Undo brings it back." else helps[focus]
         // Reflow only on immutable patch, focus or layout changes, never build collections in the renderer.
         var start = 0
         for (line in helpLines.indices) {
@@ -138,7 +143,7 @@ internal class PulseSoundPainter(v: PaneView) : Painter(v) {
         val focus = st.instField == i + 2
         val p = ink.palette
         val label = when {
-            i == GbPulseControl.LENGTH.ordinal && indices[i] < 0 -> "Length (adopts Pluck)"
+            i == GbPulseControl.LENGTH.ordinal && indices[GbPulseControl.SHAPE.ordinal] < 0 -> "Length (adopts Pluck)"
             i == GbPulseControl.MOTION.ordinal -> "Motion (Pulse 1)"
             else -> labels[i]
         }
