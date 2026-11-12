@@ -27,12 +27,15 @@ The exporter targets the game's mmutil 1.10.1; native playback follows Maxmod 1.
 effect behavior. This is an explicit exception to the earlier non-sample-only scope.
 It does not add GBA PSG channels, XM import or a target-game CPU budget guarantee.
 
-**GBA PCM + PSG research (2026-11-12):** [unified-project and hardware-export spike](docs/GBA_PSG_SPIKE.md).
-Proposed direction: eight PCM plus four real PSG lanes in one project/transport,
-exported as a coordinated game bundle. No PSG implementation is approved or shipped
-by this spike. First prove synchronization and PCM compatibility against the game's
-actual Butano runtime; its bundled newer Maxmod is not the legacy runtime verified
-for 0.45.0. Resolve the game-linked adapter's licensing before implementation.
+**GBA PCM + PSG research (2026-11-12):** [measured community S3M export spike](docs/GBA_S3M_SPIKE.md).
+One combined composition can use existing GBT/Maxmod tools: four real PSG channels
+plus eight PCM voices ran with unmodified libraries. Conditional go for a restricted
+profile, not a lossless XM replacement: BPM 150, simpler PCM instruments, limited PSG
+effects and validated flow. Upstream logical synchronization leaves a measured 31–50 ms
+audible offset; application-only two-frame compensation reduced it to 0–16 ms in a
+short probe, but transport/end handling and full timing validation remain gates.
+Review those restrictions before implementation. No PSG feature is approved/shipped;
+no custom format/runtime fork or coupling to the user's game. Keep existing XM export.
 
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 

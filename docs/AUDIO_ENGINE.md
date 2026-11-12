@@ -8287,6 +8287,9 @@ compiles a newer bundled C Maxmod, with different modulation behavior. Its
 `MM_MMUTIL_DEVKITPRO_COMPAT` flag establishes converter compatibility, not identity
 with devkitPro Maxmod 1.0.15. The parity evidence above applies to the named legacy
 target, not automatically to that game's runtime. The
-[unified PCM + PSG spike](GBA_PSG_SPIKE.md) records the source evidence and the
-required compatibility/synchronization proof before extending this backend.
+[earlier PCM + PSG research](GBA_PSG_SPIKE.md) records that runtime distinction.
+The [measured community S3M export spike](GBA_S3M_SPIKE.md) supersedes its custom
+companion proposal: existing GBT/Maxmod tools can combine four PSG and eight PCM
+voices, but only under a restricted profile with explicit timing/transport gates.
+That is not a lossless extension of the current XM backend or shipped PSG support.
 

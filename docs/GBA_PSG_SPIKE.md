@@ -1,8 +1,14 @@
 # Unified GBA PCM + PSG: feasibility spike
 
-2026-11-12. **Research and proposed design, not implemented capability.**
+2026-11-12. **Archived broad research, not implemented capability.**
 
-## Recommendation
+**Current decision:** see the [measured community S3M / GBT + Maxmod spike](GBA_S3M_SPIKE.md).
+The user subsequently required an existing community export path without a
+Thor-specific format/runtime fork or coupling to their game. The custom companion,
+bundle and game-first recommendations below are therefore **superseded, not approved
+implementation direction**. The hardware/runtime source findings remain useful context.
+
+## Earlier recommendation (superseded)
 
 Keep **one GBA project, one pattern/order timeline and one transport**, with the existing eight sample lanes plus four typed hardware lanes: Pulse 1, Pulse 2, Wave and Noise. Keep Maxmod for PCM; add a synchronized PSG companion and export the complete composition as one game-integration bundle. One project/export action does not require one standard music file internally.
 
