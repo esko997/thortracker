@@ -21,6 +21,13 @@ Eight sample lanes, editable shared PCM, WAV import and eight-channel FastTracke
   concurrent/interleaved playback, loop/envelope release, high notes, live editing,
   audition borrowing, seek, slow tempo and legacy modulation. The 22 Android host
   tests also passed during integration.
+- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/43149801568)
+  passes the full core/Android host suites, Linux core build, native audio/WAV tests,
+  factory-export identity, Deck AppImage startup and Brick ARM64 Pak/ABI checks.
+- The CI-built Linux AppImage opens the GBA demo, edits a sample loop, auditions
+  nonzero native audio and advances playback. Its saved project differs only in
+  the selected loop endpoint. The actual sampler is visually checked at 800×480;
+  this host run uses isolated data directories and offscreen/dummy SDL devices.
 - Live DMG and Nova checks exercise instrument navigation, Sound/Advanced preservation,
   controller edits and Undo, held-A touch audition, loop/keymap/envelope editing,
   project round trips, all eight lanes, transport and XM export. Private recovery
