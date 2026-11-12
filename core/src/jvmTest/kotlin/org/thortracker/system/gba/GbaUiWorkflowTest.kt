@@ -111,6 +111,61 @@ class GbaUiWorkflowTest {
         destination.undo(); assertTrue(destination.song.gba.samples.isEmpty())
     }
 
+    @Test fun followingPatternInstrumentEditsItsMappedSampleNotThePreviouslyBrowsedSample() {
+        val s = session()
+        s.addGbaSamples(1, listOf(sample("Pulse")))
+        s.addGbaSamples(2, listOf(sample("Snare")))
+        val v = controller(s)
+        focus(v, Row.VOLUME)
+        val pulse = s.song.gba.samples[0]
+        s.select(s.selection.copy(instrument = 2, context = ViewKind.PATTERN))
+        assertTrue(v.follow())
+        v.normalise()
+        assertEquals(2, v.state.instrument)
+        assertEquals(1, v.state.dpcmSample)
+        val heard = mutableListOf<Int>()
+        s.onAudition = { _, note, slot, _ -> heard += s.song.gba.instrument(slot)!!.keymap[note] }
+        v.press(Action.EDIT); v.tap(Action.LEFT); v.release(Action.EDIT)
+        assertSame(pulse, s.song.gba.samples[0])
+        assertEquals(63, s.song.gba.samples[1].volume)
+        assertTrue(heard.isNotEmpty())
+        assertTrue(heard.all { it == 1 })
+
+        GbaSoundView.set(v, Row.SAMPLE, 0)
+        s.select(s.selection.copy(instrument = 2, channel = 1, context = ViewKind.PATTERN))
+        v.follow(); v.normalise()
+        assertEquals(0, v.state.dpcmSample) // Same slot: an intentional library selection survives following.
+    }
+
+    @Test fun slotChangesUseFirstMappedSampleWhenCurrentKeyIsSilent() {
+        val s = session()
+        s.addGbaSamples(1, listOf(sample("Pulse")))
+        s.addGbaSamples(2, listOf(sample("Snare")), firstKey = 50)
+        val v = controller(s)
+        assertEquals(-1, s.song.gba.instrument(2)!!.keymap[v.state.dpcmKey])
+        s.select(s.selection.copy(instrument = 2, context = ViewKind.PATTERN))
+        v.follow(); v.normalise()
+        assertEquals(1, v.state.dpcmSample)
+        GbaSoundView.moveSlot(v, -1)
+        assertEquals(0, v.state.dpcmSample)
+        GbaSoundView.moveSlot(v, 1)
+        assertEquals(1, v.state.dpcmSample)
+    }
+
+    @Test fun changedLockResolvesMappedSampleButRepeatedLockPreservesLibraryBrowsing() {
+        val s = session()
+        s.addGbaSamples(1, listOf(sample("Pulse")))
+        s.addGbaSamples(2, listOf(sample("Snare")))
+        val v = controller(s)
+        v.state.lockedSubject = 2
+        v.follow(); v.normalise()
+        assertEquals(2, v.state.instrument)
+        assertEquals(1, v.state.dpcmSample)
+        GbaSoundView.set(v, Row.SAMPLE, 0)
+        v.follow(); v.normalise()
+        assertEquals(0, v.state.dpcmSample)
+    }
+
     @Test fun faceSwitchesPreserveArbitraryPatchAndHistoryAndHeldDirectionsCannotLeak() {
         val s = session()
         s.addGbaSamples(1, listOf(sample()))

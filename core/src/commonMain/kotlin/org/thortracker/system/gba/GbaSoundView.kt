@@ -38,6 +38,13 @@ object GbaSoundView : SystemView() {
     internal fun sample(song: Song, st: ViewState) = song.gba.samples.getOrNull(st.dpcmSample)
     internal fun envelope(song: Song, st: ViewState): GbaEnvelope = instrument(song, st).let { if (st.envelope == 3) it.panEnvelope else it.volumeEnvelope }
     override val gestureLabel = "Edit GBA sound"
+    /** Slot changes follow their playable PCM; same-slot library browsing remains a deliberate independent selection. */
+    private fun selectMappedSample(song: Song, state: ViewState) {
+        val keys = instrument(song, state).keymap
+        state.dpcmSample = keys.getOrNull(state.dpcmKey)?.takeIf { it in song.gba.samples.indices }
+            ?: keys.firstOrNull { it in song.gba.samples.indices } ?: 0
+    }
+
 
     override fun normalise(v: ViewController) {
         val st = v.state
@@ -46,19 +53,27 @@ object GbaSoundView : SystemView() {
         st.envelope = st.envelope.coerceIn(0, 3)
         st.instField = st.instField.coerceIn(0, rows(st).lastIndex)
         st.dpcmKey = (st.octave.coerceIn(0, 7) * 12 + st.dpcmKey.mod(12)).coerceIn(0, 95)
+        if (st.dpcmSample < 0) selectMappedSample(v.session.song, st)
         st.dpcmSample = st.dpcmSample.coerceIn(0, maxOf(0, v.session.song.gba.samples.lastIndex))
         st.envStep = st.envStep.coerceIn(0, maxOf(0, envelope(v.session.song, st).points.lastIndex))
         st.textPos = st.textPos.coerceIn(0, 21)
     }
     override fun subject(state: ViewState) = state.instrument
     override fun applyLock(state: ViewState, subject: Int) {
-        if (state.instrument != subject) state.soundPanel("gba-maxmod").invalidate()
-        state.instrument = subject.coerceIn(1, GbaSound.SLOTS)
+        val next = subject.coerceIn(1, GbaSound.SLOTS)
+        if (state.instrument != next) {
+            state.soundPanel("gba-maxmod").invalidate()
+            state.dpcmSample = -1 // applyLock has no Song; normalise resolves the new slot's PCM.
+        }
+        state.instrument = next
     }
     override fun follow(state: ViewState, selection: Selection, song: Song) {
-        if (state.instrument != selection.instrument || state.listenChannel != selection.channel) state.soundPanel("gba-maxmod").invalidate()
-        state.instrument = selection.instrument
+        val next = selection.instrument.coerceIn(1, GbaSound.SLOTS)
+        val changedSlot = state.instrument != next
+        if (changedSlot || state.listenChannel != selection.channel) state.soundPanel("gba-maxmod").invalidate()
+        state.instrument = next
         state.listenChannel = selection.channel
+        if (changedSlot) selectMappedSample(song, state)
     }
     internal fun publish(v: ViewController) {
         v.syncLock()
@@ -80,8 +95,7 @@ object GbaSoundView : SystemView() {
         st.soundPanel("gba-maxmod").invalidate()
         if (v.editHeld) { v.useEdit(); st.soundPanel("gba-maxmod").editBlocked = true }
         st.instrument = next
-        val mapped = instrument(v.session.song, st).keymap.getOrNull(st.dpcmKey) ?: -1
-        if (mapped >= 0) st.dpcmSample = mapped
+        selectMappedSample(v.session.song, st)
         publish(v)
         if (v.auditionHeld) audition(v)
     }
