@@ -1,0 +1,91 @@
+Maxmod source provenance
+========================
+Origin: https://codeberg.org/blocksds/maxmod.git
+Commit: d334cfcac87475a0b5ceb0d12e1af180dbb31a9a
+License: ISC; full notice in COPYING, original source notices retained.
+Vendored subset: core MAS player and channel implementation, their type/interface
+headers, and headless mixer types. No upstream songs, test assets, filesystem
+loader, SDL dependency, sample copyrighted content, or ARM executable is included.
+
+Local adaptation
+----------------
+The upstream mas.c and mas_arm.c are included INSIDE the GbaMaxmod C++17 class
+(app/src/main/cpp/gba/gba_maxmod.h). Do not compile them as separate C objects.
+Every original writable global/file-static variable is an instance field, every
+player function a member. Lookup tables alone are inline static constexpr.
+Function-local immutable tables remain static constexpr. Original C prototypes
+that duplicate in-class definitions are removed; a few declarations are hoisted
+across goto labels for C++ legality; the layer enum assignment has an explicit cast.
+This is not a new tracker interpreter, a mutex-protected singleton, TLS, or a
+save/restore of process-global player state. Each song/audition machine contains
+its own full bank, channel/driver state, resampling phase and fixed mixer buffers.
+
+The mixer is adapted from the SAME upstream source/gba/mixer.c C implementation:
+8-bit unsigned source, 20.12 read positions, quantized GBA pan/volume arithmetic,
+signed eight-bit saturation, nominal 15768Hz / rate scale16384 / BPM divisor39420.
+The upstream headless mixer's gain and pan rounding DIFFER from GBA, so its output
+is not a bit-exact reference for this target. GBA timer divisor1064 implies a tiny
+physical-rate difference; this API uses the documented nominal15768Hz, not16384.
+Host conversion is rational zero-order hold (the hardware DAC behavior), retaining
+phase across ticks. At slow BPM/high host rates a driver tick spans multiple
+CHIP_MAX_TICK_FRAMES chunks; row_serial and position advance only after draining.
+No tick, live update, mute or release allocation is performed.
+
+Safety changes: bounded, checked pattern reads even if a malformed compressed
+control-flow path inherits incompatible flags; duplicate-channel guards; valid
+mixer pointer for a zero-sample note (upstream copied an uninitialized ARM register);
+loop modulo BEFORE reads for short/high-pitch loops and out-of-range9xx offsets.
+The image validator checks MASv18 ranges, records, maps, envelopes, channels,
+orders/effects and sample extents before any playback; malformed images fail closed.
+
+Compatibility: __HEADLESS__ and MM_MMUTIL_DEVKITPRO_COMPAT are local to the wrapper.
+Accept the user's mmutil1.10.1 MASv18 bank (no modern names dictionary). Legacy
+pan envelopes have bit2, not bit16; pinned core's compatibility path already runs
+them. Legacy E4x/E7x waveform numbers are translated to the pinned core's expanded
+waveform enum. Exporter provides already-quantized equivalent XM/MAS instruments.
+Live edits rebase all pointers into the machine's own bank; transport/effect tempo
+are retained unless the corresponding initial settings changed. Edited envelope
+topology resets its node cursor; held audition edits retrigger the held note.
+Borrow mute destroys that logical channel's current voice, resumes at its NEXT
+note, and does not suppress global effects on the borrowed lane. Release uses real
+Maxmod keyoff/envelopes/fade; XM instruments without a volume envelope cut at OFF.
+
+Integration
+-----------
+Compile these two sources as C++17, with -fwrapv (matching upstream's build):
+  app/src/main/cpp/gba/gba_chip.cpp
+  app/src/main/cpp/gba/gba_image.cpp
+Include directories:
+  app/src/main/cpp
+  third_party/maxmod/include
+  third_party/maxmod/source
+No linked third-party library. Register extern const ChipEngineOps gba_maxmod_ops
+under system_id "gba-maxmod". image_size=2097152; image_storage=sizeof(GbaImage).
+Use the existing C ABI from chip_engine.h; do not expose GbaMaxmod in platform APIs.
+
+Bounded verification recipe (run by integration owner, not performed by source worker)
+-----------------------------------------------------------------------------------
+From repository root:
+  c++ -std=c++17 -O1 -g -fwrapv -fsanitize=address,undefined -pthread \
+    -Iapp/src/main/cpp -Ithird_party/maxmod/include -Ithird_party/maxmod/source \
+    tools/audio/gba_native_test.cpp app/src/main/cpp/gba/gba_chip.cpp \
+    app/src/main/cpp/gba/gba_image.cpp -o /tmp/gba-native-test
+  /tmp/gba-native-test
+  c++ -std=c++17 -O2 -fwrapv -Iapp/src/main/cpp -Ithird_party/maxmod/include \
+    -Ithird_party/maxmod/source tools/audio/gba_render.cpp \
+    app/src/main/cpp/gba/gba_chip.cpp app/src/main/cpp/gba/gba_image.cpp \
+    -o /tmp/gba-render
+  /tmp/gba-render /path/to/gba-demo.gbaimg /tmp/gba-native.wav 10 15768
+
+Tests cover concurrent/interleaved independent instances, high-note short loops,
+held sustain and real release, no-envelope cut, channel borrow/unborrow, stateful
+seek, live PCM/tempo updates with transport retained, malformed images and bounded
+BPM32/96kHz output. Add exported gba-demo and one-row speed1 fixtures to parent host
+suite. For a hardware-path reference, use the game's exact mmutil1.10.1 to convert
+the SAME canonical XM with -b (and -o for standalone GBA ROM where supported), boot
+under mGBA, start song (A), and record stereo. Compare note onset/loop/release timing,
+panning, high/low keys, E4/E7 waves, 0/1/2/3/4/5/6/7/8/9/A/B/C/D/E/F effects against
+native output after aligning start latency and accounting for emulator DAC filtering.
+Do not claim waveform bit equality against a filtered emulator recording or modern
+upstream headless mix output. Check driver row/loop timing separately from gain.
+Actual on-device/GBA-runtime parity remains the integration owner's required check.

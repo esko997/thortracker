@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: ISC
+//
+// Copyright (c) 2008, Mukunda Johnson (mukunda@maxmod.org)
+// Copyright (c) 2021-2026, Antonio Niño Díaz
+
+#ifndef MM_HEADLESS_MAIN_H
+#define MM_HEADLESS_MAIN_H
+
+#include <maxmod_headless.h>
+#include <mm_mas.h>
+#include <mm_msl.h>
+
+// Headless setup information, passed to mmInit().
+//
+// This contains pointer to the internal structs used by Maxmod. It doesn't
+// need to point to any temporary mixing buffer, only channel states and the
+// soundbank being used.
+typedef struct t_mmheadlesssystem
+{
+    // Software mixing rate. Higher values offer better quality at expense of a
+    // larger CPU and memory load.
+    mm_word     sample_rate;
+
+    // Output format
+    mm_headless_output_format output_format;
+
+    // This is the amount of module channels there will be. It must be greater
+    // or equal to the largest channel number used by your modules (notice: NOT
+    // virtual channel number).
+    mm_word     mod_channel_count;
+
+    // Number of mixing channels. Higher numbers offer better polyphony at
+    // expense of larger memory footprint and CPU load.
+    mm_word     mix_channel_count;
+
+    // Pointer to module channel buffer, this can be placed in EWRAM. Size of
+    // buffer must be ``MM_SIZEOF_MODCH * mod_channel_count`` bytes.
+    mm_addr     module_channels;
+
+    // Pointer to active channel buffer, this can be placed in EWRAM. Size of
+    // buffer must be ``MM_SIZEOF_ACTCH * mix_channel_count`` bytes.
+    mm_addr     active_channels;
+
+    // Pointer to mixing channel buffer, this can be placed in EWRAM. Size of
+    // buffer must be ``MM_SIZEOF_MIXCH * mix_channel_count`` bytes.
+    mm_addr     mixing_channels;
+
+    // Pointer to your soundbank file in RAM.
+    mm_addr     soundbank;
+
+} mm_headless_system;
+
+mm_word *mppGetSampleNameList(void);
+mm_word *mppGetModuleNameList(void);
+
+mm_mas_gba_sample *mmGetSampleAddress(mm_word id);
+uintptr_t mmGetModuleAddress(mm_word id);
+
+#endif // MM_HEADLESS_MAIN_H
