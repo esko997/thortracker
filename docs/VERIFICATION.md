@@ -21,14 +21,16 @@ Eight sample lanes, editable shared PCM, WAV import and eight-channel FastTracke
   concurrent/interleaved playback, loop/envelope release, high notes, live editing,
   audition borrowing, seek, slow tempo and legacy modulation. The 22 Android host
   tests also passed during integration.
-- Live DMG checks exercise instrument navigation, Sound/Advanced preservation,
+- Live DMG and Nova checks exercise instrument navigation, Sound/Advanced preservation,
   controller edits and Undo, held-A touch audition, loop/keymap/envelope editing,
   project round trips, all eight lanes, transport and XM export. Private recovery
   and workspace data are cold-backed-up, restored and independently verified;
-  `/ThorTunez` is untouched.
-- Export validation includes whole-bank comparison with the pinned real converter
-  and a controlled **16 kHz Maxmod GBA ROM in mGBA**, checking musical state and
-  transport against the native player. This is not physical-GBA listening, bit-exact
+  `/ThorTunez` is untouched. Both short device passes report zero driver faults and
+  zero xruns; this is not a long-session glitch-free guarantee.
+- Three complete native soundbanks are **byte-identical** to mmutil 1.10.1 output.
+  A controlled **16 kHz Maxmod GBA ROM in mGBA** matches all **8,139 active-channel
+  frequency/volume/pan observations**, with no transport-state alignment misses,
+  across the feature, effect and demo fixtures. This is not physical-GBA listening, bit-exact
   analog/PWM output, or a CPU-budget guarantee inside a game. Mixer rate, SFX load,
   memory use and frame workload still need profiling in the consuming game.
 
