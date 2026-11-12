@@ -3,6 +3,7 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
+import org.thortracker.model.Songs
 import org.thortracker.system.gba.GbaInstrument
 import org.thortracker.system.gba.GbaSample
 import org.thortracker.system.gba.GbaSound
@@ -53,7 +54,7 @@ internal class GbaExportModel(document: Song) {
         }
         samples = flatSamples
         patterns.forEachIndexed { p, pattern ->
-            require(pattern.length in 1..256 && pattern.tracks.size == 8 && pattern.tracks.all { it.size >= pattern.length }) { "Pattern $p needs eight tracks and 1..256 rows" }
+            require(pattern.length in 1..Songs.ROWS && pattern.tracks.size == 8 && pattern.tracks.all { it.size >= pattern.length }) { "Pattern $p needs eight tracks and 1..${Songs.ROWS} rows" }
             pattern.tracks.forEachIndexed { channel, track ->
                 for (row in 0 until pattern.length) {
                     val cell = track[row]

@@ -1,15 +1,31 @@
+/*
+ * Portions derived from mmutil source, Copyright (c) 2008, Mukunda Johnson.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 package org.thortracker.backend
 
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.system.gba.GbaEnvelope
+import org.thortracker.system.gba.GbaSample
 
 /**
  * Direct, pure Kotlin lowering to Maxmod's real GBA soundbank and MAS v0x18 format.
- * Layout/effect/envelope/PCM algorithms follow ISC-licensed mmutil (Mukunda Johnson 2008,
- * Antonio Niño Díaz 2025–2026), built with MM_MMUTIL_DEVKITPRO_COMPAT. No runtime compiler,
- * file I/O, host callback, or substitute sample player is involved.
+ * Layout/effect/envelope/PCM algorithms follow devkitPro mmutil 1.10.1, commit
+ * 8b0792e45852b58fda4def4d263e246d3a73662d (Mukunda Johnson, permissive license).
+ * No runtime compiler, file I/O, host callback, or substitute sample player is involved.
  */
 object GbaLowering {
     fun lower(song: Song, out: ByteArray) {
@@ -32,7 +48,7 @@ object GbaLowering {
     /** Standalone .bin bank, suitable for the GBA Maxmod mmInitDefault soundbank argument. */
     fun soundbank(song: Song): ByteArray = bank(GbaExportModel(song))
 
-    private data class Pcm(val data: ByteArray, val loopLength: Int, val frequency: Int)
+    private data class Pcm(val data: ByteArray, val loopLength: Int, val frequency: Int, val exported: Boolean)
 
     private fun process(sample: GbaExportModel.Sample): Pcm {
         val s = sample.source
@@ -43,14 +59,16 @@ object GbaLowering {
         val data = ByteArray(end + addition)
         for (i in 0 until end) data[i] = (s.pcm[i] + 128).toByte()
         for (i in end until data.size) data[i] = data[s.loopStart + (i - end) % loop]
-        return Pcm(data, if (loop == 0) -1 else loop + addition, sample.pitch.frequency)
+        return Pcm(data, if (loop == 0) -1 else loop + addition, sample.pitch.frequency, s.name.startsWith("#"))
     }
 
     private fun bank(model: GbaExportModel): ByteArray {
         val pcm = mutableListOf<Pcm>()
+        val processed = mutableListOf<Pair<GbaSample, Pcm>>()
         val sampleIds = model.samples.map { sample ->
-            val candidate = process(sample)
-            val prior = pcm.indexOfFirst { it.loopLength == candidate.loopLength && it.data.contentEquals(candidate.data) }
+            val candidate = processed.firstOrNull { it.first === sample.source }?.second
+                ?: process(sample).also { processed += sample.source to it }
+            val prior = pcm.indexOfFirst { it === candidate || (it.loopLength == candidate.loopLength && it.data.contentEquals(candidate.data)) }
             if (prior >= 0) prior else { pcm += candidate; pcm.lastIndex }
         }
         val out = GbaBytes()
@@ -58,13 +76,12 @@ object GbaLowering {
         out.u16(1)
         out.text("*maxmod*", 8)
         val pointers = out.size
-        out.zeros((pcm.size + 2) * 4)
-        out.patch32(pointers + (pcm.size + 1) * 4, -1) // no name dictionary
+        out.zeros((pcm.size + 1) * 4) // legacy bank has no dictionary-offset field
         pcm.forEachIndexed { i, sample ->
             out.align()
             out.patch32(pointers + i * 4, out.size)
             out.u32(sample.data.size + 16)
-            out.u8(1); out.u8(0x18); out.u8(0); out.u8(0xBA)
+            out.u8(1); out.u8(0x18); out.u8(if (sample.exported) 1 else 0); out.u8(0xBA)
             out.u32(sample.data.size)
             out.u32(sample.loopLength)
             out.u8(0); out.u8(0xBA)
@@ -101,7 +118,8 @@ object GbaLowering {
             out.align()
             out.patch32(pointers + (model.instruments.size + i) * 4, out.size - base)
             out.u8(sample.volume); out.u8((sample.pan shr 1) or 128); out.u16(sample.pitch.frequency / 4)
-            out.u8(0); out.u8(0); out.u8(0); out.u8(64); out.u16(32768); out.u16(sampleIds[i])
+            // 1.10.1 stores its calculated 32768 sweep in u8, yielding zero.
+            out.u8(0); out.u8(0); out.u8(0); out.u8(64); out.u16(0); out.u16(sampleIds[i])
         }
         val marks = Array(model.patterns.size) { BooleanArray(256).also { it[0] = true } }
         model.orders.forEachIndexed { o, p ->
@@ -126,7 +144,7 @@ object GbaLowering {
         val empty = inst.samples.isEmpty()
         val volume = !empty && s.volumeEnvelope.enabled
         val pan = !empty && s.panEnvelope.enabled
-        val flags = (if (volume) 9 else 0) or (if (pan) 18 else 0)
+        val flags = (if (volume) 9 else 0) or (if (pan) 2 else 0)
         out.u8(if (empty) 0 else 128); out.u8(if (empty) 0 else s.fadeout / 32)
         out.u8(0); out.u8(0); out.u8(0); out.u8(flags); out.u8(0); out.u8(0)
         val notemap = IntArray(120) { note ->
@@ -220,8 +238,8 @@ object GbaLowering {
                 val x = param shr 4
                 val y = param and 15
                 when (x) {
-                    1, 2 -> fx(if (x == 1) 6 else 5, if (y == 0) 0 else 0xF0 or y)
-                    4, 7 -> fx(19, (if (x == 4) 0x30 else 0x40) or intArrayOf(0, 1, 4, 6, 8, 9, 12, 6)[y])
+                    1, 2 -> fx(if (x == 1) 6 else 5, 0xF0 or y)
+                    4, 7 -> fx(19, (if (x == 4) 0x30 else 0x40) or y)
                     6 -> fx(19, 0xB0 or y)
                     8 -> fx(24, y * 16)
                     9 -> fx(19, 0x20 or y)

@@ -5,6 +5,7 @@ import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import org.thortracker.model.Cell
+import org.thortracker.model.Songs
 import org.thortracker.system.gba.GbaEnvelope
 import org.thortracker.system.gba.GbaSample
 import org.thortracker.system.gba.GbaSound
@@ -42,14 +43,15 @@ object GbaExportConstraints {
         effect == 13 && param and 15 > 9 -> "XM Dxx row is binary-coded decimal"
         effect == 14 && param shr 4 !in listOf(1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14) -> "This XM E subcommand is unsupported by Maxmod"
         effect == 14 && param shr 4 in listOf(4, 7) && param and 15 > 7 -> "XM waveform must be 0..7"
+        effect == 14 && param in listOf(0x10, 0x20) -> "mmutil 1.10.1 cannot preserve E10/E20 fine-slide memory; enter a nonzero amount"
         effect == 15 && param == 0 -> "F00 is not a valid Maxmod speed"
         else -> null
     }
 
     /**
-     * mmutil's XM offset sanitizer indexes its flattened samples by instrument-1, not keymap.
-     * Accept only cells where that check has the same endpoint as the actual selected sample.
-     * Must be called after structural sound validation; returns null for effects other than 9.
+     * Offset commands need an explicit mapped note so the original sample/loop endpoint can be
+     * checked before mmutil expands short loops. Must follow structural sound validation.
+     * Returns null for effects other than 9; multisample keymaps are supported.
      */
     fun sampleOffsetError(sound: GbaSound, cell: Cell): String? {
         if (cell.effect != 9) return null
@@ -60,19 +62,30 @@ object GbaExportConstraints {
         fun end(index: Int): Int? = if (index == -1) 4 else sound.samples.getOrNull(index)?.let {
             if (it.loopEnd > it.loopStart) it.loopEnd else it.pcm.size
         }
-        var remaining = cell.instrument - 1
-        var reference: Int? = null
-        for (instrument in sound.instruments) {
-            val local = instrument.keymap.filter { it >= 0 }.distinct().toMutableList()
-            if (local.isNotEmpty() && -1 in instrument.keymap) local += -1
-            if (remaining < local.size) { reference = end(local[remaining]); break }
-            remaining -= local.size
-        }
         val endpoint = end(selected)
-        if (reference == null || endpoint == null || reference != endpoint)
-            return "Pinned mmutil sample-offset check cannot preserve this multisample mapping"
+        if (endpoint == null) return "Invalid sample-offset sample"
         if (cell.param * 256 >= endpoint) return "Sample offset is beyond the sample or loop end"
         return null
+    }
+
+    /**
+     * Conservative bound before allocating compiled PCM: every global sample once (bank dedup),
+     * silent padding, maximum loop unrolling, both 12-point envelopes and full maps in all slots,
+     * 255 local sample headers, and 199 maximally populated patterns at the app's row limit.
+     * XM files repeat PCM per instrument; that does not multiply the native soundbank.
+     */
+    fun nativeImageUpperBound(sound: GbaSound): Long {
+        val pcm = sound.samples.sumOf { sample ->
+            val loop = sample.loopEnd.toLong() - sample.loopStart
+            val extra = if (loop in 1L..511L) (512 / loop + 1) * loop else 0
+            sample.pcm.size.toLong() + extra + 27
+        } + 31 // generated four-frame silent sample, header, padding and alignment
+        val instruments = 64L * (12 + 2 * (8 + 12 * 4) + 240 + 3)
+        val samples = 255L * 15
+        val patterns = 199L * (1 + Songs.ROWS * (8 * 6 + 1))
+        val headers = GbaPlayerImage.HEADER_SIZE + 12L + 4 * (129 + 1) +
+            8 + 276 + 4 * (64 + 255 + 199) + 3
+        return headers + pcm + instruments + samples + patterns
     }
 
     /** Set [checkPcm] false only for metadata edits whose unchanged PCM was already validated. */
@@ -81,6 +94,7 @@ object GbaExportConstraints {
         if (sound.samples.size > 128) add("GBA supports at most 128 global samples")
         if (sound.bpm !in 32..255) add("GBA BPM must be 32..255")
         if (sound.samples.sumOf { it.pcm.size.toLong() } > 512 * 1024) add("Embedded PCM exceeds the 512 KiB backend limit")
+        if (nativeImageUpperBound(sound) > GbaPlayerImage.SIZE) add("Expanded GBA soundbank exceeds the 2 MiB player-image limit")
         sound.samples.forEachIndexed { index, s ->
             val prefix = "Sample ${index + 1}: "
             if (checkPcm && s.pcm.any { it !in -128..127 }) add(prefix + "PCM must be signed 8-bit")

@@ -66,7 +66,7 @@ class GbaExportTest {
         assertEquals("*maxmod*", b.copyOfRange(4, 12).decodeToString())
         assertEquals(3, u16(b, 0)) // loop, one-shot and unmapped silence
         assertEquals(1, u16(b, 2))
-        assertEquals(-1, u32(b, 12 + 4 * (u16(b, 0) + 1)))
+        assertEquals(12 + 4 * (u16(b, 0) + 1), u32(b, 12)) // no legacy dictionary pointer
         val m = module(b)
         assertEquals(0x18, u8(b, m - 3))
         assertEquals(2, u8(b, m)); assertEquals(64, u8(b, m + 1)); assertEquals(5, u8(b, m + 2))
@@ -84,8 +84,9 @@ class GbaExportTest {
         val pitchVariant = pointer(b, 68)
         assertEquals(u16(b, first + 10), u16(b, pitchVariant + 10))
         assertTrue(u16(b, first + 2) != u16(b, pitchVariant + 2))
+        assertEquals(0, u16(b, first + 8)) // legacy u8 auto-vibrato sweep overflow
         val instrument = pointer(b, 0)
-        assertEquals(27, u8(b, instrument + 5))
+        assertEquals(11, u8(b, instrument + 5)) // legacy XM pan envelope uses bit 1 only
         assertEquals(3, u8(b, instrument + 1))
         assertEquals(0, u16(b, instrument + 12 + 8 + 8 + 2)) // last node has zero range/value
     }
@@ -134,10 +135,12 @@ class GbaExportTest {
         assertEquals(Event(250, 0, 2, 1), second[9][0])
     }
 
-    @Test fun effectMappingUsesMaxmodIdentifiersAndFineSlideMemory() {
+    @Test fun effectMappingUsesLegacyMaxmodIdentifiers() {
         val actual = pattern(GbaLowering.soundbank(GbaGoldenSongs.effects()), 0)
-        val expected = listOf(0x0A37, 0x0612, 0x0600, 0x0508, 0x0710, 0x0847, 0x0C10, 0x0B02, 0x1234, 0x18C0, 0x0F01, 0x0410, 0x1B20, 0x06F3, 0x0600, 0x05F4, 0x0500, 0x1334, 0x1346, 0x18C0, 0x1323, 0x1302, 0x1312, 0x13C3, 0x13D2, 0x13E1, 0x0103, 0x1496)
+        val expected = listOf(0x0A37, 0x0612, 0x0600, 0x0508, 0x0710, 0x0847, 0x0C10, 0x0B02, 0x1234, 0x18C0, 0x0F01, 0x0410, 0x1B20, 0x06F3, 0x06F1, 0x05F4, 0x05F1, 0x1332, 0x1347, 0x18C0, 0x1323, 0x1302, 0x1312, 0x13C3, 0x13D2, 0x13E1, 0x0103, 0x1496)
         expected.forEachIndexed { i, code -> assertEquals("effect row $i", code, actual[i][0]!!.let { (it.effect shl 8) or it.param }) }
+        reject("fine-slide memory") { GbaLowering.effect(14, 0x10) }
+        reject("fine-slide memory") { GbaLowering.effect(14, 0x20) }
     }
 
     @Test fun sourceRateAndRootHaveOneCanonicalPitchMeaning() {
@@ -180,13 +183,28 @@ class GbaExportTest {
         assertTrue(GbaExportConstraints.errors(sound.copy(samples = samples, instruments = List(64) { four })).any { "at most 255" in it })
     }
 
-    @Test fun sampleOffsetRejectsConverterIndexAmbiguityAndOutOfRangeEndpoints() {
+    @Test fun fullSizeSampleSharedByEverySlotStillFitsOneNativePcmBlock() {
+        val song = GbaGoldenSongs.effects()
+        val original = song.sound as GbaSound
+        val sound = original.copy(
+            samples = listOf(GbaSample(name = "Shared", pcm = List(512 * 1024) { (it % 256) - 128 })),
+            instruments = List(64) { original.instruments[0] },
+        )
+        assertTrue(GbaExportConstraints.errors(sound).isEmpty())
+        val bound = GbaExportConstraints.nativeImageUpperBound(sound)
+        assertTrue(bound < GbaPlayerImage.SIZE)
+        val bank = GbaLowering.soundbank(song.copy(sound = sound))
+        assertEquals(1, u16(bank, 0))
+        assertTrue(bank.size + GbaPlayerImage.HEADER_SIZE <= bound)
+    }
+
+    @Test fun sampleOffsetSupportsMultisampleMappingsButRejectsOutOfRangeEndpoints() {
         val simple = GbaGoldenSongs.effects().sound as GbaSound
         assertEquals(null, GbaExportConstraints.sampleOffsetError(simple, Cell(48, 1, 9, 1)))
         assertTrue(GbaExportConstraints.sampleOffsetError(simple, Cell(48, 1, 9, 4))!!.contains("beyond"))
         assertTrue(GbaExportConstraints.sampleOffsetError(simple, Cell(effect = 9, param = 1))!!.contains("explicit"))
         val kit = GbaGoldenSongs.features().sound as GbaSound
-        assertTrue(GbaExportConstraints.sampleOffsetError(kit, Cell(48, 2, 9, 1))!!.contains("multisample"))
+        assertEquals(null, GbaExportConstraints.sampleOffsetError(kit, Cell(48, 2, 9, 1)))
     }
 
     @Test fun imageWrapsExactlyTheExportedBankWithZeroReservedBytes() {
