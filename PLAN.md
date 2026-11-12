@@ -27,6 +27,13 @@ The exporter targets the game's mmutil 1.10.1; native playback follows Maxmod 1.
 effect behavior. This is an explicit exception to the earlier non-sample-only scope.
 It does not add GBA PSG channels, XM import or a target-game CPU budget guarantee.
 
+**GBA PCM + PSG research (2026-11-12):** [unified-project and hardware-export spike](docs/GBA_PSG_SPIKE.md).
+Proposed direction: eight PCM plus four real PSG lanes in one project/transport,
+exported as a coordinated game bundle. No PSG implementation is approved or shipped
+by this spike. First prove synchronization and PCM compatibility against the game's
+actual Butano runtime; its bundled newer Maxmod is not the legacy runtime verified
+for 0.45.0. Resolve the game-linked adapter's licensing before implementation.
+
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,

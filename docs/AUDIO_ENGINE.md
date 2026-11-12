@@ -80,7 +80,7 @@ mirrored by an independent Python reference) on our clock-exact port of SAASound
 [SAA1099](#saa1099-thor-trackers-own-player-on-one-or-two-philips-saa1099-sam-saa1099-cms-saa1099).
 
 The GBA system (`"gba-maxmod"`, 0.45.0) runs Maxmod's portable MAS player and GBA mixer,
-with the game's legacy converter/runtime semantics, and exports eight-channel XM.
+with pinned legacy converter/runtime semantics, and exports eight-channel XM.
 See [Game Boy Advance / Maxmod](#game-boy-advance-maxmod-gba-maxmod).
 
 ## Chip engine interface (what a new sound system implements)
@@ -8281,4 +8281,12 @@ match host PCM byte-for-byte. Verification uses actual GBA ROM playback, driver
 order/row and channel-state comparisons, plus byte-exact converter output.
 These do **not** prove CPU headroom inside a busy game or equivalence at another mixer rate.
 The game's own Maxmod build, sound effects and frame workload must be profiled separately.
+
+**Consumer-runtime caveat (2026-11-12):** the current `gba-survivors` Butano checkout
+compiles a newer bundled C Maxmod, with different modulation behavior. Its
+`MM_MMUTIL_DEVKITPRO_COMPAT` flag establishes converter compatibility, not identity
+with devkitPro Maxmod 1.0.15. The parity evidence above applies to the named legacy
+target, not automatically to that game's runtime. The
+[unified PCM + PSG spike](GBA_PSG_SPIKE.md) records the source evidence and the
+required compatibility/synchronization proof before extending this backend.
 
