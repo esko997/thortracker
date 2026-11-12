@@ -55,6 +55,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Illega
  * VIC-20 (`vic20-vic`) 1, C16/Plus/4 (`c16-ted`) 1 and Virtual Boy VSU (`vb-vsu`) 1.
  * WonderSwan (`ws-wonderswan`) 1 and WonderSwan Color (`ws-wonderswan-color`) 1 (their `sound` names its model: `color`).
  * SAM Coupé (`sam-saa1099`) 1; Creative Music System (`cms-saa1099`) 1.
+ * Game Boy Advance / Maxmod (`gba-maxmod`) 1: embedded PCM samples, note maps and XM envelopes.
  */
 object ProjectCodec {
     const val FORMAT = "thor-tracker-project"

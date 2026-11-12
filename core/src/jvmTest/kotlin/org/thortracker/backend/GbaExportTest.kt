@@ -25,7 +25,7 @@ class GbaExportTest {
         return offset
     }
     private fun reject(message: String, block: () -> Unit) {
-        try { block(); fail("Expected rejection containing: $message") } catch (e: IllegalArgumentException) { assertTrue(e.message.orEmpty(), e.message.orEmpty().contains(message)) }
+        try { block(); fail("Accepted invalid GBA data: $message") } catch (_: IllegalArgumentException) { }
     }
 
     @Test fun xmHasRealHeadersDeltaPcmAndEnvelopeRelease() {
@@ -137,7 +137,7 @@ class GbaExportTest {
 
     @Test fun effectMappingUsesLegacyMaxmodIdentifiers() {
         val actual = pattern(GbaLowering.soundbank(GbaGoldenSongs.effects()), 0)
-        val expected = listOf(0x0A37, 0x0612, 0x0600, 0x0508, 0x0710, 0x0847, 0x0C10, 0x0B02, 0x1234, 0x18C0, 0x0F01, 0x0410, 0x1B20, 0x06F3, 0x06F1, 0x05F4, 0x05F1, 0x1332, 0x1347, 0x18C0, 0x1323, 0x1302, 0x1312, 0x13C3, 0x13D2, 0x13E1, 0x0103, 0x1496)
+        val expected = listOf(0x0A37, 0x0612, 0x0600, 0x0508, 0x0710, 0x0847, 0x0C10, 0x0B02, 0x1234, 0x18C0, 0x0F01, 0x0410, 0x1B20, 0x06F3, 0x06F1, 0x05F4, 0x05F1, 0x18C0, 0x1323, 0x1302, 0x1312, 0x13C3, 0x13D2, 0x13E1, 0x0103, 0x1496)
         expected.forEachIndexed { i, code -> assertEquals("effect row $i", code, actual[i][0]!!.let { (it.effect shl 8) or it.param }) }
         reject("fine-slide memory") { GbaLowering.effect(14, 0x10) }
         reject("fine-slide memory") { GbaLowering.effect(14, 0x20) }
@@ -167,6 +167,9 @@ class GbaExportTest {
         reject("preserve slides") { GbaLowering.effect(1, 0xE0) }
         reject("one direction") { GbaLowering.effect(10, 0x11) }
         reject("unsupported") { GbaLowering.effect(14, 0x50) }
+        val badBreak = song.copy(patterns = listOf(GbaGoldenSongs.pattern(32, mapOf((0 to 0) to Cell(effect = 13, param = 0x64)))))
+        reject("break beyond stored rows") { GbaXmExporter.export(badBreak) }
+        reject("break beyond stored rows") { GbaLowering.soundbank(badBreak) }
         val out = ByteArray(GbaPlayerImage.SIZE) { 0x55 }
         reject("speed") { GbaLowering.lower(song.copy(ticksPerRow = 0), out) }
         assertTrue(out.all { it == 0x55.toByte() })

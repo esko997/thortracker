@@ -174,7 +174,7 @@ internal class GbaSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
             c.line(x2, g.top, x2, g.bottom, loopColor, ink.dp(2f))
         }
         c.line(g.left, g.centerY(), g.right, g.centerY(), Palette.alpha(silver, 70), ink.dp(1f))
-        val columns = g.width().toInt().coerceIn(1, 256)
+        val columns = minOf(sample.pcm.size, g.width().toInt().coerceIn(1, 256))
         if (sample !== cachedSample || columns != cachedColumns) {
             for (i in 0 until columns) {
                 val start = i * sample.pcm.size / columns
@@ -187,8 +187,17 @@ internal class GbaSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         }
         for (i in 0 until columns) {
             val x = g.left + g.width() * i / columns
-            c.line(x, g.centerY() - highs[i] * g.height() / 256f, x, g.centerY() - lows[i] * g.height() / 256f,
-                displayInk, maxOf(1f, g.width() / columns))
+            val top = g.centerY() - highs[i] * g.height() / 256f
+            val bottom = g.centerY() - lows[i] * g.height() / 256f
+            if (lows[i] == highs[i]) {
+                c.line(x, top, x + g.width() / columns, top, displayInk, ink.dp(1.2f))
+                if (sample.pcm.size == columns && i > 0) {
+                    val previousY = g.centerY() - lows[i - 1] * g.height() / 256f
+                    c.line(x, previousY, x, top, displayInk, ink.dp(1.2f))
+                }
+            } else {
+                c.line(x, top, x, bottom, displayInk, maxOf(1f, g.width() / columns))
+            }
         }
     }
     private fun drawKeys(c: Surface, r: Rect) {

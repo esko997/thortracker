@@ -16,6 +16,9 @@ the exact Advanced editors, with the same instrument list and Undo history.
 [Actual handheld gallery, controls and hardware limits](docs/INSTRUMENT_PANELS.md).
 The APK still updates the normal **Thor Tracker** app; no new preview identity is introduced.
 
+**0.45.0 adds Game Boy Advance / Maxmod:** eight sample voices, editable sample instruments,
+WAV import and eight-channel FastTracker II `.xm` export for GBA homebrew.
+
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
 *Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. This clip was captured in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom), without audio. Other captures identify their own device or synthetic viewport.*
@@ -32,6 +35,8 @@ Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it w
 The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy, NES, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY-3-8910 / YM2149, PC Engine, MSX SCC, OPM, PC-88/98 OPN/OPNA, Atari 8-bit POKEY, Atari 2600 TIA, VIC-20 VIC, C16 / Plus/4 TED or Virtual Boy). **NES…** offers the plain NES, NES + VRC6, NES + VRC7, **NES + N163…** with 1-8 N163 channels, NES + Sunsoft 5B, NES + FDS, NES + MMC5 and NES + EPSM. **Sega 8-bit…** offers Master System, Game Gear and two SMS FM Sound Unit layouts. **AY-3-8910 / YM2149…** offers ZX Spectrum 128, MSX, Atari ST and Amstrad CPC. **MSX SCC…** offers the Konami SCC (K051649) or SCC+ (K052539). **Atari 2600…** offers NTSC and PAL. VIC/TED songs select PAL or NTSC in the Song view. **Load demo** asks the same.
 
 **Philips SAA1099…** offers **SAM Coupé** (six voices on one chip) and **Creative Music System** (twelve voices on two chips), in both New and Load demo.
+
+**Game Boy Advance (Maxmod)** offers eight sample lanes and the original **Prism Circuit** demo.
 
 ## Converting between systems
 
@@ -150,6 +155,41 @@ Title, tempo, loop point and the order list with a density strip for each patter
 ![Top screen: the Wave view editing wave 5, a 32-step V shape, with Sine, Triangle, Saw, Square, Invert, Shift and Smooth tools. Bottom screen: the Instrument view's Wave bank, with sound 01 Triangle bass using wave 5 at 100% output](docs/media/sound-design-wave-instrument.png)
 
 Fifteen instruments in each of the pulse, wave and noise banks, each with live sliders and a preview of its envelope or waveform, plus sixteen 32-sample wave tables you draw directly or start from a preset shape.
+
+### Game Boy Advance: Maxmod samples and XM
+
+Choose **Files → New blank song → Game Boy Advance (Maxmod)**, or its **Prism Circuit** demo.
+These are eight software-mixed sample voices, not eight hardware oscillators. Export `.xm`
+for a Maxmod-based GBA game; WAV and the editable `.thor` project remain available.
+The original Pulse, Bass, Bell, Kick, Snare and Hat samples make a blank song immediately playable.
+
+**Sound** keeps the usual instrument list: Up/Down selects a slot, Left/Right selects a
+control, A+direction edits, and X auditions. Pick a listen key, browse the sample library,
+map that key and adjust volume, pan and forward looping. Touch the loop handles directly.
+**Advanced** adds sample root/fine tuning, precise loop boundaries, the 96-key map,
+volume/pan envelope points, sustain/loop nodes and OFF fadeout. Both faces share Undo.
+
+**Sample tools** imports WAV, generates original sounds, trims, adjusts gain, normalizes,
+fades and resamples. WAV import accepts mono/stereo integer PCM or floating-point WAV
+up to 48 kHz and 16 MiB; stereo is mixed to mono and stored as signed eight-bit PCM.
+Samples are shared across instrument mappings: editing one changes every instrument using it.
+Root note describes the recording's pitch; changing it is not audio resampling.
+Only import audio you have permission to distribute with your game.
+
+The bounded format has **64 instruments, 128 library samples and 512 KiB embedded PCM**,
+up to 199 played orders, one effect per lane per row, speed 1–31 and BPM 32–255.
+Volume/pan envelopes have up to 12 points. Empty mapped keys are silent; a wholly empty
+instrument cannot play. Maxmod export quantizes pan and envelope/fadeout precision and
+reports converter limits, including its top-octave keymap restriction. Song tuning,
+ping-pong loops, XM import and the GBA's four legacy PSG voices are not supported.
+Use twelve-tone notes; scale-based note selection still works.
+
+Effects use the verified XM subset. `F01`–`F1F` sets speed; `F20`–`FFF` sets BPM.
+`Dxx` uses decimal digits for the destination row. `E4x`/`E7x` waveform selectors are
+rejected because the target GBA Maxmod runtime ignores them; vibrato/tremolo use sine.
+Run **Check** before export. The 512 KiB cap is an application limit, **not a guarantee
+of spare GBA RAM or CPU time**: the game's mixer rate, sound effects and frame workload
+still need profiling. See the [engine/export contract](docs/AUDIO_ENGINE.md#game-boy-advance-maxmod-gba-maxmod).
 
 ### NES instruments: envelopes
 
@@ -491,7 +531,7 @@ number of voices or on how many instrument envelopes can run:
 
 | Columns | Systems |
 | --- | --- |
-| 1 | Game Boy/hUGEDriver; C64 SID/GoatTracker |
+| 1 | Game Boy/hUGEDriver; C64 SID/GoatTracker; Game Boy Advance/Maxmod |
 | 2 | VIC-20; C16/Plus/4 TED; Virtual Boy |
 | 4 | NES/FamiStudio and all expansion variants, including EPSM; Atari 2600 TIA (NTSC/PAL); OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
 
@@ -712,6 +752,11 @@ The bundled third-party components keep their own licenses, all compatible with 
 ## Dependencies
 
 binjgb is MIT licensed; its full notice is in `app/src/main/cpp/third_party/binjgb/LICENSE` and bundled in the APK's `assets/NOTICE.txt`. hUGEDriver 6.1.3 is public domain and pinned under `third_party/`. The Steam Deck build adds SDL3 (zlib license), stb_truetype (public domain / MIT) and the Noto fonts (SIL Open Font License, `deck/fonts/OFL.txt`); its AppImage carries the same `NOTICE.txt`. See the audio document for exact source revisions and the one-time player-image regeneration procedure.
+
+Maxmod is ISC licensed. The legacy mmutil conversion code retains its ISC notices and
+the distribution's BSD-3-Clause licence; all are bundled in `NOTICE.txt`. The GBA starter
+samples are original generated waveforms. Imported samples need their own permission
+for redistribution with a game.
 
 The NES system (0.9.0) adds the FamiStudio sound engine 4.5.3 (its own all-permissive notice; its note tables, including the VRC6 saw, VRC7 and N163 (1-8 channel) note tables, and the test songs are MIT), pinned under `third_party/famistudio-4.5.3/` and pre-assembled into `app/src/main/cpp/generated/nes_player_image.h` (and, built with its expansion support, `nes_vrc6_player_image.h`, `nes_vrc7_player_image.h` and `nes_n163_<n>_player_image.h` for 1-8 N163 channels); the `m6502.h` 6502 emulator from floooh/chips (zlib license); blip_buf 1.1.0 (LGPL-2.1-or-later); and, for the VRC7's FM channels, emu2413 1.6.4 by Mitsutaka Okazaki (MIT, github.com/digital-sound-antiques/emu2413 commit `a1d51209`), all under `app/src/main/cpp/third_party/`. The 2A03 APU and the VRC6 and Namco 163 audio emulation are Thor Tracker's own code (the N163 written from the NESdev wiki's "Namco 163 audio"). All notices are in `NOTICE.txt`.
 

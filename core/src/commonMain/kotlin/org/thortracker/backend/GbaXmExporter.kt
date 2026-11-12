@@ -11,7 +11,7 @@ object GbaXmExporter {
     internal fun encode(model: GbaExportModel): ByteArray {
         // XM repeats samples per instrument. Its file can exceed the deduplicated native bank size.
         val capacity = 336 + model.patterns.sumOf { 9 + it.length * 8 * 5 } +
-            model.instruments.sumOf { if (it.samples.isEmpty()) 29 else 263 } +
+            model.instruments.fold(0) { total, inst -> total + if (inst.samples.isEmpty()) 29 else 263 } +
             model.samples.sumOf { 40 + it.source.pcm.size }
         val out = GbaBytes(capacity)
         out.text("Extended Module: ", 17)

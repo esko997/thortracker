@@ -20,6 +20,13 @@ parameters. NES expansions, PSG/OPLL, wavetable, remaining FM and specialized sa
 voices now have musical controls with their native restrictions preserved.
 See [the gallery, mappings and rollout contract](docs/INSTRUMENT_PANELS.md).
 Preserve exact patches, Advanced editors and the existing audition/Undo workflow.
+
+**0.45.0/code 63:** GBA/Maxmod adds eight sample voices, WAV import and shared sample
+editing, keymaps/envelopes, original starter sounds and eight-channel XM export.
+The exporter targets the game's mmutil 1.10.1; native playback follows Maxmod 1.0.15's
+effect behavior. This is an explicit exception to the earlier non-sample-only scope.
+It does not add GBA PSG channels, XM import or a target-game CPU budget guarantee.
+
 **Galaxy Fold8** remains the phone target; DMG is a functional testbed, not physical-reach proof.
 
 SAA1099 is released as **0.34.0/code 47**, retaining VIC/TED and all earlier systems. Native/reference,
@@ -127,7 +134,7 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
      of ares's APU, VGM/WAV export; Hyper Voice VGM is explicitly refused.
      995 JVM tests, 693 native checks, 2,796 WAV checks, independent references and all three reserved
      Android frontends pass, including official AppImage/DMG/Konkr APK checks (`docs/VERIFICATION.md`).
-   - Not planned: sample-based chips (Amiga Paula, SNES SPC700, GBA DMA).
+   - Not planned: other sample-based systems (Amiga Paula, SNES SPC700). GBA/Maxmod is now implemented as requested above.
 8. **Conversion between systems (released 0.37.0/code 50)** — Files menu preview, complete paginated/exportable
    loss report, explicit Apply with previous-project protection, stale-preview rejection and all registered
    destinations. Retains compatible promotions and editable instrument identity; cross-family sounds use
@@ -467,7 +474,7 @@ Do not abandon the responsive composition loop to preserve emulator purity. Conv
 
 These are implementation scope defaults, not claims that the features are impossible:
 
-- Additional sample-based platforms (GBA DMA, SNES SPC700 and Amiga Paula).
+- Additional sample-based platforms (SNES SPC700 and Amiga Paula).
 - Real-time note recording, MIDI integration, cloud sync, collaborative editing, plugin hosting and sample recording.
 - Import of arbitrary existing `.uge`/Furnace projects. Export compatibility does not establish import compatibility.
 - C/assembly/standalone-ROM exports.

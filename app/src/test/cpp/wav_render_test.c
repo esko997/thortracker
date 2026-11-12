@@ -140,12 +140,14 @@ static const Demo kDemos[] = {
     {"pce-demo.pcimg", "pce-huc6280"},
     {"scc-demo.sccimg", "msx-scc"},
     {"scc-plus-demo.sccimg", "msx-scc-plus"},
+    {"gba-demo.gbaimg", "gba-maxmod"},
 };
 
 /* The shortest valid songs: one order of one row at speed 1 (one tick), looping to itself; a held expansion note,
  * a looping MMC5 PCM note, a Square 1 tone in each Sega layout, YM2612 FM 1, an XGM2 PCM retrigger or FM 3 chord. */
 static const Demo kShortest[] = {
     {"vsu-shortest.vbimg", "vb-vsu"},
+    {"gba-shortest.gbaimg", "gba-maxmod"},
     {"n163-shortest-1ch.nesimg", "nes-famistudio-n163-1"},
     {"n163-shortest-2ch.nesimg", "nes-famistudio-n163-2"},
     {"n163-shortest-3ch.nesimg", "nes-famistudio-n163-3"},

@@ -184,10 +184,16 @@ add_library(chip_engines STATIC
     ${SCC_DIR}/scc_image.c
     ${SCC_DIR}/scc_vgm.c
     ${SCC_DIR}/scc_k051649.c
+    gba/gba_chip.cpp
+    gba/gba_image.cpp
 )
 target_include_directories(chip_engines PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${BINJGB_DIR} ${NES_DIR} ${SID_DIR} ${OPL3_DIR} ${NUKED_DIR} ${YM_DIR} ${WS_DIR} ${VSU_DIR} ${SAA_DIR} ${CBM_DIR} ${OPN_DIR} ${OPM_DIR} ${SMS_DIR} ${AY_DIR} ${PCE_DIR} ${SCC_DIR} ${BLIP_DIR} ${TIA_DIR} ${POKEY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips ${MEDNAFEN_PSG_DIR}/shim ${STELLA_TIA_DIR} ${STELLA_TIA_DIR}/shim)
+target_include_directories(chip_engines PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party/maxmod/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party/maxmod/source)
+set_source_files_properties(gba/gba_chip.cpp gba/gba_image.cpp PROPERTIES COMPILE_OPTIONS "-fwrapv")
 target_compile_definitions(chip_engines PRIVATE NDEBUG=1)
 target_compile_options(chip_engines PRIVATE -O2 -fPIC -Wno-unused-function -Wno-unused-variable
     -Wno-unused-but-set-variable -Wno-sign-compare -Wno-missing-field-initializers -Wno-enum-compare)

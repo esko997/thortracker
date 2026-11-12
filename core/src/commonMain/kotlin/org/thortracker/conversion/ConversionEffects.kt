@@ -8,6 +8,7 @@ import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.cbm.CbmSystem
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gba.GbaSystem
 import org.thortracker.system.nes.NesFamiStudioSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.opl3.Opl3System
@@ -29,17 +30,18 @@ import org.thortracker.system.ym2612.YmSystem
 
 /** Converts operations, not similarly named driver bytes. No claim of acoustic equivalence. */
 internal object ConversionEffects {
-    private enum class Driver { GB, NES, SID, SMS, NATIVE }
+    private enum class Driver { GB, NES, SID, SMS, XM, NATIVE }
     private fun driver(system: SoundSystem): Driver = when (system) {
         GbSystem -> Driver.GB
         is NesFamiStudioSystem -> Driver.NES
         SidSystem -> Driver.SID
         is SmsSystem -> Driver.SMS
+        GbaSystem -> Driver.XM
         else -> Driver.NATIVE
     }
 
     private fun speedRange(system: SoundSystem): IntRange = when (driver(system)) {
-        Driver.NES -> 1..31
+        Driver.NES, Driver.XM -> 1..31
         Driver.SID -> 3..127
         else -> 1..255
     }
@@ -138,6 +140,10 @@ internal object ConversionEffects {
                 continue
             }
             if (code == 15) {
+                if (from == Driver.XM && param >= 32) {
+                    issue(column, "$text omitted: XM BPM changes the tick clock, not the number of ticks per row.")
+                    continue
+                }
                 if (from == Driver.SID && param < 3) {
                     issue(column, "$text resumes funktempo; no fixed-speed equivalent.")
                     continue
@@ -170,7 +176,7 @@ internal object ConversionEffects {
                 continue
             }
             if (code == 11 || code == 13) {
-                if ((from == Driver.NATIVE || from == Driver.GB) && !winningGlobal(source, pattern, row, lane.source, column, code)) {
+                if ((from == Driver.NATIVE || from == Driver.GB || from == Driver.XM) && !winningGlobal(source, pattern, row, lane.source, column, code)) {
                     changed(column, "$text omitted because a later source flow command wins on this row.")
                     continue
                 }
@@ -194,6 +200,14 @@ internal object ConversionEffects {
                     if (code == 11 && param == 0) { outCode = 13; value = 0 }
                     else value = param - 1
                 }
+                if (from == Driver.XM && code == 13) value = (param shr 4) * 10 + (param and 15)
+                if (to == Driver.XM && outCode == 13) {
+                    if (value !in 0..99) {
+                        issue(column, "$text omitted: XM pattern-break rows must fit two decimal digits.")
+                        continue
+                    }
+                    value = ((value / 10) shl 4) or (value % 10)
+                }
                 if (to == Driver.GB) value += 1
                 if (to == Driver.SMS && outCode == 13 && value != 0) {
                     issue(column, "$text omitted: Banjo only breaks to row zero, not row $value.")
@@ -202,6 +216,7 @@ internal object ConversionEffects {
                 } else {
                     add(outCode, value, column)
                     if (from == Driver.GB || to == Driver.GB) changed(column, "$text translated between GB one-based and destination/source zero-based flow addresses.")
+                    if (code == 13 && (from == Driver.XM || to == Driver.XM)) changed(column, "$text translated between XM decimal-digit row encoding and the other driver's row address.")
                     if (from == Driver.SMS || to == Driver.SMS) changed(column, "$text uses Banjo first-B/ B-over-D precedence rather than native last-column flow precedence.")
                 }
                 continue
@@ -366,6 +381,7 @@ internal object ConversionEffects {
         if (system.effectsFor(channel).none { it.code == 12 && it.supported }) return null
         return when (system) {
             Opl3System -> 63
+            GbaSystem -> 64
             OpmSystem -> 127
             YmSystem -> if (channel < 6) 127 else 15
             is OpnFamilySystem -> when (system.channels[channel].bank) { 0 -> 127; 1 -> 15; 2 -> 31; else -> 255 }

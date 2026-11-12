@@ -9,6 +9,7 @@ import org.thortracker.model.Cell
 import org.thortracker.model.Song
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gba.GbaSystem
 import org.thortracker.system.nes.NesSystem
 import org.thortracker.system.nes.NesVrc6System
 import org.thortracker.system.opl3.Opl3System
@@ -67,6 +68,30 @@ class ConversionEffectsTest {
         assertEquals(Cell(effect = 13, param = 63), convert(GbSystem, Opl3System, Cell(effect = 13, param = 64)).cell)
         assertEquals(Cell(effect = 11, param = 1), convert(Opl3System, GbSystem, Cell(effect = 11, param = 0)).cell)
         assertEquals(Cell(effect = 13, param = 64), convert(Opl3System, GbSystem, Cell(effect = 13, param = 63)).cell)
+    }
+
+    @Test fun xmBreakRowsTranslateDecimalDigitsWithoutChangingDestinationRow() {
+        assertEquals(Cell(effect = 13, param = 0x31), convert(Opl3System, GbaSystem, Cell(effect = 13, param = 31)).cell)
+        assertEquals(Cell(effect = 13, param = 31), convert(GbaSystem, Opl3System, Cell(effect = 13, param = 0x31)).cell)
+        assertEquals(Cell(effect = 13, param = 64), convert(GbaSystem, GbSystem, Cell(effect = 13, param = 0x63)).cell)
+    }
+
+    @Test fun xmBpmNeverBecomesTicksPerRowAndSpeedCannotBecomeBpm() {
+        val bpm = convert(GbaSystem, Opl3System, Cell(effect = 15, param = 125))
+        assertFalse(bpm.cell.hasAnyEffect)
+        assertTrue(bpm.hasLoss(0))
+        val speed = convert(Opl3System, GbaSystem, Cell(effect = 15, param = 48))
+        assertEquals(Cell(effect = 15, param = 31), speed.cell)
+        assertEquals(31, ConversionEffects.speed(Opl3System.blank().copy(ticksPerRow = 48),
+            GbaSystem.blank(), mutableListOf()))
+    }
+
+    @Test fun xmVolumeUsesItsOwnScaleButPitchSlideMemoryIsNotReinterpreted() {
+        assertEquals(Cell(effect = 12, param = 64), convert(Opl3System, GbaSystem, Cell(effect = 12, param = 63)).cell)
+        assertEquals(Cell(effect = 12, param = 63), convert(GbaSystem, Opl3System, Cell(effect = 12, param = 64)).cell)
+        val slide = convert(GbaSystem, Opl3System, Cell(effect = 1, param = 0))
+        assertFalse(slide.cell.hasAnyEffect)
+        assertTrue(slide.hasLoss(0))
     }
 
     @Test fun gbFlowBoundaryIsReportedRatherThanWrapped() {

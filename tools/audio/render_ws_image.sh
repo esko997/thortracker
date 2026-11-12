@@ -51,11 +51,13 @@ for src in "$cpp/chip_engine.c" "$cpp/cpu6502.c" "$cpp/huge_machine.c" "$cpp/hug
   ${CC:-gcc} -std=gnu11 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
+includes+=(-I "$root/third_party/maxmod/include" -I "$root/third_party/maxmod/source")
 for src in "$cpp/sid/sid_resid.cpp" "$cpp"/third_party/resid-1.0/{sid,voice,wave,envelope,filter,dac,extfilt,pot}.cc \
+  "$cpp/gba/gba_chip.cpp" "$cpp/gba/gba_image.cpp" \
   "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/opm/opm_ymfm.cpp" "$cpp/opn/opn_ymfm.cpp" "$cpp/pce/pce_psg.cpp" "$cpp/tia/tia_stella.cpp" \
   "$cpp/ym/ym_ymfm.cpp" "$cpp/third_party/ymfm/ymfm_adpcm.cpp" "$cpp/third_party/ymfm/ymfm_ssg.cpp"; do
   o="$build/$(basename "${src%.*}").o"
-  ${CXX:-g++} -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
+  ${CXX:-g++} -std=c++17 -O2 -fwrapv -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
 ${CXX:-g++} "${objs[@]}" -lm -pthread -o "$build/ws_render"

@@ -636,12 +636,14 @@ mm_active_channel *mpp_Channel_GetACHN(mm_module_channel *channel)
 // Process new note
 IWRAM_CODE void mpp_Channel_NewNote(mm_module_channel *module_channel, mpl_layer_information *layer)
 {
+#ifndef MM_MMUTIL_DEVKITPRO_COMPAT
     // If a retrigger waveform has been selected, reset vibrato/tremolo position
     // whenever a new note starts.
     if ((module_channel->vibtype & MAS_WAVE_CONTINUE) == 0)
         module_channel->vibpos = 0;
     if ((module_channel->tremtype & MAS_WAVE_CONTINUE) == 0)
         module_channel->trempos = 0;
+#endif
 
     if (module_channel->inst == 0)
         return;
@@ -2030,6 +2032,10 @@ inline static constexpr mm_sbyte mpp_TABLE_FineSineData[] = {
 
 mm_sbyte mpp_GetWaveformSample(mm_word type, mm_byte position)
 {
+#ifdef MM_MMUTIL_DEVKITPRO_COMPAT
+    // devkitPro Maxmod 1.0.15 ignores effect waveform selectors.
+    return mpp_TABLE_FineSineData[position];
+#else
     switch (type & 7) // Bit 3 is just "continue" mode
     {
         case MAS_WAVE_SINE:
@@ -2062,6 +2068,7 @@ mm_sbyte mpp_GetWaveformSample(mm_word type, mm_byte position)
         default:
             return 0;
     }
+#endif
 }
 
 mm_word mppe_DoVibrato(mm_word period, mm_module_channel *channel,
@@ -2574,17 +2581,30 @@ void mppe_Tremolo(mm_word param, mm_module_channel *channel, mpl_layer_informati
     {
         // Mask out SPEED, multiply by 4 to compensate for larger waveform table
         mm_word speed = (param >> 4) * 4;
+#ifdef MM_MMUTIL_DEVKITPRO_COMPAT
+        channel->fxmem += speed;
+#else
         channel->trempos += speed;
+#endif
     }
 
-    mm_byte position = channel->trempos; // Get waveform position
+#ifdef MM_MMUTIL_DEVKITPRO_COMPAT
+    // Legacy Rxy shares phase memory with arpeggio and retrigger.
+    mm_byte position = channel->fxmem;
+#else
+    mm_byte position = channel->trempos;
+#endif
     mm_sword value = mpp_GetWaveformSample(channel->tremtype, position);
 
     mm_word depth = param & 0xF;
 
     mm_sword result = (value * depth) >> 6; // Sine * depth / 64
 
+#ifdef MM_MMUTIL_DEVKITPRO_COMPAT
+    if ((layer->flags & MAS_HEADER_FLAG_XM_MODE) == 0)
+#else
     if (layer->flags & MAS_HEADER_FLAG_XM_MODE)
+#endif
         result >>= 1;
 
     mpp_vars.volplus = result; // Set volume addition variable

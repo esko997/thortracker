@@ -10,6 +10,7 @@ import org.thortracker.system.SystemSound
 import org.thortracker.system.ay.*
 import org.thortracker.system.cbm.*
 import org.thortracker.system.gb.*
+import org.thortracker.system.gba.GbaSound
 import org.thortracker.system.nes.*
 import org.thortracker.system.opl3.*
 import org.thortracker.system.opm.*
@@ -48,6 +49,7 @@ internal object ConversionVoices {
     }
 
     private fun reserved(sound: SystemSound, ch: Int): Boolean = when (sound) {
+        is GbaSound -> false // Original PCM starter voices are always embedded in the target song.
         is NesSound -> ch == NesRules.DPCM || NesRules.isMmc5Pcm(sound.expansion, ch) || NesRules.isEpsmRhythm(sound.expansion, ch)
         is OpnSound -> sound.chip.part(ch) == OpnPart.RHYTHM || sound.chip.part(ch) == OpnPart.ADPCM
         is YmSound -> YmRules.isPcm(ch)
@@ -72,6 +74,7 @@ internal object ConversionVoices {
 
     private fun sourceRole(source: Song, lane: Int): ChannelKind {
         val fallback = source.system.channels[lane].kind
+        if (source.sound is GbaSound) return ChannelKind.VOICE
         if (source.sound !is PceSound && source.sound !is WsSound) return fallback
         val slots = referencedSlots(source, lane)
         if (slots.isEmpty()) return fallback
@@ -92,7 +95,7 @@ internal object ConversionVoices {
     }
 
     private fun noiseCapable(sound: SystemSound, lane: Int): Boolean =
-        sound.system.channels[lane].kind == ChannelKind.NOISE ||
+        sound is GbaSound || sound.system.channels[lane].kind == ChannelKind.NOISE ||
             (sound is PceSound && lane in 4..5) || (sound is WsSound && lane == 3)
 
     fun lanes(source: Song, target: SoundSystem): List<ConversionLane> {
@@ -232,6 +235,8 @@ internal object ConversionVoices {
         is NesSound -> sound.copy(instruments = sound.instruments.replacing(slot,
             NesInstrument(name = name, chip = if (NesRules.isMmc5(sound.expansion, lane)) NesChip.APU else NesRules.chip(sound.expansion, lane))))
         is SidSound -> sound.copy(instruments = sound.instruments.replacing(slot, SidPresets.ALL.first().build(lane).copy(name = name, gateTimer = 1)))
+        is GbaSound -> sound.copy(instruments = sound.instruments.replacing(slot,
+            (presets as GbaSound).instruments[if (noise) 4 else 0].copy(name = name)))
         is AySound -> sound.withInstrument(slot, (presets as AySound).instrument(1)!!.copy(name = name))
         is CbmSound -> sound.withInstrument(slot, (presets as CbmSound).instrument(1)!!.copy(name = name))
         is Opl3Sound -> sound.withInstrument(slot, (presets as Opl3Sound).instrument(1)!!.copy(name = name))
@@ -255,6 +260,7 @@ internal object ConversionVoices {
 
     private fun resourceDescription(sound: SystemSound): String = when (sound) {
         is GbSound -> "Dropped ${sound.waves.size} source 4-bit wave tables."
+        is GbaSound -> "Dropped ${sound.samples.size} PCM samples, instrument key maps, sample loops and XM envelopes."
         is NesSound -> "Dropped ${sound.samples.size} DPCM samples, ${sound.pcmSamples.size} PCM samples, DPCM/PCM key maps and expansion wave/FM/envelope programs."
         is SidSound -> "Dropped source wave, pulse, filter and speed table programs."
         is Opl3Sound -> "Dropped source FM operators and chord table."

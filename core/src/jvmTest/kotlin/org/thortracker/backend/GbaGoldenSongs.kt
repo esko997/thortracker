@@ -1,6 +1,5 @@
 package org.thortracker.backend
 
-import java.io.File
 import org.thortracker.model.Cell
 import org.thortracker.model.Pattern
 import org.thortracker.model.Song
@@ -45,7 +44,7 @@ object GbaGoldenSongs {
             0 to 0x37, 1 to 0x12, 1 to 0, 2 to 0x08, 3 to 0x10, 4 to 0x47,
             5 to 0x10, 6 to 0x02, 7 to 0x34, 8 to 0xC0, 9 to 1, 10 to 0x10,
             12 to 0x20, 14 to 0x13, 14 to 0x11, 14 to 0x24, 14 to 0x21,
-            14 to 0x42, 14 to 0x77, 14 to 0x8C, 14 to 0x93, 14 to 0xA2,
+            14 to 0x8C, 14 to 0x93, 14 to 0xA2,
             14 to 0xB2, 14 to 0xC3, 14 to 0xD2, 14 to 0xE1, 15 to 3, 15 to 150,
         )
         val sample = GbaSample(name = "Offset ramp", pcm = List(1024) { (it * 7 % 256) - 128 })
@@ -55,20 +54,4 @@ object GbaGoldenSongs {
     }
 
     fun pattern(length: Int, cells: Map<Pair<Int, Int>, Cell>): Pattern = Pattern(length = length, tracks = List(8) { channel -> List(Songs.ROWS) { row -> cells[row to channel] ?: Cell() } })
-}
-
-/** Parent-only fixture generation entry point: emits paired XM, real soundbank and fixed native image. */
-object GbaGoldenFixtures {
-    @JvmStatic
-    fun main(args: Array<String>) {
-        require(args.size == 1) { "Pass an output directory" }
-        val directory = File(args[0]).also { it.mkdirs() }
-        for ((name, song) in listOf("features" to GbaGoldenSongs.features(), "effects" to GbaGoldenSongs.effects())) {
-            File(directory, "$name.xm").writeBytes(GbaXmExporter.export(song))
-            File(directory, "$name.bin").writeBytes(GbaLowering.soundbank(song))
-            val image = ByteArray(GbaPlayerImage.SIZE)
-            GbaLowering.lower(song, image)
-            File(directory, "$name.image").writeBytes(image)
-        }
-    }
 }

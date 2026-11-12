@@ -7,6 +7,7 @@ import org.thortracker.system.cbm.CbmChip
 import org.thortracker.system.cbm.CbmDemoSong
 import org.thortracker.system.cbm.TedSystem
 import org.thortracker.system.cbm.VicSystem
+import org.thortracker.system.gba.GbaSystem
 import org.thortracker.system.nes.EpsmPatch
 import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.nes.FdsPresets
@@ -78,6 +79,18 @@ object SampleExportTool {
         // Every demo's engine image: the native WAV export test (app/src/test/cpp/wav_render_test.c) renders them.
         File(directory, "thor-groove.gbimg").writeBytes(ByteArray(song.system.engine.imageSize).also { song.system.engine.lower(song, it) })
         println("Exported ${song.title} to ${directory.absolutePath}")
+        val gba = GbaSystem.demo()
+        File(directory, "gba-demo.thor").writeText(ProjectCodec.encode(gba), Charsets.UTF_8)
+        File(directory, "gba-demo.xm").writeBytes(GbaXmExporter.export(gba))
+        File(directory, "gba-demo.gbaimg").writeBytes(ByteArray(GbaSystem.engine.imageSize).also { GbaSystem.engine.lower(gba, it) })
+        val gbaShortest = GbaSystem.blank().let { base ->
+            val pattern = base.patterns[0]
+            base.copy(ticksPerRow = 1, patterns = listOf(pattern.copy(length = 1,
+                tracks = pattern.tracks.mapIndexed { channel, cells -> cells.mapIndexed { row, cell ->
+                    if (channel == 0 && row == 0) Cell(57, 1) else cell
+                } })))
+        }
+        File(directory, "gba-shortest.gbaimg").writeBytes(ByteArray(GbaSystem.engine.imageSize).also { GbaSystem.engine.lower(gbaShortest, it) })
         // The NES demo: project, both exports and the engine image (tools/audio/render_nes_image.sh renders it).
         val nes = NesSystem.demo()
         File(directory, "thor-quest.thor").writeText(ProjectCodec.encode(nes), Charsets.UTF_8)

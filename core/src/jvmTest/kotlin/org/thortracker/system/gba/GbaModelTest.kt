@@ -87,11 +87,11 @@ class GbaModelTest {
     @Test fun supportedEffectsRejectConverterLossAndExtraColumns() {
         val song = GbaSystem.blank()
         for ((effect, param) in listOf(1 to 0xE0, 2 to 0xFF, 5 to 0x11, 6 to 0x11, 10 to 0x11,
-            12 to 65, 13 to 0x0A, 13 to 0x64, 14 to 0x30, 14 to 0x50, 14 to 0xF1, 15 to 0, 16 to 0)) {
+            12 to 65, 13 to 0x0A, 13 to 0x64, 14 to 0x10, 14 to 0x20, 14 to 0x30, 14 to 0x40, 14 to 0x47, 14 to 0x50, 14 to 0x70, 14 to 0x77, 14 to 0xF1, 15 to 0, 16 to 0)) {
             assertNotNull("$effect/$param", GbaSystem.cellProblem(song, 0, Cell(effect = effect, param = param)))
         }
         for ((effect, param) in listOf(0 to 0x37, 1 to 0, 3 to 0xFF, 4 to 0x47, 8 to 0xFF, 12 to 64,
-            13 to 0x63, 14 to 0x10, 14 to 0x47, 14 to 0x80, 14 to 0xC0, 15 to 31, 15 to 32)) {
+            13 to 0x63, 14 to 0x11, 14 to 0x80, 14 to 0xC0, 15 to 31, 15 to 32)) {
             assertNull("$effect/$param", GbaSystem.cellProblem(song, 0, Cell(effect = effect, param = param)))
         }
         assertNotNull(GbaSystem.cellProblem(song, 0, Cell(effect = 9, param = 1)))

@@ -79,6 +79,10 @@ Creative's Music System / Game Blaster at 7.15909 MHz) play songs with Thor Trac
 mirrored by an independent Python reference) on our clock-exact port of SAASound's SAA1099 model, and export VGM. See
 [SAA1099](#saa1099-thor-trackers-own-player-on-one-or-two-philips-saa1099-sam-saa1099-cms-saa1099).
 
+The GBA system (`"gba-maxmod"`, 0.45.0) runs Maxmod's portable MAS player and GBA mixer,
+with the game's legacy converter/runtime semantics, and exports eight-channel XM.
+See [Game Boy Advance / Maxmod](#game-boy-advance-maxmod-gba-maxmod).
+
 ## Chip engine interface (what a new sound system implements)
 
 Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are
@@ -161,6 +165,8 @@ it, `chip_wav_status` reports frames, the expected total, the order, loop known,
 
 | Component | Where | Pin | Licence / obligation |
 |---|---|---|---|
+| Maxmod portable player | `third_party/maxmod`, wrapped by `app/src/main/cpp/gba/gba_maxmod.h` | BlocksDS/maxmod `d334cfcac87475a0b5ceb0d12e1af180dbb31a9a`; compatibility semantics from devkitPro/maxmod v1.0.15 `ce8adb2a6bf1f29ec203b6c3410c1ddf8e270811` | ISC; original notices retained, adaptations in `UPSTREAM`, bundled `NOTICE.txt` |
+| Legacy XM-to-MAS conversion | `GbaLowering.kt`; licence under `third_party/mmutil-1.10.1` | devkitPro/mmutil v1.10.1 `8b0792e45852b58fda4def4d263e246d3a73662d` | converter source ISC notice plus distribution BSD-3-Clause licence; both bundled in `NOTICE.txt` |
 | hUGEDriver 6.1.3 | `third_party/hUGEDriver-6.1.3/` (README, `gbdk/hUGEDriver.lib`, `include/`, `rgbds/hUGEDriver.asm`) | byte-identical to gbc-puzzler's vendored copy of the [v6.1.3 release](https://github.com/SuperDisk/hUGEDriver/releases/tag/v6.1.3); `hUGEDriver.lib` sha256 `6c0a2664…5cac89`, `hUGEDriver.asm` sha256 `16870fd8…01d56` | public domain ("dedicated to the public domain" in its README); no obligation |
 | binjgb | `app/src/main/cpp/third_party/binjgb/` (`src/emulator.c/.h`, `common.c/.h`, `memory.c/.h`, `builtin-palettes.def`, `LICENSE`) | github.com/binji/binjgb commit `16621111ed0ee73bcc45c912a823bcebedcffc0f` | MIT — **ship the copyright and permission notice** (`LICENSE`) with the app (credits/about screen or bundled notices) |
 | GBDK-2020 4.5.0 `sdar`/`sdldgb` | offline only (`tools/audio/prepare_huge_player.py`) | gbdk-linux64.tar.gz sha256 `d7857a5f…605c` (gbc-puzzler `tools/fetch-gbdk`) | tools are not shipped; output is the PD driver |
@@ -8194,4 +8200,85 @@ The CMS seek regression was 9 LSB before preserving fractional resampler time an
 The internal-envelope test observes eight actual clock edges, including the pending reset half-period,
 rather than assuming the new frequency latched before the first edge. No tolerance was relaxed.
 Full platform/release and independent-reference progress is recorded in `docs/VERIFICATION.md`.
+
+
+## Game Boy Advance / Maxmod (`gba-maxmod`)
+
+Eight tonal PCM lanes feed the GBA's Direct Sound mix. This is software polyphony,
+not eight physical sound channels; the four legacy PSG channels are not included.
+`GbaSystem`, `GbaSound`, `GbaRules`, `GbaSoundView` and `GbaSoundPainter` own the model,
+validation, instrument workflow and indigo/silver sample editor. The shared
+Sound/Advanced instrument list, controller navigation, touch, audition and Undo remain intact.
+
+### Samples and document limits
+
+- 64 instrument slots; 128 shared library samples; 512 KiB total signed eight-bit mono PCM.
+  `.thor` embeds the samples. Bounded serializers reject excessive maps, envelopes,
+  sample counts and aggregate PCM before constructing the typed sample model.
+- Instruments have 96-key maps (C0–B7), volume/pan envelopes of at most 12 points,
+  sustain/loop nodes and fadeout. A missing key is silent. Empty instruments are
+  rejected when used. OFF releases the volume envelope; without one it cuts.
+- Sample metadata includes source rate, root note, 1/128-semitone fine tuning,
+  volume 0–64, pan 0–255 and exclusive-end forward-loop bounds. Ping-pong is unsupported.
+  Metadata/sample tools are undoable and affect all instruments sharing that sample.
+- Import accepts PCM 8/16/24/32-bit and float 32/64-bit mono/stereo WAV, at most
+  48 kHz and 16 MiB. Stereo is averaged, quantized to eight bits, never silently truncated.
+  Trim, gain, normalize, fade, resample and procedural starter sounds operate offline.
+- One effect column, speed 1–31, BPM 32–255, at most 199 played orders.
+  Song tuning is explicitly unsupported; normal scale-based note selection still works.
+  Conversion to/from other systems reports replacement of sample/keymap/envelope resources.
+
+### XM and native lowering
+
+`GbaExportModel` is the validated canonical model used by both `GbaXmExporter` and
+`GbaLowering`. XM 1.04 uses linear periods, eight channels, packed cells and
+delta-encoded eight-bit PCM. Native lowering directly emits the same legacy MAS v0x18
+soundbank as **mmutil 1.10.1**, without a runtime compiler, filesystem dependency or
+external converter. Shared native PCM blocks are deduplicated; XM's instrument-local
+copies are counted separately. There are at most 16 local samples per instrument
+(including a silent unmapped key) and 255 local samples overall.
+
+The exact converter imposes additional checks: C7–B7 must use the C0 key's sample;
+pitch must fit its frequency/4 representation; sample offsets need an explicit mapped
+note and a valid endpoint. Pan is quantized to even values, fadeout to multiples of 32,
+and envelopes to the converter's fixed-point precision. Both outputs use those same values.
+Parked orders and their flow targets are resolved before compilation.
+
+Supported effects: 0 arpeggio, 1/2 slides, 3 portamento, 4 vibrato, 5/6 combined
+volume slides, 7 tremolo, 8 pan, 9 offset, A volume slide, B order jump, C volume,
+D BCD row break, F speed/BPM, and E1/E2/E6/E8/E9/EA/EB/EC/ED/EE.
+Reject F00, E10/E20 slide-memory loss, E4/E7 waveform selection (ignored by the target
+runtime), unsupported E commands, conflicting two-direction volume slides and
+1E0–1FF/2E0–2FF converter reinterpretations. XM import is not implemented.
+
+### Player, target and fidelity
+
+`third_party/maxmod` pins the BlocksDS portable player at
+`d334cfcac87475a0b5ceb0d12e1af180dbb31a9a` (ISC). Its original player code is included
+inside a C++17 instance: all mutable driver state is per machine, with immutable tables
+shared. There is no global context swap, mutex or second tracker sequencer.
+The compatibility path follows devkitPro **Maxmod 1.0.15**
+(`ce8adb2a6bf1f29ec203b6c3410c1ddf8e270811`): vibrato phase survives new notes;
+tremolo uses the legacy shared phase byte and XM depth; modulation uses sine.
+The vendored `UPSTREAM` and bundled notices record local adaptations and provenance.
+
+`gba_chip.cpp` and `gba_image.cpp` implement the existing engine ABI on Android and
+Linux. A fixed 2 MiB `GBAM` transport has a 64-byte header and a validated real bank.
+The GBA-style mixer uses unsigned source PCM, 20.12 positions, hardware-style
+volume/pan quantization and signed eight-bit saturation at nominal **15,768 Hz**,
+then rational zero-order-hold host conversion. Slow ticks may span several bounded
+audio buffers; `row_serial` advances only when the driver tick is drained.
+No callback allocation or locking is introduced.
+
+Live edits preserve transport and effect tempo, rebase pointers into the machine's bank,
+and reset an edited envelope's cursor when its topology changes. Held audition edits
+retrigger. Borrowed channels resume at their next note, without suppressing global effects.
+Independent song/audition instances, seek, release and generic WAV export use the same driver.
+
+The nominal sample clock differs slightly from the GBA timer's physical rate.
+GBA PWM/output filtering is not modeled, so emulator speaker PCM is not expected to
+match host PCM byte-for-byte. Verification uses actual GBA ROM playback, driver
+order/row and channel-state comparisons, plus byte-exact converter output.
+These do **not** prove CPU headroom inside a busy game or equivalence at another mixer rate.
+The game's own Maxmod build, sound effects and frame workload must be profiled separately.
 

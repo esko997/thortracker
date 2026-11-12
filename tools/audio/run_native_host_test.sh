@@ -109,6 +109,7 @@ includes+=(-I "$cpp/opn")
 includes+=(-I "$cpp/tia" -I "$cpp/third_party/stella-tia" -I "$cpp/third_party/stella-tia/shim")
 includes+=(-I "$cpp/pokey")
 includes+=(-I "$cpp/cbm" -I "$cpp/ws" -I "$cpp/vsu" -I "$cpp/saa")
+includes+=(-I "$root/third_party/maxmod/include" -I "$root/third_party/maxmod/source")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
@@ -142,6 +143,7 @@ c_engines=(
   "$cpp/scc/scc_k051649.c"
 )
 cxx_engines=("$cpp/sid/sid_resid.cpp" "$cpp/ym/ym_ymfm.cpp" "$cpp/nes/nes_epsm_ymfm.cpp" "$cpp/opm/opm_ymfm.cpp" "$cpp/opn/opn_ymfm.cpp" "$cpp/pce/pce_psg.cpp" "$cpp/tia/tia_stella.cpp")
+cxx_engines+=("$cpp/gba/gba_chip.cpp" "$cpp/gba/gba_image.cpp")
 for f in ymfm_adpcm ymfm_ssg; do cxx_engines+=("$cpp/third_party/ymfm/$f.cpp"); done
 for f in sid voice wave envelope filter dac extfilt pot; do cxx_engines+=("$cpp/third_party/resid-1.0/$f.cc"); done
 objs=()
@@ -152,7 +154,7 @@ for src in "${c_engines[@]}"; do
 done
 for src in "${cxx_engines[@]}"; do
   o="$build/obj/$(basename "${src%.*}").o"
-  "$CXX" -std=c++17 -O2 -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
+  "$CXX" -std=c++17 -O2 -fwrapv -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
 for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
@@ -161,7 +163,10 @@ for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
   "$CXX" "$build/obj/$t.o" "${objs[@]}" -lm -pthread -o "$build/$t"
 done
+"$CXX" -std=c++17 -O2 -fwrapv "${includes[@]}" "$root/tools/audio/gba_native_test.cpp" \
+  "${objs[@]}" -lm -pthread -o "$build/gba_native_test"
 status=0
+"$build/gba_native_test" || status=1
 "$build/huge_machine_test" "$out" || status=1
 "$build/nes_machine_test" "$out" || status=1
 "$build/nes_vrc6_test" "$out" || status=1

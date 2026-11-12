@@ -1,5 +1,5 @@
 // Build/run instructions: third_party/maxmod/UPSTREAM (parent verification only).
-#include "gba/gba_image.h"
+#include "gba/gba_maxmod.h"
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -15,7 +15,7 @@ void half(std::vector<uint8_t>& b, size_t p, unsigned n) { b[p] = uint8_t(n); b[
 // A real MASv18 bank: four rows, one looping sample, sustain/release envelope.
 // This deliberately has a four-byte loop: high notes used to read out of bounds
 // in upstream headless mixer even though the MAS format accepts short loops.
-std::vector<uint8_t> fixture(unsigned bpm = 125, bool envelope = true) {
+std::vector<uint8_t> fixture(unsigned bpm = 125, bool envelope = true, unsigned frequency = 2091) {
     std::vector<uint8_t> b(GBA_IMAGE_SIZE);
     std::memcpy(b.data(), "GBAM", 4); word(b, 4, 1); word(b, 12, 64);
     half(b, 64, 1); half(b, 66, 1); std::memcpy(b.data()+68, "*maxmod*", 8);
@@ -44,7 +44,7 @@ std::vector<uint8_t> fixture(unsigned bpm = 125, bool envelope = true) {
     for (unsigned n = 0; n < 120; ++n) half(b, inst+map+n*2, n | 256);
     const unsigned info = inst+map+240, pattern = info+12;
     word(b, h+280, info-h); word(b, h+284, pattern-h);
-    b[info] = 64; b[info+1] = 192; half(b, info+2, 2091); b[info+7] = 64;
+    b[info] = 64; b[info+1] = 192; half(b, info+2, frequency); b[info+7] = 64;
     half(b, info+8, 32768);
     b[pattern] = 3;
     const uint8_t rows[] = {0x81,0x33,60,1,0, 0, 0x81,1,255,0, 0};
@@ -71,6 +71,37 @@ struct Player {
 float energy(const float* p, int count) {
     float sum = 0; for (int i = 0; i < count * 2; ++i) sum += std::fabs(p[i]); return sum;
 }
+void legacy_modulation() {
+    auto bytes = fixture(125, false, 2090);
+    auto im = load(bytes);
+    const unsigned pattern = im->pattern[0];
+    // Same note on each row: a new note must not reset the GBA driver's vibrato.
+    const uint8_t effects[][2] = {
+        {10,0x37}, {6,0x12}, {6,0}, {5,8}, {7,0x10},
+        {8,0x47}, {12,0x10}, {11,2}, {18,0xf4}, {24,0xc0}
+    };
+    bytes[pattern] = 9;
+    unsigned at = pattern + 1;
+    for (const auto& effect : effects) {
+        const uint8_t row[] = {0x81,0xbb,60,1,effect[0],effect[1],0};
+        std::memcpy(bytes.data()+at, row, sizeof(row)); at += sizeof(row);
+    }
+    const unsigned end = (at+3)&~3u;
+    word(bytes,112,end-120); word(bytes,8,end); word(bytes,16,end-64);
+    im = load(bytes);
+    GbaMaxmod driver; driver.init(im.get());
+    int8_t pcm[2464];
+    // Pitch values captured from Maxmod 1.0.15 on an actual GBA-emulator ROM.
+    const unsigned vibrato[] = {2264,2239,2205,2171,2120,2086};
+    // Legacy GBA adds volplus << 3 to its 0..128 volume, then doubles for the mixer.
+    const unsigned tremolo[] = {255,255,255,192,224,255};
+    for (unsigned tick = 0; tick < 60; ++tick) {
+        driver.mppProcessTickMain();
+        if (tick >= 42 && tick < 48) assert(driver.mixing_channels[0].freq == vibrato[tick-42]);
+        if (tick >= 48 && tick < 54) assert(driver.mixing_channels[0].vol == tremolo[tick-48]);
+        driver.mix(pcm, driver.mmLayerMain.samples_per_tick);
+    }
+}
 void isolation(const GbaImage* im) {
     Player a, b, audition;
     a.start(im); b.start(im);
@@ -87,6 +118,7 @@ void isolation(const GbaImage* im) {
 }
 int main() {
     auto bytes = fixture(); auto im = load(bytes);
+    legacy_modulation();
     isolation(im.get());
     // Two concurrent users must not share even temporary driver/mixer state.
     std::thread t1([&] { isolation(im.get()); });

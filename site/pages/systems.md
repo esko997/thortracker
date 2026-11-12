@@ -6,6 +6,8 @@ A song targets one system. Choose it in **Files → New blank song** or explore 
 
 The registry covers **Game Boy / Game Boy Color**, **NES** and its **VRC6, VRC7, N163 (1–8 channels), Sunsoft 5B, FDS, MMC5 and EPSM** variants; **C64 SID**; **OPL3**; **Mega Drive**; **Master System, Game Gear and the SMS FM Unit (melodic or rhythm)**; **AY/YM machines (ZX Spectrum 128, MSX, Atari ST, Amstrad CPC)**; **PC Engine**; **MSX SCC / SCC+**; **YM2151 OPM**; **PC-88/98 OPN / OPNA**; **Atari 8-bit POKEY**; **Atari 2600 TIA (NTSC / PAL)**; **VIC-20 / C16 / Plus/4**; **WonderSwan / WonderSwan Color**; **Virtual Boy**; and **SAA1099 (SAM Coupé / Creative Music System)**.
 
+**Game Boy Advance / Maxmod** adds eight sample voices and `.xm` export for GBA homebrew.
+
 The sections below are generated from the canonical manual, including its limitations and dated status notes. Some older notes describe pre-release work; they are retained, not silently upgraded into hardware-verification claims. Check the [release notes](https://github.com/esko997/thortracker/releases/latest) and the [verification record](/verification/) for the version and platform you use. No original-hardware listening comparison is implied by passing software tests.
 
 <!-- include: README.md :: Multiple effects per row -->
@@ -13,6 +15,8 @@ The sections below are generated from the canonical manual, including its limita
 ## Game Boy / Game Boy Color
 
 <!-- include: README.md :: Sound and export rules -->
+
+<!-- include: README.md :: Game Boy Advance: -->
 
 <!-- include: README.md :: NES instruments: envelopes -->
 

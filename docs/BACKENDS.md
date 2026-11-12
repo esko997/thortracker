@@ -9,6 +9,11 @@ rows, grooves, parked orders, Sketch, tunings, the controller workflow, both fro
 about the chip (channels, instruments, effects, limits, playback, export) belongs to a backend. Adding a chip must not
 change a single byte of what the Game Boy backend plays or exports.
 
+**GBA exception (0.45.0):** `gba-maxmod` is an eight-voice sample backend for Maxmod-based
+homebrew, explicitly requested after the non-sample-chip rollout. Its bounded PCM,
+keymaps/envelopes and XM exporter remain backend-owned; the shared audio hosts and
+editing workflow are unchanged. See [the implemented contract](AUDIO_ENGINE.md#game-boy-advance-maxmod-gba-maxmod).
+
 ## Where the code is today
 
 Steps 1 and 2 are done for the Game Boy (branch `systems`).

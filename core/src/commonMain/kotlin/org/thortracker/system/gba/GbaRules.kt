@@ -6,7 +6,6 @@ import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.EffectSpec
 import kotlin.math.abs
-import kotlin.math.round
 
 /** XM 1.04's deliberately bounded eight-lane subset. Export constraints are shared with the canonical converter. */
 object GbaRules {
@@ -21,14 +20,14 @@ object GbaRules {
         effect(4, "Vibrato", "xy: speed/depth", "Pitch vibrato; a zero nibble recalls its previous value."),
         effect(5, "Portamento + volume slide", "x0 up / 0y down", "Continue tone portamento with volume slide; 00 recalls slide."),
         effect(6, "Vibrato + volume slide", "x0 up / 0y down", "Continue vibrato with volume slide; 00 recalls slide."),
-        effect(7, "Tremolo", "xy: speed/depth", "Volume modulation; a zero nibble recalls its previous value."),
+        effect(7, "Tremolo", "xy: speed/depth", "Sine volume modulation; 00 recalls the previous command. Phase is shared with arpeggio and retrigger in the GBA driver."),
         effect(8, "Pan", "00 left–FF right", "Set the voice's stereo pan."),
         effect(9, "Sample offset", "xx × 256 frames", "Start the row's sample at an offset; converter restrictions are checked."),
         effect(10, "Volume slide", "x0 up / 0y down", "Slide volume on later ticks; 00 recalls slide."),
         effect(11, "Order jump", "xx: order", "Jump to an absolute order; parked-order targets follow the arrangement."),
         effect(12, "Volume", "00–40", "Set volume 0–64."),
         effect(13, "Pattern break", "00–63 decimal digits", "Continue at this decimal row in the next order (BCD)."),
-        effect(14, "Extended", "Exy: supported subcommands", "E1/E2 fine slides, E4/E7 waveform, E6 loop, E8 pan, E9 retrigger, EA/EB fine volume, EC cut, ED delay, EE pattern delay. Unsupported subcommands are rejected."),
+        effect(14, "Extended", "Exy: supported subcommands", "E1/E2 fine slides, E6 loop, E8 pan, E9 retrigger, EA/EB fine volume, EC cut, ED delay, EE pattern delay. E4/E7 waveform selection and other unsupported subcommands are rejected."),
         effect(15, "Speed / BPM", "01–1F speed, 20–FF BPM", "Set ticks per row below 32, otherwise BPM. F00 is unsupported."),
     )
     private fun effect(code: Int, name: String, param: String, text: String) = EffectSpec(code, name, param, text, true)
@@ -84,7 +83,7 @@ object GbaRules {
         if (cell.instrument > 0) {
             val instrument = sound.instrument(cell.instrument) ?: return "Choose an existing instrument"
             instrumentProblem(instrument, sound.samples.size)?.let { return it }
-            if (cell.note >= 0 && instrument.keymap[cell.note] < 0) return "${GbaSystem.noteName(cell.note)} is unmapped in sound ${cell.instrument}; map a sample in Sound"
+            if (instrument.keymap.all { it < 0 }) return "Sound ${cell.instrument} has no mapped samples; import or map a sample in Sound"
         }
         return GbaExportConstraints.sampleOffsetError(sound, cell)
     }
@@ -124,11 +123,11 @@ object GbaRules {
         if (structural.isNotEmpty()) return structural
         if (document.orders.size == document.parkedOrders.size) return listOf("Every order is parked; unpark one to play or export")
         val song = GbaSystem.arranged(document)
-        val out = GbaExportConstraints.errors(song.gba).toMutableList()
+        val out = GbaExportConstraints.errors(song.gba, checkPcm = false).toMutableList()
         if (song.orders.size > MAX_ORDERS) out.add("Maxmod supports at most 199 played orders")
         if (song.orders.distinct().size > 256) out.add("XM supports at most 256 played patterns")
-        if (song.tuning?.cents?.any { abs(it / 100 - round(it / 100)) > 0.0000001 } == true) {
-            out.add("GBA XM does not support per-note microtuning; remove the tuning or use exact semitone degrees")
+        if (song.tuning != null) {
+            out.add("GBA XM does not support song tuning or microtuning; remove the tuning to use twelve-tone equal temperament")
         }
         for (p in song.orders.distinct()) {
             val pattern = song.patterns[p]
@@ -157,7 +156,7 @@ object GbaRules {
                     val cell = track[row]
                     if (cell.instrument != 0) instrument = cell.instrument
                     if (cell.note >= 0 && instrument == 0 && out.size < 40) out.add("Pattern $p lane ${ch + 1} row $row inherits its instrument; assign one for reliable playback from this order")
-                    else if (cell.note >= 0 && song.gba.instrument(instrument)?.keymap?.get(cell.note) == -1 && out.size < 40) out.add("Pattern $p lane ${ch + 1} row $row inherits an unmapped note; assign a mapped sample")
+                    else if (cell.note >= 0 && song.gba.instrument(instrument)?.keymap?.get(cell.note) == -1 && out.size < 40) out.add("Pattern $p lane ${ch + 1} row $row uses an unmapped, silent key; assign a sample if this is unintended")
                 }
             }
         }

@@ -1,4 +1,36 @@
-# Thor Tracker verification — 2026-11-11
+# Thor Tracker verification — 2026-11-12
+
+## 0.45.0 — Game Boy Advance / Maxmod samples and XM
+
+Eight sample lanes, editable shared PCM, WAV import and eight-channel FastTracker II
+`.xm` export for Maxmod-based GBA games. Normal **Thor Tracker**, `org.thortracker`,
+**code 63**, production signing. Existing projects retain their backend and format.
+
+- Original Pulse, Bass, Bell, Kick, Snare and Hat samples, plus the eight-lane
+  **Prism Circuit** demo. Sound has a waveform/loop editor and playable musical
+  controls; Advanced exposes keymaps and volume/pan envelopes on the same instrument.
+  Shared sample edits, controller/touch operation, audition and grouped Undo remain explicit.
+- Eight-bit mono PCM, forward loops, 96-key maps, up to 12 envelope points, 64 instrument
+  slots, 128 samples and 512 KiB shared PCM. One effect column. The GBA PSG channels,
+  ping-pong loops, XM import and arbitrary song tuning are not supported.
+- Native playback and exported XM target **mmutil 1.10.1 / Maxmod 1.0.15**. Compatibility
+  checks found and corrected legacy vibrato phase and tremolo depth/shared-phase behavior.
+  `E4x`/`E7x` waveform selection is rejected: this GBA runtime ignores those commands.
+  Short sample waveforms now draw visible connected steps instead of zero-length lines.
+- **33 GBA JVM contracts pass.** Native ASan/UBSan checks pass for instance isolation,
+  concurrent/interleaved playback, loop/envelope release, high notes, live editing,
+  audition borrowing, seek, slow tempo and legacy modulation. The 22 Android host
+  tests also passed during integration.
+- Live DMG checks exercise instrument navigation, Sound/Advanced preservation,
+  controller edits and Undo, held-A touch audition, loop/keymap/envelope editing,
+  project round trips, all eight lanes, transport and XM export. Private recovery
+  and workspace data are cold-backed-up, restored and independently verified;
+  `/ThorTunez` is untouched.
+- Export validation includes whole-bank comparison with the pinned real converter
+  and a controlled **16 kHz Maxmod GBA ROM in mGBA**, checking musical state and
+  transport against the native player. This is not physical-GBA listening, bit-exact
+  analog/PWM output, or a CPU-budget guarantee inside a game. Mixer rate, SFX load,
+  memory use and frame workload still need profiling in the consuming game.
 
 ## 0.44.0 — musical Sound faces across the supported chips
 

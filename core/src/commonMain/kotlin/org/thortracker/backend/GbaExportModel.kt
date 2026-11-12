@@ -7,6 +7,7 @@ import org.thortracker.model.Songs
 import org.thortracker.system.gba.GbaInstrument
 import org.thortracker.system.gba.GbaSample
 import org.thortracker.system.gba.GbaSound
+import org.thortracker.system.gba.GbaRules
 
 /** Shared host-independent compilation; neither output is parsed to produce the other. */
 internal class GbaExportModel(document: Song) {
@@ -27,7 +28,7 @@ internal class GbaExportModel(document: Song) {
     init {
         require(document.sound is GbaSound) { "Expected a GBA/Maxmod song" }
         sound = document.sound
-        val errors = GbaExportConstraints.errors(sound)
+        val errors = GbaRules.errors(document)
         require(errors.isEmpty()) { errors.joinToString("\n") }
         require(document.tuning == null) { "GBA XM export does not support microtuning" }
         require(document.ticksPerRow in 1..31) { "XM initial speed must be 1..31" }

@@ -41,8 +41,8 @@ object GbaExportConstraints {
         effect in listOf(5, 6, 10) && param and 15 != 0 && param and 240 != 0 -> "Volume slide must use one direction only"
         effect == 12 && param > 64 -> "XM Cxx volume must be 00..40"
         effect == 13 && param and 15 > 9 -> "XM Dxx row is binary-coded decimal"
-        effect == 14 && param shr 4 !in listOf(1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14) -> "This XM E subcommand is unsupported by Maxmod"
-        effect == 14 && param shr 4 in listOf(4, 7) && param and 15 > 7 -> "XM waveform must be 0..7"
+        effect == 14 && param shr 4 in listOf(4, 7) -> "Maxmod 1.0.15 ignores E4x/E7x waveform selection; vibrato and tremolo use sine"
+        effect == 14 && param shr 4 !in listOf(1, 2, 6, 8, 9, 10, 11, 12, 13, 14) -> "This XM E subcommand is unsupported by Maxmod"
         effect == 14 && param in listOf(0x10, 0x20) -> "mmutil 1.10.1 cannot preserve E10/E20 fine-slide memory; enter a nonzero amount"
         effect == 15 && param == 0 -> "F00 is not a valid Maxmod speed"
         else -> null

@@ -9,6 +9,7 @@ import org.thortracker.model.Song
 import org.thortracker.system.cbm.TedSystem
 import org.thortracker.system.cbm.VicSystem
 import org.thortracker.system.gb.GbSystem
+import org.thortracker.system.gba.GbaSystem
 import org.thortracker.system.opl3.Opl3System
 import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.NesFdsSystem
@@ -53,7 +54,7 @@ enum class ChannelKind { PULSE, WAVE, TRIANGLE, NOISE, SAMPLE, VOICE, SAW }
 /**
  * One channel of a [SoundSystem]. [bank] indexes [SoundSystem.banks]: the instruments its cells' sound numbers name.
  * [tonal]: its note numbers are musical pitches, so scales, tunings, Sketch and Fit apply; false for a noise channel,
- * whose note numbers select noise rates, and a sample channel, whose notes select samples.
+ * whose note numbers select noise rates, or a sample-trigger lane. Pitched PCM voices can be tonal.
  */
 data class ChannelSpec(val name: String, val kind: ChannelKind, val bank: Int, val tonal: Boolean)
 
@@ -440,7 +441,7 @@ object SoundSystems {
             listOf(NesS5bSystem, NesFdsSystem, NesMmc5System, NesEpsmSystem, SidSystem, Opl3System, YmSystem) + SmsSystem.ALL +
             listOf(AyZx128System, AyMsxSystem, AyAtariStSystem, AyCpcSystem, SccSystem, SccPlusSystem, PceSystem, OpmSystem, OpnSystem, OpnaSystem,
                 PokeySystem, TiaNtscSystem, TiaPalSystem, VicSystem, TedSystem, WsSystem, WscSystem,
-                VsuSystem, SamCoupeSystem, CmsSystem)
+                VsuSystem, SamCoupeSystem, CmsSystem, GbaSystem)
 
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem

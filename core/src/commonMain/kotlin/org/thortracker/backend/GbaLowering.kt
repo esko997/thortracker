@@ -239,7 +239,6 @@ object GbaLowering {
                 val y = param and 15
                 when (x) {
                     1, 2 -> fx(if (x == 1) 6 else 5, 0xF0 or y)
-                    4, 7 -> fx(19, (if (x == 4) 0x30 else 0x40) or y)
                     6 -> fx(19, 0xB0 or y)
                     8 -> fx(24, y * 16)
                     9 -> fx(19, 0x20 or y)

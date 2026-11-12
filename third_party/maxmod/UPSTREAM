@@ -41,8 +41,12 @@ orders/effects and sample extents before any playback; malformed images fail clo
 Compatibility: __HEADLESS__ and MM_MMUTIL_DEVKITPRO_COMPAT are local to the wrapper.
 Accept the user's mmutil1.10.1 MASv18 bank (no modern names dictionary). Legacy
 pan envelopes have bit2, not bit16; pinned core's compatibility path already runs
-them. Legacy E4x/E7x waveform numbers are translated to the pinned core's expanded
-waveform enum. Exporter provides already-quantized equivalent XM/MAS instruments.
+them. The GBA 1.0.15 compatibility path retains vibrato phase across new notes,
+uses the legacy shared arpeggio/retrigger/tremolo phase byte and XM tremolo depth.
+That runtime ignores waveform selectors: playback uses sine and the exporter
+rejects E4x/E7x rather than promising an inaudible control. The reference is
+devkitPro/maxmod v1.0.15, ce8adb2a6bf1f29ec203b6c3410c1ddf8e270811.
+Exporter provides already-quantized equivalent XM/MAS instruments.
 Live edits rebase all pointers into the machine's own bank; transport/effect tempo
 are retained unless the corresponding initial settings changed. Edited envelope
 topology resets its node cursor; held audition edits retrigger the held note.

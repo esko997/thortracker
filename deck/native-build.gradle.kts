@@ -134,7 +134,7 @@ val buildEngine by tasks.registering(Exec::class) {
     // Mednafen's PSG (the PC Engine): pce/pce_psg.cpp compiles
     // third_party/mednafen-pce-psg/pce_psg.cpp itself against the shim.
     val cxxSources = listOf("sid/sid_resid.cpp", "ym/ym_ymfm.cpp", "nes/nes_epsm_ymfm.cpp", "opm/opm_ymfm.cpp", "opn/opn_ymfm.cpp", "third_party/ymfm/ymfm_adpcm.cpp",
-        "third_party/ymfm/ymfm_ssg.cpp", "pce/pce_psg.cpp", "tia/tia_stella.cpp") +
+        "third_party/ymfm/ymfm_ssg.cpp", "pce/pce_psg.cpp", "tia/tia_stella.cpp", "gba/gba_chip.cpp", "gba/gba_image.cpp") +
         listOf("sid", "voice", "wave", "envelope", "filter", "dac", "extfilt", "pot").map { "third_party/resid-1.0/$it.cc" }
     val cxxFiles = cxxSources.map { engineSrc.file(it).asFile }
     val includeDirs = listOf(engineSrc.asFile) +
@@ -142,6 +142,7 @@ val buildEngine by tasks.registering(Exec::class) {
             "third_party/resid-1.0", "third_party/nuked-opl3", "third_party/ymfm", "third_party/mednafen-pce-psg/shim",
             "tia", "third_party/stella-tia", "third_party/stella-tia/shim")
             .map { engineSrc.dir(it).asFile } +
+        listOf("third_party/maxmod/include", "third_party/maxmod/source").map { rootProject.layout.projectDirectory.dir(it).asFile } +
         listOf(sdlInclude.asFile, frontend.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
         "nes/nes_apu.h", "nes/nes_vrc6.h", "nes/nes_vrc7.h", "nes/nes_n163.h", "nes/nes_fds.h", "nes/nes_s5b.h", "nes/nes_epsm.h",
@@ -177,6 +178,8 @@ val buildEngine by tasks.registering(Exec::class) {
         engineSrc.dir("third_party/resid-1.0").asFileTree.matching { include("*.h") },
         engineSrc.dir("third_party/mednafen-pce-psg").asFileTree,
         engineSrc.dir("third_party/stella-tia").asFileTree,
+        engineSrc.dir("gba").asFileTree,
+        rootProject.layout.projectDirectory.dir("third_party/maxmod").asFileTree,
         frontend.files("native/deck_audio.h", "native/deck_draw.h", "native/audio_output.h", "native/third_party/stb_truetype.h"))
     outputs.dir(nativeOut)
     doFirst { nativeOut.get().asFile.mkdirs() }
@@ -198,6 +201,7 @@ val buildEngine by tasks.registering(Exec::class) {
         }
         for (src in cxxFiles) {
             append("\"\$CXX\" --target=$triple --sysroot=\"\$SR\" --gcc-toolchain=\"\$GT\" -std=c++17 -O2 -fPIC -DNDEBUG=1 -w ")
+            if (src.parentFile.name == "gba") append("-fwrapv ")
             append(includes)
             append("-c '${src}' -o '${out}/${src.nameWithoutExtension}.o'\n")
         }
