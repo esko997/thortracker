@@ -28,7 +28,7 @@ Use **Menu → Controls** to inspect the actual bindings. Imported custom keymap
 
 Recovery is separate from an external Save. The previous-project slot holds only one replacement, and undo history is not serialized. If a newer project will not open in an older version, do not edit its version number: use a compatible release and keep the original file. See [saving and recovery](/files/#saving-and-recovery).
 
-<!-- include: README.md :: About, diagnostics and bug reports -->
+<!-- include: docs/MANUAL.md :: About, diagnostics and bug reports -->
 
 ## Make a useful report
 

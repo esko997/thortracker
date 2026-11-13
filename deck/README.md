@@ -38,7 +38,7 @@ The executable accepts `[song.thor]`, `seconds=N`, `script=96+22,20,108` and
 `rx=V` and `ry=V` set right-stick axes. Fonts and tunings are copied beside the executable
 and must be deployed with it.
 
-To install a release on the Deck, see the main README's "Steam Deck" section. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views, two quick right-stick flicks up/down jump Pattern to the pattern's first/last row); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
+To install a release on the Deck, see the [manual's Steam Deck section](../docs/MANUAL.md#steam-deck). Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views, two quick right-stick flicks up/down jump Pattern to the pattern's first/last row); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
 
 ## Platform-specific limits
 

@@ -25,11 +25,11 @@ accepts XM. WAV export records audio and does not create a game playback driver.
 
 Keymaps use **`thor-tracker-keymap.json`** and can be exported/imported from Controls. Tuning collections use **`.thorscales`**; individual scales use **Scala `.scl`**. These are separate from a song's `.thor` document. [Microtuning](/getting-started/#microtuning-song-tuning-from-a-scala-scl-file) describes provenance, pitch limits and collection management.
 
-<!-- include: README.md :: Export to WAV -->
+<!-- include: docs/MANUAL.md :: Export to WAV -->
 
-<!-- include: README.md :: Converting between systems -->
+<!-- include: docs/MANUAL.md :: Converting between systems -->
 
-<!-- include: README.md :: Saving and recovery -->
+<!-- include: docs/MANUAL.md :: Saving and recovery -->
 
 ## Game Boy export details
 

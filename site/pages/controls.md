@@ -12,8 +12,8 @@ Open the touch **Menu** drawer for direct view choices, **Files — new, open, s
 
 For desktop keyboard mappings and platform-specific menu access, see [installation and platform setup](/downloads/) and the [Linux reference](/deck-reference/#menus-and-files).
 
-<!-- include: README.md :: Controller reference -->
+<!-- include: docs/MANUAL.md :: Controller reference -->
 
-<!-- include: README.md :: View zoom -->
+<!-- include: docs/MANUAL.md :: View zoom -->
 
 Return to the [user guide](/getting-started/) for complete editing workflows.
