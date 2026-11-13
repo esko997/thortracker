@@ -20,10 +20,10 @@ All systems can render **WAV**. Other formats depend on the song's system:
 Export restrictions depend on the system: VGM is a timed register log, NSF players must support the selected expansion, and some sounds require separately supplied firmware. See the [system guide](/systems/) and [engine documentation](../../docs/AUDIO_ENGINE.md) for integration details.
 
 GBA export is currently **PCM/sample-only**; it does not include the hardware PSG
-channels. Its verified target is mmutil 1.10.1 / Maxmod 1.0.15, not every engine that
+channels. Its target is mmutil 1.10.1 / Maxmod 1.0.15, not every engine that
 accepts XM. WAV export records audio and does not create a game playback driver.
 
-Keymaps use **`thor-tracker-keymap.json`** and can be exported/imported from Controls. Tuning collections use **`.thorscales`**; individual scales use **Scala `.scl`**. These are separate from a song's `.thor` document. [Microtuning](/manual/#microtuning-song-tuning-from-a-scala-scl-file) describes provenance, pitch limits and collection management.
+Keymaps use **`thor-tracker-keymap.json`** and can be exported/imported from Controls. Tuning collections use **`.thorscales`**; individual scales use **Scala `.scl`**. These are separate from a song's `.thor` document. [Microtuning](/getting-started/#microtuning-song-tuning-from-a-scala-scl-file) describes provenance, pitch limits and collection management.
 
 <!-- include: README.md :: Export to WAV -->
 

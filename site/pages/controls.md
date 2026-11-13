@@ -1,13 +1,19 @@
-# Controller controls
+# Input and navigation
 
-The reference below comes directly from the app's README. Hold a modifier **before** pressing the other button. A chord may do different things in different views; the app's hint bar shows controls for the focused view and held modifier.
+Button names are logical controls, not a promise about the labels printed on a device. Hold a modifier **before** pressing its action button. The hint bar follows the focused view and held modifier; [views and displays](/getting-started/#views-and-displays) explains how to switch views and controller focus.
 
-On mobile, wide tables scroll horizontally. Keyboard users can focus a table and use the arrow keys to scroll it. Every guide and navigation link works without JavaScript.
+## Physical controls and touch
 
-For **Steam Deck**, **Select + Start** opens the menu. Desktop keyboard mappings are arrows for the D-pad, **Z/X/A/S** for A/B/X/Y, **Space** for Start, **Tab** for Select, **F1** for Menu and **Esc** for Back. See [Linux menus and files](/deck-reference/#menus-and-files).
+Use **Menu → Controls** to inspect or rebind a physical controller. Direct editor touch uses the view's on-screen controls without changing controller focus.
 
-For **Brick Hammer**, printed A/B/X/Y retain their meanings. **L2**, **R2** and the combined layer provide the view and edit chords; **Menu** or **Select + Start** opens the app menu. This does not require stick gestures. See [Brick setup](/downloads/#brick-hammer--nextui).
+On Android, the primary display also has a touch Menu/Play header, navigation drawer and virtual controller dock. A usable physical controller hides the dock, not the header. The dock drives the primary display; its **Select**, **L2**, **R2** and **L3** modifiers latch: tap a modifier before the action button, then tap it again to release it, rather than holding it as on a physical controller.
+
+Open the touch **Menu** drawer for direct view choices, **Files — new, open, save, export**, **Pattern scale and length**, **Tuning and scale library**, or **View behavior**. **Settings, controls and help** opens the application menu used by the guide's **Menu → …** paths.
+
+For desktop keyboard mappings and platform-specific menu access, see [installation and platform setup](/downloads/) and the [Linux reference](/deck-reference/#menus-and-files).
 
 <!-- include: README.md :: Controller reference -->
 
 <!-- include: README.md :: View zoom -->
+
+Return to the [user guide](/getting-started/) for complete editing workflows.
