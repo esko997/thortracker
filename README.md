@@ -13,10 +13,6 @@ controls, sound systems, exports and troubleshooting.
 - **Keep editable work:** `.thor` projects, named saves and working-song recovery. Export WAV audio or the selected backend's supported music formats.
 - **Free software:** GPL-3.0-or-later, with no accounts, telemetry or in-app network access.
 
-The **NextUI build is a soft launch**, tested on Brick Hammer. Shared `tg5040` packaging
-does not imply every device on that platform has been verified. See the
-[verification record](docs/VERIFICATION.md) for bounded test results and remaining checks.
-
 Each song targets one sound system. Formats such as Game Boy `.uge`, NES `.nsf`,
 SID `.sid` and GBA `.xm` serve different toolchains; **a VGM register log is not a
 ready-to-run game driver**, and WAV is an audio recording, not hardware music code.
@@ -24,7 +20,7 @@ The [sound-system guide](https://esko997.github.io/thortracker/systems/) explain
 
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
-*Playback of the bundled demo song **Thor Groove**: Pattern view on the top screen, Song view on the bottom. Order 03 is parked, so playback goes straight from order 02 to order 04. This clip was captured in an Android emulator at the Thor's resolutions (1920×1080 top, 1240×1080 bottom), without audio. Other captures identify their own device or synthetic viewport.*
+*Dual-screen playback: Pattern view above, Song arrangement below. Android emulator capture.*
 
 ## Install
 
@@ -81,10 +77,8 @@ Controls are the Thor's: the D-pad moves, hold A + D-pad edits, Start plays, R2 
 
 ## Brick Hammer / NextUI
 
-The ARM64 Pak targets the **Brick Hammer running NextUI (`tg5040`)** and uses its installed
-vendor SDL2. The actual device passes display, controller-layer, project save/reopen, theme
-persistence and return-to-launcher checks; see [audio measurements and limits](docs/VERIFICATION.md).
-This is not a Miyoo Mini build. Physical suspend/resume and acoustic listening still need manual testing.
+The ARM64 Pak is for **Brick Hammer running NextUI (`tg5040`)**. It uses NextUI's SDL2
+and audio libraries.
 
 The package is `thor-tracker-<version>-brick-nextui.zip` with a `.sha256` sidecar. Extract it
 at the SD-card root so the launcher is `Tools/tg5040/ThorTracker.pak/launch.sh`, then choose
@@ -94,19 +88,16 @@ application menu; **Quit** returns through NextUI's normal Pak launcher.
 
 <img src="docs/media/brick-pattern.png" width="620" alt="The bundled Thor Groove demo playing in Thor Tracker on the actual 1024×768 Brick Hammer display">
 
+*Brick Hammer screenshot.*
 
-Projects and exports live in `/mnt/SDCARD/ThorTunez`; recovery, keymap, theme, tuning packs
-and user-supplied firmware live in `/mnt/SDCARD/ThorTunez/.thortracker`. Updates replace only
-`ThorTracker.pak`, not that data directory. The launcher preserves NextUI's HOME/ALSA routing
-and writes `ThorTracker.txt` under NextUI's logs directory. No vendor SDL/Mali library or
-proprietary chip firmware is bundled.
+Projects and exports are stored in `/mnt/SDCARD/ThorTunez`. Settings, recovery files,
+tuning packs and imported firmware use `/mnt/SDCARD/ThorTunez/.thortracker`.
+To update, replace the `ThorTracker.pak` application folder. Logs are written to
+`ThorTracker.txt` in NextUI's log directory.
 
 **Pak Store-format package:** releases also provide `ThorTracker.pak.zip`, whose root
 contains `launch.sh`, `thortracker`, assets and `pak.json`. For a local install, extract
 its contents **inside** `Tools/tg5040/ThorTracker.pak/`, not at the SD-card root.
-Keep `/ThorTunez` when removing/replacing the Pak. This store-format package has passed
-a fresh local install on Brick Hammer; **store submission is pending discussion**.
-Other `tg5040` devices are not yet verified.
 
 Maintainers: bump root `pak.json`'s `version` alongside the app version. CI builds both
 archive layouts and checksum sidecars; packaging refuses a metadata/runtime version
@@ -341,12 +332,8 @@ One list of 64 sounds holds every kind (the **Type** row switches a slot between
 
 ### Atari 2600: the TIA's two channels, at the pitches the chip really plays
 
-**0.32.0/code 45:** native and independent reference checks, Android controller/edit/export scenarios on
-Nova, DMG and Konkr, and SDL playback/audition pass. See `docs/VERIFICATION.md` for measured results
-and limits; automated PCM/UI verification is separate from human listening.
-
-**0.41.0:** both variants now have **four effect columns per channel**, still only two
-voices. Columns run left to right; the last setting wins for a shared target. Global F/B/D run at
+Both variants have **four effect columns per channel** and two voices.
+Columns run left to right; the last setting wins for a shared target. Global F/B/D run at
 row start, and the last G controls delay (`G00` cancels an earlier G). The project/image schema is
 unchanged; older players reject third/fourth-column content rather than dropping it. WAV export
 does not establish a 6507 cartridge CPU budget.
@@ -358,8 +345,6 @@ A **VIC-20 (VIC)** song has four lanes — Bass, Alto, Soprano (three squares an
 
 ### WonderSwan and WonderSwan Color: wavetables, sweep, noise, voice samples, Hyper Voice and Sound DMA
 
-Both WonderSwan models are available in the official release. Android device, native/reference and
-AppImage acceptance is recorded in [the verification log](docs/VERIFICATION.md#0360-wonderswan--integration-verification).
 Output preserves hardware wrap and reserves headroom before resampling without a compensating
 boost. Hyper Voice cannot be represented by VGM; use WAV.
 
@@ -367,15 +352,9 @@ A WonderSwan song (**Menu → Files → New blank song → WonderSwan…**, then
 
 ### Virtual Boy: shared waves, envelopes and Wave 5's sweep
 
-Available in the official release, with native/reference, Android-device and AppImage acceptance
-recorded in [the verification log](docs/VERIFICATION.md#0350-virtual-boy-vsu--integration-verification).
-
 A Virtual Boy song (**Menu → Files → New blank song → Virtual Boy**) has the VSU's six channels as lanes — **Wave 1-4**, **Wave 5** and **Noise** — each with up to two effect columns. The five 32-step waves and the modulation table belong to the whole song (the chip's wave RAM is shared and can only be loaded while every channel is silent, so it is loaded once at the start); the **Wave** view edits them, and any lane can play any wave. An instrument picks a wave and sets the hardware **envelope** (start level, grow or decay, step time, repeat), an automatic **length**, the Noise lane's **tap** (from a 32767-step hiss to a 28-step buzz) and, for Wave 5 only, the hardware **sweep** or **modulation**. Loudness is the envelope level (`Cxx`) and the per-lane stereo levels (`8xy`, left and right 0-F); OFF stops a channel. Notes are true pitches from D#2 up (the editor shows each note's real frequency: the 11-bit period is up to ~20 cents off at the top); Noise notes pick shift-register rates. Songs export as VGM and WAV; there is no Virtual Boy ROM export.
 
 ### SAA1099: SAM Coupé and Creative Music System (0.34.0)
-
-Both SAA1099 variants are available in the official release. Native/reference and frontend
-acceptance records are in [the verification log](docs/VERIFICATION.md).
 
 A SAA1099 song (**Menu → Files → New blank song → Philips SAA1099… → SAM Coupé** or **Creative Music System**) plays the Philips SAA1099's square-wave voices: the SAM Coupé's one chip gives six lanes, `SAA 1`-`SAA 6`; the Creative Music System (Game Blaster) has two chips, lanes `A1`-`A6` and `B1`-`B6`, mixed into one stereo output. Each lane has up to four effect columns. Instruments are envelopes the player runs every tick — **Volume**, **Arpeggio**, **Pitch** and **Mixer** (off, tone, noise or tone + noise per tick) — plus a stereo **Pan** (left and right levels 0-15), a **Noise clock** and, on lanes 3 and 6 of a chip only, the chip's **hardware envelope** (eight shapes, 16 or 8 levels, inverted right side, clocked by lane 2's or 5's tone or by the player every few ticks). Shared hardware stays shared: lanes 1-3 share one noise generator and lanes 4-6 another (the latest note that uses noise sets its clock; the song check warns where two lanes of a triple want different clocks at once), and the lane headers show each generator's setting (`N0:31k`) and the hardware envelopes' clock lanes (`E←2`). `Yxx` restarts every generator of a chip in phase, holds them or switches the chip's sound off. **Load demo** opens "Coupé Lights" (SAM Coupé) or "Blaster Skyline" (Creative Music System).
 
@@ -435,7 +414,7 @@ Generate a sample project and export:
 # app/build/samples/thor-groove.uge
 ```
 
-The verified delivery is `dist/thor-tracker-debug.apk`. `examples/` contains **Thor Groove** and **Controller Study**, each as `.thor` and `.uge`; the latter was entered through the running Thor UI and controller event path. See [verification results and remaining physical checks](docs/VERIFICATION.md) before treating measured engine latency as acoustic latency.
+`examples/` contains **Thor Groove** and **Controller Study** as editable `.thor` projects and Game Boy `.uge` exports.
 
 ## Views and displays
 
@@ -691,8 +670,8 @@ The first backend is explicitly **GB/hUGE**: two pulse channels, one wave channe
 The Game Boy's own export is `.uge`; every system can also export a `.wav` recording (below). GB-specific editing semantics live in the backend; future backends can define different channels, instruments and editors without pretending that GB songs convert losslessly to other chips.
 
 - [UGE export format, effects and limits](docs/UGE_EXPORT.md)
-- [Actual-driver playback, update semantics and native verification](docs/AUDIO_ENGINE.md)
-- [Agreed scope and implementation plan](PLAN.md)
+- [Audio-engine architecture and export contracts](docs/AUDIO_ENGINE.md)
+- [Development roadmap](PLAN.md)
 
 ## Export to WAV
 

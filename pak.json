@@ -2,7 +2,7 @@
   "name": "ThorTracker",
   "version": "v1.0.0",
   "type": "TOOL",
-  "description": "Controller-first chiptune tracker: write patterns, shape instruments and export music for classic sound systems. NextUI soft launch, tested on Brick Hammer; other tg5040 devices are unverified. Songs and settings stay in /ThorTunez.",
+  "description": "Controller-first chiptune tracker for NextUI. Write patterns, shape instruments and export music for classic consoles and computers.",
   "author": "esko997",
   "repo_url": "https://github.com/esko997/thortracker",
   "release_filename": "ThorTracker.pak.zip",

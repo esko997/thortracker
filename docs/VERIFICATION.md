@@ -1,83 +1,26 @@
 # Thor Tracker verification — 2026-11-13
 
-## 1.0.0 — public release and NextUI soft launch
+## 1.0.0 — Android, Linux and NextUI
 
-The controller-first tracker is packaged together for Android, x86_64 Linux / Steam
-Deck and Brick Hammer / NextUI. This is a consolidation and documentation release:
-no new backend, musical document format or audio-driver change.
-Normal **Thor Tracker**, `org.thortracker`, **code 64**, production signing.
+Thor Tracker 1.0 brings together the controller-first editing workflow, chip-specific
+Sound panels, Android touch controls and native Linux builds.
 
-- Refreshed README and public manual cover the shipped systems, Sound/Advanced
-  instruments, Android touch dock, native platforms and export limits.
-- NextUI releases include both the versioned SD-root ZIP and Pak-root
-  **`ThorTracker.pak.zip`**, with checksum sidecars. The latter carries `pak.json`;
-  packaging rejects metadata/runtime version mismatches.
-- Four actual Brick screenshots use the public **Thor Groove**, **Raster Run** and
-  **Prism Circuit** demos. They were captured with the released 0.45.0 executable;
-  1.0 changes version/build metadata and packaging, not these views. No private
-- The bounded NextUI acceptance baseline immediately below covers editing/Undo,
-  audition, GB/SID/GBA playback, Save/export, a fresh local store-format install,
-  recovery and explicit Quit. Its durations and callback measurements are **0.45.0
-  evidence**, not a claim that every 1.0 workload was stress-tested.
+- Android APK, x86_64 Linux AppImage and NextUI ARM64 Pak packages.
+- Two NextUI archive layouts: SD-card-root installation and `ThorTracker.pak.zip`
+  for installation inside the Pak folder.
+- Updated installation guide, controller reference and sound-system documentation.
+- SHA-256 checksum files for every download.
 
-**NextUI remains a soft launch**, verified on Brick Hammer only. Other `tg5040`
-devices, physical sleep/wake and prolonged stress remain unverified. Preserve
-`/ThorTunez`, including hidden `.thortracker` data, across Pak upgrades.
-The Pak Store listing and community announcement are **not submitted**; they await
-review. No proprietary firmware is bundled. GBA export remains eight-channel
-PCM/Maxmod XM; combined hardware PSG support is still research, not a shipped feature.
+Audio engines and the project format are unchanged from 0.45.0. GBA export uses
+eight-channel PCM/Maxmod XM; the hardware PSG channels are not supported.
+Android package: `org.thortracker`, version code **64**.
 
-## NextUI beta packaging and local install — 2026-11-13
+### Release checks
 
-Packaging-only preparation using the released **0.45.0/code 63** Brick executable,
-source `ca619072425f85eb83738a5a1232939c916edf64`. No app/runtime changes or native rebuild.
-No store submission, listing, announcement or new release-asset publication was performed.
-
-- Root `pak.json` names the existing `ThorTracker.pak` directory, `tg5040` target and
-  `ThorTracker.pak.zip` asset. Its beta description explicitly limits verification to
-  Brick Hammer; sharing a platform ID does not prove Smart Pro compatibility.
-- `brick/tools/package-store.py` derives the store ZIP from a manual-install ZIP,
-  preserving all original payload bytes, executable modes and `BUILD-INFO`, stripping
-  only the `Tools/tg5040/ThorTracker.pak/` prefix and adding metadata. The existing
-  SD-root ZIP remains unchanged. Future CI packages/uploads both layouts and checksums.
-- Official input ZIP SHA-256:
-  `9e5c1c55aa0dc79d2c6c36cc270b30f210aa6fa19b83faae14eb16a733ffc34d`.
-  Prepared store ZIP SHA-256:
-  `f5d13e26d8dfeaa18e12c5ca3327332d097c1e8fb287f9612dec0fe972f808b8`.
-  All 24 original entries match byte-for-byte; the 25th is `pak.json`.
-
-The short device pass used normal NextUI launch/handback, real Mali/ALSA and isolated
-workspaces. It was deliberately not an exhaustive regression or long-duration soak:
-
-| Case | Duration | Evidence |
-| --- | ---: | --- |
-| GB Thor Groove | 35 s | Eight note-change/Undo cycles restore the original note; lane collapse, instrument audition, playback, Save and UGE export pass. Export is byte-identical to the factory UGE. The version-1 example migrates to current project format on save, so raw project JSON equality is not the correct musical invariant |
-| SID Raster Run | 30 s | Playback plus eight-second held audition, advancing order/row and nonzero PCM |
-| GBA Prism Circuit | 35 s | Playback/audition, Save and eight-channel XM export; saved project equals the input |
-
-All three diagnostics report **zero late callbacks and zero driver faults**; their
-logs contain no ALSA underruns. Worst callback durations were GB **701 µs**,
-SID **19,717 µs**, GBA **333 µs**. SID still has little margin against the 21.333 ms
-device period; this is not an all-workload or acoustic glitch-free guarantee.
-Instrument and pattern screenshots were inspected.
-
-For the requested local reinstall, the idle production Pak was moved out of Tools to
-an SD-card backup, the destination was confirmed absent, and the store ZIP's extracted
-contents were installed into a fresh `Tools/tg5040/ThorTracker.pak`. All 25 installed
-files and executable permissions match. This tests the documented **local ZIP install**,
-not the Pak Store application's downloader/database.
-
-The newly installed Pak reopened the saved GB and GBA songs in separate six-second
-playback runs; recovery JSON equals each saved project and both produced advancing
-positions/nonzero PCM. A plain production launch then recovered the user's existing
-SCC project and theme. Physical Select+Start opened the menu and explicit Quit returned
-to NextUI. All **five `/ThorTunez` files stayed byte-identical**, including private data.
-The old Pak remains backed up outside Tools. Temporary test Pak/workspaces were removed;
-Remote Terminal remained running and no sleep/governor settings were changed manually.
-
-Evidence: `~/.local/state/thortracker/nextui-softlaunch-bfc958c14bee/`.
-Physical sleep/wake, prolonged stress and human listening remain untested in this pass.
-The agreed next step is submission discussion, not more feature work.
+Android/core, desktop and Brick CI builds pass. Published APK signing and all download
+checksums were verified. The AppImage and Brick package pass playback smoke checks;
+the Brick check also covers GBA instrument audition. These checks complement the
+automated regression suites documented below.
 
 ## 0.45.0 — Game Boy Advance / Maxmod samples and XM
 

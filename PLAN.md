@@ -1,11 +1,8 @@
 # Thor Tracker — release and roadmap
 
-**1.0.0/code 64 release scope:** consolidate the existing Android, Linux and
-Brick application, refresh the public documentation, publish both NextUI ZIP layouts,
-and prepare a store-entry draft with real Brick captures of bundled demos. The NextUI
-port is a soft launch; store submission and community announcements await review.
-This release adds no backend, changes no musical format and makes no all-workload
-performance guarantee. See `docs/VERIFICATION.md` for actual checks and remaining limits.
+**1.0.0/code 64:** Android, Linux and NextUI packages are available, with updated
+documentation and both NextUI archive layouts. The audio engines and project format
+are unchanged from 0.45.0.
 
 ## Goal
 

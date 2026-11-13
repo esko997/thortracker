@@ -17,7 +17,7 @@ All systems can render **WAV**. Other formats depend on the song's system:
 | Atari 2600 TIA, VIC-20, C16 / Plus/4 | WAV; no additional chip-log or executable export |
 | Game Boy Advance / Maxmod | Eight-channel FastTracker II `.xm` for Maxmod-based GBA games |
 
-This index follows the [backend export declarations](../../core/src/commonMain/kotlin/org/thortracker/system/). Format-specific restrictions still apply: a VGM register log is not a game-driver binary, NSF players need to support the selected expansion, and proprietary firmware is not bundled. Consult the [system guide](/systems/) and [audio export contracts](/audio-reference/) before integrating music into a game.
+Export restrictions depend on the system: VGM is a timed register log, NSF players must support the selected expansion, and some sounds require separately supplied firmware. See the [system guide](/systems/) and [engine documentation](../../docs/AUDIO_ENGINE.md) for integration details.
 
 GBA export is currently **PCM/sample-only**; it does not include the hardware PSG
 channels. Its verified target is mmutil 1.10.1 / Maxmod 1.0.15, not every engine that
@@ -33,4 +33,4 @@ Keymaps use **`thor-tracker-keymap.json`** and can be exported/imported from Con
 
 ## Game Boy export details
 
-The [UGE reference](/uge-reference/) is generated from `docs/UGE_EXPORT.md`: its format, effect and validation rules remain the canonical contract. The [audio reference](/audio-reference/) documents each system's native renderer and exports.
+The [UGE reference](/uge-reference/) describes the Game Boy file format and validation rules. The [engine documentation](../../docs/AUDIO_ENGINE.md) covers native rendering and export contracts.

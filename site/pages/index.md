@@ -4,13 +4,11 @@
 
 <div class="actions"><a href="/downloads/">Download & install</a><a href="/getting-started/">Write your first phrase</a></div>
 
-**1.0.0 is the public soft-launch release.** Android, x86_64 Linux and both Brick package layouts
-are available from the same release. The NextUI port is a soft launch: tested on Brick
-Hammer, with its remaining hardware checks documented rather than hidden.
+**Thor Tracker 1.0.0** is available for Android, x86_64 Linux and Brick Hammer with NextUI.
 
 <figure class="hero-shot">
 <img src="../../docs/media/brick-pattern.png" alt="Thor Tracker running on Brick Hammer: the bundled Thor Groove demo playing in the four-channel Game Boy pattern editor.">
-<figcaption>Actual Brick Hammer display, captured with the bundled Thor Groove demo. No personal projects or interface mockups are shown.</figcaption>
+<figcaption>Brick Hammer screenshot.</figcaption>
 </figure>
 
 ## Choose your instrument bench
@@ -42,4 +40,4 @@ See the [Sound systems guide](/systems/) for available voices, effects, export f
 - [Complete manual](/manual/): the repository README, including detailed instrument and tuning instructions.
 - [Source & licences](/licenses/): free software, bundled components and source pins.
 
-These pages are built from the repository's Markdown. Release notes are the authority for what shipped in a particular download. Historical engineering records stay labelled as such. Android's touchscreen controller dock and navigation drawer are included; a connected controller hides the dock. The same controller-oriented editing model remains available on every platform.
+On Android, the touchscreen controller dock and navigation drawer provide the same editing controls without a gamepad. Connecting a controller hides the dock.

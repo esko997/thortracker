@@ -8,19 +8,19 @@ Official APKs use the production release key. A debug build or a build older tha
 
 ## Steam or NextUI cannot start the app
 
-On Deck, check that the AppImage is executable and the Steam shortcut points to the stable link you created. Confirm Steam Input passes controller buttons through; back grips are not guaranteed by every layout. The [Linux reference](/deck-reference/) records platform limitations, including still-unverified physical behaviour.
+On Deck, check that the AppImage is executable and the Steam shortcut points to the stable link you created. Confirm that Steam Input passes controller buttons through. See the [Linux reference](/deck-reference/) for keyboard mappings and file locations.
 
-On Brick Hammer, use the **NextUI tg5040** package, not the x86_64 AppImage. The launcher must be at `Tools/tg5040/ThorTracker.pak/launch.sh` below the SD-card root. Use **Quit** to return to NextUI. Keep `/mnt/SDCARD/ThorTunez` when updating the Pak; NextUI's log directory contains `ThorTracker.txt`. Do not replace vendor SDL or Mali libraries.
+On Brick Hammer, use the **NextUI tg5040** package. The launcher must be at `Tools/tg5040/ThorTracker.pak/launch.sh` below the SD-card root. Use **Quit** to return to NextUI. Logs are written to `ThorTracker.txt` in NextUI's log directory. The application uses NextUI's installed SDL and Mali libraries.
 
 ## A note or channel is silent
 
 - Check the selected system, channel and instrument. A sound must be playable on that channel: for example, PC Engine noise instruments need PSG 5 or 6.
-- Try a known demo for that system and hold **X** to audition with playback stopped. Background playback alone does not prove an audition was accepted.
-- Check the instrument envelope, sample mapping and any required shared firmware. Some instruments or partner channels are intentionally silent; raising output gain is not a repair.
+- Load a demo for that system and hold **X** to audition with playback stopped.
+- Check the instrument envelope, sample mapping and required firmware. Some instruments or partner channels are silent by design.
 - Game Boy instrument **0** is legato: after a cut it can remain silent because it does not retrigger the instrument. See [sound and export rules](/manual/#sound-and-export-rules).
-- EPSM / OPNA rhythm drums require your own imported YM2608 rhythm ROM. See [firmware requirements](/audio-reference/#the-ym2608-rhythm-rom-shared-firmware). Do not attach proprietary ROM data to an issue.
+- EPSM / OPNA rhythm drums require an imported YM2608 rhythm ROM. See [firmware requirements](../../docs/AUDIO_ENGINE.md#the-ym2608-rhythm-rom-shared-firmware). Do not attach proprietary ROM data to an issue.
 
-For crackles, dropouts or unexpected level differences, record the system, device, version, exact action and diagnostics. Software counters are not a measurement of acoustic latency or proof of listening quality; the [verification record](/verification/) distinguishes those limits.
+For crackles, dropouts or unexpected level differences, include the sound system, device, app version, reproduction steps and diagnostics in a bug report.
 
 ## Controls or saved work look wrong
 

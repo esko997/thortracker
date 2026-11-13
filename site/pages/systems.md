@@ -8,7 +8,7 @@ The registry covers **Game Boy / Game Boy Color**, **NES** and its **VRC6, VRC7,
 
 **Game Boy Advance / Maxmod** adds eight sample voices and `.xm` export for GBA homebrew.
 
-The sections below are generated from the canonical manual, including its limitations and dated status notes. Some older notes describe pre-release work; they are retained, not silently upgraded into hardware-verification claims. Check the [release notes](https://github.com/esko997/thortracker/releases/latest) and the [verification record](/verification/) for the version and platform you use. No original-hardware listening comparison is implied by passing software tests.
+The sections below describe each system's instruments, effects and export formats.
 
 <!-- include: README.md :: Multiple effects per row -->
 
@@ -40,7 +40,7 @@ The sections below are generated from the canonical manual, including its limita
 
 ## OPL3 FM (YMF262)
 
-OPL3 uses Thor Tracker's own player on Nuked-OPL3, not a console's game driver. Songs export as a VGM register log or WAV. The [canonical OPL3 contract](/audio-reference/#opl3-thor-trackers-own-player-on-a-ymf262-opl3-fm) documents voice allocation, two- and four-operator instruments, effects, pitch and export limits. The [project format](/files/#saving-and-recovery) records its nine pattern tracks, up to four effect columns and instrument/chord data. VGM export is not an executable for a target computer.
+OPL3 uses Thor Tracker's player with Nuked-OPL3. It provides nine pattern tracks, up to four effect columns, two- and four-operator instruments and chords. Songs export as VGM or WAV. See the [OPL3 engine documentation](../../docs/AUDIO_ENGINE.md#opl3-thor-trackers-own-player-on-a-ymf262-opl3-fm) for voice allocation and effect details.
 
 <!-- include: README.md :: Mega Drive instruments -->
 
@@ -58,7 +58,7 @@ OPL3 uses Thor Tracker's own player on Nuked-OPL3, not a console's game driver. 
 
 ## Atari 8-bit POKEY
 
-One POKEY is supported, not a dual-POKEY stereo board. Thor Tracker's own player drives its cycle-timed POKEY model and exports VGM or WAV. There is **no XEX or SAP export**: those would require an Atari 6502 driver that this system does not provide. See the [POKEY contract](/audio-reference/#pokey-thor-trackers-own-player-on-the-atari-8-bit-pokey-atari-pokey) for joined channels, filtering, samples, clocks and fidelity limits; its demo is **Scanline Cruise**.
+POKEY provides four channels, including paired-channel modes, filtering and samples. Songs export as VGM or WAV; XEX and SAP export are not supported. The bundled demo is **Scanline Cruise**. See the [POKEY engine documentation](../../docs/AUDIO_ENGINE.md#pokey-thor-trackers-own-player-on-the-atari-8-bit-pokey-atari-pokey) for clock and rendering details.
 
 <!-- include: README.md :: Atari 2600: -->
 
@@ -70,10 +70,13 @@ One POKEY is supported, not a dual-POKEY stereo board. Thor Tracker's own player
 
 <!-- include: README.md :: SAA1099: -->
 
-## Shared resources and honest limits
+## Shared resources
 
-A hardware-shared envelope, filter, waveform bank or master volume is still shared. Editing one lane can intentionally affect another. Loudness differs across chips; do not assume normalization or add gain to compensate for a missing instrument or unavailable firmware.
+Hardware-shared envelopes, filters, waveform banks and master volume affect all channels that use them. Output levels differ between sound systems.
 
-EPSM and OPNA rhythm drums need a **user-supplied YM2608 rhythm ROM**. It is not included in this site, the source, releases, demos or projects. See the [firmware contract](/audio-reference/#the-ym2608-rhythm-rom-shared-firmware) and the system's in-app help.
+EPSM and OPNA rhythm drums require a **user-supplied YM2608 rhythm ROM**. See the
+[firmware requirements](../../docs/AUDIO_ENGINE.md#the-ym2608-rhythm-rom-shared-firmware)
+and in-app help.
 
-For detailed effects, image layouts and export contracts, read the [audio reference](/audio-reference/). The [backend design history](/backend-design/) includes proposals and is not a list of promised features. [Conversion](/files/#converting-between-systems) explains how the app reports unsupported resources before changing a song.
+[Conversion between systems](/files/#converting-between-systems) describes how
+compatibility reports identify unsupported instruments and effects.

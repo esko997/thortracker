@@ -17,14 +17,11 @@ import markdown
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
 REPO = "https://github.com/esko997/thortracker"
-# Long engineering records remain available, explicitly labelled as historical references.
+# Publish user and technical references; engineering work logs remain in the source repository.
 DOCUMENTS = {
     "README.md": ("manual", "Complete manual"),
     "deck/README.md": ("deck-reference", "Linux reference"),
     "docs/UGE_EXPORT.md": ("uge-reference", "UGE reference"),
-    "docs/AUDIO_ENGINE.md": ("audio-reference", "Audio reference"),
-    "docs/BACKENDS.md": ("backend-design", "Backend design history"),
-    "docs/VERIFICATION.md": ("verification", "Verification record"),
 }
 NAV = [
     ("", "Overview"), ("downloads", "Download & install"),
