@@ -85,17 +85,19 @@ class Page:
 
 class Rewriter(HTMLParser):
     """Rewrite both Markdown-generated and raw HTML URLs, retaining semantic markup."""
-    def __init__(self, build: Builder, source: str):
+    def __init__(self, build: Builder, source: str, local_fragments: frozenset[tuple[str, str]] = frozenset()):
         super().__init__(convert_charrefs=False)
         self.build = build
         self.source = source
+        self.local_fragments = local_fragments
         self.parts: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         for key in ("href", "src", "poster"):
             if key in attrs:
-                attrs[key] = self.build.resolve(attrs[key], self.source, asset=key != "href")
+                attrs[key] = self.build.resolve(attrs[key], self.source, asset=key != "href",
+                                                local_fragments=self.local_fragments)
         if tag == "img":
             if not attrs.get("alt"):
                 raise ValueError(f"Image without alternative text in {self.source}")
@@ -177,7 +179,8 @@ class Builder:
             self.copied.add(source)
         return self.base + "assets/" + quote(source, safe="/")
 
-    def resolve(self, url: str, source: str, asset: bool = False) -> str:
+    def resolve(self, url: str, source: str, asset: bool = False, *,
+                local_fragments: frozenset[tuple[str, str]] = frozenset()) -> str:
         parsed = urlsplit(unescape(url))
         if parsed.scheme or parsed.netloc:
             if parsed.scheme not in ("", "https", "http", "mailto"):
@@ -201,6 +204,8 @@ class Builder:
                 matches = [value for value in ids if re.sub("-+", "-", value) == normalized]
                 if len(matches) == 1:
                     fragment = matches[0]
+        if not asset and not parsed.path and not parsed.query and (source, unquote(fragment)) in local_fragments:
+            return "#" + fragment
         suffix = ("?" + parsed.query if parsed.query else "") + ("#" + fragment if fragment else "")
         if target in DOCUMENTS:
             return self.url(DOCUMENTS[target][0]) + suffix
@@ -241,8 +246,13 @@ class Builder:
 
     def render(self, page: Page) -> str:
         chunks = []
+        local_fragments = frozenset(
+            (source, heading[2])
+            for source, body in page.chunks
+            for heading in HEADINGS.finditer(body)
+        )
         for source, body in page.chunks:
-            writer = Rewriter(self, source)
+            writer = Rewriter(self, source, local_fragments)
             writer.feed(body)
             writer.close()
             chunks.append("".join(writer.parts))

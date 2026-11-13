@@ -16,9 +16,12 @@ Include a canonical section by its source path and unique heading prefix:
 <!-- include: README.md :: Controller reference -->
 ```
 
-The generator preserves heading fragments and rewrites relative links. Missing or
-ambiguous includes fail the build. Images are copied to `assets/`; other source
-links point to GitHub. GIFs appear as explicit links rather than autoplaying.
+The generator preserves heading fragments and rewrites relative links. Bare fragment
+links in excerpts stay on the current page when it includes the target heading from
+the same source; otherwise they link to the full reference. Explicit document paths
+always retain their destination. Missing or ambiguous includes fail the build.
+Images are copied to `assets/`; other source links point to GitHub. GIFs appear as
+explicit links rather than autoplaying.
 
 Write product-facing instructions: describe behavior, requirements and limitations
 concisely. Keep personal setup, review conversations and unpublished submission drafts
