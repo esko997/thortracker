@@ -99,6 +99,23 @@ and user-supplied firmware live in `/mnt/SDCARD/ThorTunez/.thortracker`. Updates
 and writes `ThorTracker.txt` under NextUI's logs directory. No vendor SDL/Mali library or
 proprietary chip firmware is bundled.
 
+**Pak Store beta preparation:** `ThorTracker.pak.zip` is a separate archive whose root
+contains `launch.sh`, `thortracker`, assets and `pak.json`. For a local install, extract
+its contents **inside** `Tools/tg5040/ThorTracker.pak/`, not at the SD-card root.
+Keep `/ThorTunez` when removing/replacing the Pak. This store-format package has passed
+a fresh local install on Brick Hammer; **store submission is pending discussion**.
+Other `tg5040` devices are not yet verified.
+
+Maintainers: bump root `pak.json`'s `version` alongside the app version. CI builds both
+archive layouts and checksum sidecars; packaging refuses a metadata/runtime version
+mismatch. To prepare the store ZIP from an already checksum-verified official manual ZIP
+without relinking or changing its executable/`BUILD-INFO`:
+
+```sh
+python3 brick/tools/package-store.py dist/thor-tracker-0.45.0-brick-nextui.zip
+# Output: dist/ThorTracker.pak.zip and dist/ThorTracker.pak.zip.sha256
+```
+
 ## Colour themes
 
 **Menu → Colour theme** selects **Slate** (the unchanged original appearance), **Paper** (light),

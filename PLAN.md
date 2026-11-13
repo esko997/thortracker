@@ -186,9 +186,15 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
      nonzero PCM and zero driver faults. One GB case has a recovered underrun; the other five have none.
      SID, OPL3, Mega Drive and EPSM FM additionally pass playback-plus-audition and audition-only checks.
      Actual physical X audition also passes in Instrument and Keyboard; temporary test files are removed.
-   - Remaining hardware hardening: long projects/Undo history, exports, physical
-     suspend/resume and acoustic listening. Keep the bounded results distinct from all-workload guarantees;
-     do not silently reduce chip fidelity or remove systems to pass the port.
+   - **NextUI beta preparation (2026-11-13):** root `pak.json`, root-layout store ZIP and
+     future CI publication wiring are prepared. A bounded GB/SID/GBA device pass covers
+     edit/Undo, save, UGE/XM export, playback and audition. Fresh local installation into
+     an absent Pak directory, saved-project reopening, normal user recovery/theme and
+     explicit Quit pass; all five user-data files remain byte-identical.
+     Store submission/publication is paused for discussion, not performed.
+   - Longer soak/large-history testing, physical suspend/resume and acoustic listening
+     remain future hardening, not blockers for the agreed small beta pass. Keep the bounded
+     results distinct from all-workload guarantees; do not reduce chip fidelity to pass.
    - Miyoo Mini Plus remains a secondary, higher-risk experiment: 128 MB RAM and a software-oriented display
      stack. The installed Kotlin 2.1.0 compiler lists ARM32 hard-float, but marks it deprecated; the existing
      16 MiB glyph atlas and full-chip CPU budget need measurement. The Miyoo port remains unimplemented.

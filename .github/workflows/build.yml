@@ -188,6 +188,8 @@ jobs:
           path: |
             dist/thor-tracker-*-brick-nextui.zip
             dist/thor-tracker-*-brick-nextui.zip.sha256
+            dist/ThorTracker.pak.zip
+            dist/ThorTracker.pak.zip.sha256
           if-no-files-found: error
 
   # A version bump on main publishes it: when no release v<versionName> exists yet, sign and publish that commit.
@@ -311,7 +313,9 @@ jobs:
           fi
           if [[ $BRICK_RESULT == success ]]; then
             assets+=("dist/thor-tracker-$VERSION-brick-nextui.zip" "dist/thor-tracker-$VERSION-brick-nextui.zip.sha256")
+            assets+=("dist/ThorTracker.pak.zip" "dist/ThorTracker.pak.zip.sha256")
             printf '\nBrick Hammer / NextUI: `thor-tracker-%s-brick-nextui.zip` (see the README, "Brick Hammer / NextUI").\n' "$VERSION" >> "$RUNNER_TEMP/notes.md"
+            printf '\nNextUI Pak Store/local Pak-folder install: `ThorTracker.pak.zip` (contents go inside `ThorTracker.pak`, not at the SD-card root).\n' >> "$RUNNER_TEMP/notes.md"
           fi
           gh release upload "$TAG" "${assets[@]}"
           gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"

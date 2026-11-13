@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI release binary -> SD-card-root ZIP. Never bundle the build-time SDL, vendor libs or user firmware/data.
+# CI release binary -> manual-install and Pak Store ZIPs. Never bundle vendor libs or user data.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 version=${1:?usage: brick/tools/package-pak.sh <version>}
@@ -58,3 +58,4 @@ with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED, compres
 PY
 (cd dist && sha256sum "thor-tracker-$version-brick-nextui.zip" > "thor-tracker-$version-brick-nextui.zip.sha256")
 echo "packaged dist/thor-tracker-$version-brick-nextui.zip"
+python3 brick/tools/package-store.py "dist/thor-tracker-$version-brick-nextui.zip"
