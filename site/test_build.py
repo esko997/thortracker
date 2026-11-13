@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from build import Builder, HEADINGS, LinkInventory, Rewriter, render_markdown, section
+from build import Builder, HEADINGS, LinkInventory, Page, Rewriter, render_markdown, section
 
 
 class MarkdownTests(unittest.TestCase):
@@ -41,6 +41,29 @@ class SiteTests(unittest.TestCase):
         self.assertEqual(self.builder.resolve("/files/#saving-and-recovery", "site/pages/index.md"), "/thortracker/files/#saving-and-recovery")
         self.assertEqual(self.builder.resolve("#install", "README.md"), "/thortracker/manual/#install")
         self.assertEqual(self.builder.resolve("controls.md", "site/pages/index.md"), "/thortracker/controls/")
+
+    def test_excerpt_links_stay_on_page_only_for_included_source_headings(self):
+        manual = render_markdown(
+            "## Links\n\n[local](#local--section) [elsewhere](#elsewhere) "
+            "[explicit](README.md#local-section) [other source](#collision) "
+            "[unicode](#caf%C3%A9)\n\n"
+            "## Local section\n\n## Café\n\n## Elsewhere\n\n## Collision\n"
+        )
+        self.builder.documents["README.md"] = manual
+        page = Page("guide", "Guide", [
+            ("README.md", section(manual, "Links")),
+            ("README.md", section(manual, "Local section")),
+            ("README.md", section(manual, "Café")),
+            ("deck/README.md", render_markdown("## Collision\n")),
+        ])
+        inventory = LinkInventory()
+        inventory.feed(self.builder.render(page).partition("<article>")[2].partition("</article>")[0])
+        self.assertIn("#local-section", inventory.links)
+        self.assertIn("#caf%C3%A9", inventory.links)
+        self.assertIn("/thortracker/manual/#elsewhere", inventory.links)
+        self.assertIn("/thortracker/manual/#local-section", inventory.links)
+        self.assertIn("/thortracker/manual/#collision", inventory.links)
+        self.assertNotIn("#collision", inventory.links)
 
     def test_assets_resolve_against_their_source(self):
         url = self.builder.resolve("deck-pattern.png", "deck/README.md", asset=True)
