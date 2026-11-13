@@ -4,9 +4,13 @@
 
 <div class="actions"><a href="/downloads/">Download & install</a><a href="/getting-started/">Write your first phrase</a></div>
 
+**1.0.0 is the public soft-launch release.** Android, x86_64 Linux and both Brick package layouts
+are available from the same release. The NextUI port is a soft launch: tested on Brick
+Hammer, with its remaining hardware checks documented rather than hidden.
+
 <figure class="hero-shot">
-<img src="../../docs/media/pattern-and-keyboard-dual-screen.png" alt="Thor Tracker's Pattern and Keyboard views: notes entered in the Pulse 2 track, with a two-octave keyboard on the other display.">
-<figcaption>The shared song on two Thor-sized displays. This capture is from the Android emulator; the documentation does not play audio.</figcaption>
+<img src="../../docs/media/brick-pattern.png" alt="Thor Tracker running on Brick Hammer: the bundled Thor Groove demo playing in the four-channel Game Boy pattern editor.">
+<figcaption>Actual Brick Hammer display, captured with the bundled Thor Groove demo. No personal projects or interface mockups are shown.</figcaption>
 </figure>
 
 ## Choose your instrument bench
@@ -21,6 +25,15 @@ Each song targets one [sound system](/systems/). Channel layouts, instruments, e
 
 Use [project files](/files/) to keep editable work. Export audio or the formats supported by the selected system. Conversion between systems reports losses before you apply it; it does not promise identical sound.
 
+## Shape the sound
+
+<figure class="hero-shot">
+<img src="../../docs/media/brick-gb-sound.png" alt="Game Boy Sound panel on Brick Hammer, with a green pixel-style timbre display and musical controls beside the unchanged instrument list.">
+<figcaption>Musical Sound controls and precise Advanced editing work on the same instrument. SID, FM, wavetable and sample instruments have controls suited to their own sound system.</figcaption>
+</figure>
+
+See the [Sound systems guide](/systems/) for available voices, effects, export formats and limitations.
+
 ## A manual beside the machine
 
 - [Getting started](/getting-started/): enter notes, arrange a phrase and find the views.
@@ -29,4 +42,4 @@ Use [project files](/files/) to keep editable work. Export audio or the formats 
 - [Complete manual](/manual/): the repository README, including detailed instrument and tuning instructions.
 - [Source & licences](/licenses/): free software, bundled components and source pins.
 
-These pages are built from the repository's Markdown. Release notes are the authority for what shipped in a particular download. Historical engineering records stay labelled as such. The proposed touch-only interface is not an implemented feature; the documented workflow remains controller-first.
+These pages are built from the repository's Markdown. Release notes are the authority for what shipped in a particular download. Historical engineering records stay labelled as such. Android's touchscreen controller dock and navigation drawer are included; a connected controller hides the dock. The same controller-oriented editing model remains available on every platform.

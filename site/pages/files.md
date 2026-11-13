@@ -15,8 +15,13 @@ All systems can render **WAV**. Other formats depend on the song's system:
 | Master System / Game Gear / SMS FM Unit | WLA-DX `.asm`, SDAS `.s`, `.vgm` |
 | OPL3, AY/YM, PC Engine, SCC/SCC+, OPM, OPN/OPNA, POKEY, WonderSwan/Color, Virtual Boy, SAA1099 | `.vgm` |
 | Atari 2600 TIA, VIC-20, C16 / Plus/4 | WAV; no additional chip-log or executable export |
+| Game Boy Advance / Maxmod | Eight-channel FastTracker II `.xm` for Maxmod-based GBA games |
 
 This index follows the [backend export declarations](../../core/src/commonMain/kotlin/org/thortracker/system/). Format-specific restrictions still apply: a VGM register log is not a game-driver binary, NSF players need to support the selected expansion, and proprietary firmware is not bundled. Consult the [system guide](/systems/) and [audio export contracts](/audio-reference/) before integrating music into a game.
+
+GBA export is currently **PCM/sample-only**; it does not include the hardware PSG
+channels. Its verified target is mmutil 1.10.1 / Maxmod 1.0.15, not every engine that
+accepts XM. WAV export records audio and does not create a game playback driver.
 
 Keymaps use **`thor-tracker-keymap.json`** and can be exported/imported from Controls. Tuning collections use **`.thorscales`**; individual scales use **Scala `.scl`**. These are separate from a song's `.thor` document. [Microtuning](/manual/#microtuning-song-tuning-from-a-scala-scl-file) describes provenance, pitch limits and collection management.
 

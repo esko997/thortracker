@@ -1,5 +1,32 @@
 # Thor Tracker verification — 2026-11-13
 
+## 1.0.0 — public release and NextUI soft launch
+
+The controller-first tracker is packaged together for Android, x86_64 Linux / Steam
+Deck and Brick Hammer / NextUI. This is a consolidation and documentation release:
+no new backend, musical document format or audio-driver change.
+Normal **Thor Tracker**, `org.thortracker`, **code 64**, production signing.
+
+- Refreshed README and public manual cover the shipped systems, Sound/Advanced
+  instruments, Android touch dock, native platforms and export limits.
+- NextUI releases include both the versioned SD-root ZIP and Pak-root
+  **`ThorTracker.pak.zip`**, with checksum sidecars. The latter carries `pak.json`;
+  packaging rejects metadata/runtime version mismatches.
+- Four actual Brick screenshots use the public **Thor Groove**, **Raster Run** and
+  **Prism Circuit** demos. They were captured with the released 0.45.0 executable;
+  1.0 changes version/build metadata and packaging, not these views. No private
+- The bounded NextUI acceptance baseline immediately below covers editing/Undo,
+  audition, GB/SID/GBA playback, Save/export, a fresh local store-format install,
+  recovery and explicit Quit. Its durations and callback measurements are **0.45.0
+  evidence**, not a claim that every 1.0 workload was stress-tested.
+
+**NextUI remains a soft launch**, verified on Brick Hammer only. Other `tg5040`
+devices, physical sleep/wake and prolonged stress remain unverified. Preserve
+`/ThorTunez`, including hidden `.thortracker` data, across Pak upgrades.
+The Pak Store listing and community announcement are **not submitted**; they await
+review. No proprietary firmware is bundled. GBA export remains eight-channel
+PCM/Maxmod XM; combined hardware PSG support is still research, not a shipped feature.
+
 ## NextUI beta packaging and local install — 2026-11-13
 
 Packaging-only preparation using the released **0.45.0/code 63** Brick executable,

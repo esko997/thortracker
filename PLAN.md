@@ -1,12 +1,22 @@
-# Thor Tracker — MVP plan
+# Thor Tracker — release and roadmap
 
-Status: MVP implemented and exercised on the Thor, an Android emulator and the isolated target-game toolchain. APK and two project/UGE examples are delivered. See docs/VERIFICATION.md for evidence and limits: human listening, ergonomics and physical button-to-speaker latency remain unverified; the current Thor mixer path measures approximately 100 ms output latency.
+**1.0.0/code 64 release scope:** consolidate the existing Android, Linux and
+Brick application, refresh the public documentation, publish both NextUI ZIP layouts,
+and prepare a store-entry draft with real Brick captures of bundled demos. The NextUI
+port is a soft launch; store submission and community announcements await review.
+This release adds no backend, changes no musical format and makes no all-workload
+performance guarantee. See `docs/VERIFICATION.md` for actual checks and remaining limits.
 
 ## Goal
 
-A useful, controller-first Android GB/GBC music tracker for the AYN Thor. Compose complete songs, audition and replay edits quickly, use both displays freely, save projects safely, and export `.uge` songs for hUGEDriver-based games, including gbc-puzzler.
+A controller-first, multi-system music tracker for Android, Steam Deck / x86_64 Linux
+and Brick Hammer / NextUI. Compose complete songs, audition and replay edits quickly,
+use the available displays, save projects safely and export through existing chip-specific
+formats and homebrew toolchains. Android also offers a touchscreen controller dock.
 
-The first backend is explicitly GB/hUGE. Backend extensibility means modular software, not a universal instrument model or lossless song conversion. A project belongs to one backend. GBA and Mega Drive are examples of possible future backends, not MVP targets.
+The original backend was GB/hUGE. Backend extensibility means modular software, not
+a universal instrument model or lossless conversion: a project belongs to one backend.
+GBA/Maxmod and Mega Drive are implemented; combined GBA PCM/PSG research is parked.
 
 ## Roadmap (2026-11-08, after 0.13.0)
 
@@ -23,7 +33,7 @@ Preserve exact patches, Advanced editors and the existing audition/Undo workflow
 
 **0.45.0/code 63:** GBA/Maxmod adds eight sample voices, WAV import and shared sample
 editing, keymaps/envelopes, original starter sounds and eight-channel XM export.
-The exporter targets the game's mmutil 1.10.1; native playback follows Maxmod 1.0.15's
+The exporter targets community mmutil 1.10.1; native playback follows Maxmod 1.0.15's
 effect behavior. This is an explicit exception to the earlier non-sample-only scope.
 It does not add GBA PSG channels, XM import or a target-game CPU budget guarantee.
 
