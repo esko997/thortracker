@@ -1,13 +1,16 @@
 {
   "name": "ThorTracker",
-  "version": "v0.45.0",
+  "version": "v1.0.0",
   "type": "TOOL",
-  "description": "Beta controller-first chiptune tracker for Brick Hammer: compose, design instruments and export music for classic sound chips. Other tg5040 devices are unverified. Songs and settings live outside the Pak in /ThorTunez.",
+  "description": "Controller-first chiptune tracker: write patterns, shape instruments and export music for classic sound systems. NextUI soft launch, tested on Brick Hammer; other tg5040 devices are unverified. Songs and settings stay in /ThorTunez.",
   "author": "esko997",
   "repo_url": "https://github.com/esko997/thortracker",
   "release_filename": "ThorTracker.pak.zip",
   "screenshots": [
-    "docs/media/brick-paper.png"
+    "docs/media/brick-pattern.png",
+    "docs/media/brick-gb-sound.png",
+    "docs/media/brick-sid-sound.png",
+    "docs/media/brick-gba-sample.png"
   ],
   "platforms": [
     "tg5040"

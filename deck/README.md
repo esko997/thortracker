@@ -14,7 +14,7 @@ A Kotlin/Native + SDL3 frontend for Steam Deck / desktop Linux. It shares the An
 The Deck uses the shared button routing (`HostInput`), popups and menus (`AppMenus`): the same main menu, Files, Views, Tuning, Controls (rebinding, keymap export/import) and Help as the Thor, plus **Quit**. Popups are drawn with the shared `Surface` (`DrawnPopup`); the platform side is `DeckShell.kt`:
 
 - **Open the menu** with a back grip (L4/R4/L5/R5, if Steam Input passes them through) or **Select+Start** (the Thor's toolbar chord; the Deck has no toolbar). B goes back. While rebinding a button, Menu cancels.
-- **Files** live in `~/ThorTracker`. Open, Save as, Export .uge and keymap files use an in-app folder browser that works with the D-pad, so no system dialog is needed in Gaming Mode. Saving names the file after the song title and asks before replacing a file.
+- **Files** live in `~/ThorTracker`. Open, Save as, the selected system's exports and keymap files use an in-app folder browser that works with the D-pad, so no system dialog is needed in Gaming Mode. Saving names the file after the song title and asks before replacing a file.
 - **Recovery:** the working song is written to `~/.local/share/thortracker/working.thor` a second after each change and on Quit, and reopens on the next start. "Load demo", "New blank song" and Open keep the replaced song as `previous.thor` for "Recover previous project". The keymap is saved beside it.
 - **Tuning library:** 500 licensed or independently generated entries ship in `tunings/` beside the executable. Categories, search, details and source credits use the shared controller menus; L1/R1 page long details. Optional local `.thorscales` packs import through the file browser and live in `~/.local/share/thortracker/tuning-packs`. Replacement and removal require confirmation; removing a collection keeps the song's selected tuning and attribution. Catalogue loading and pack I/O run on a lazy worker, which is drained on exit.
 - **Colour theme:** Menu → Colour theme offers Slate, Paper and Contrast. The stable theme ID is stored in `~/.local/share/thortracker/theme`, separately from the musical document. It updates panes, drawn popups and native shell controls immediately.
@@ -27,7 +27,7 @@ The Deck uses the shared button routing (`HostInput`), popups and menus (`AppMen
 - All seven shared views render on the Deck at 89-90 fps with the bundled fonts, reached by the R2 view chords; the scale panel, playhead and hint bar match the Thor layout.
 - `:core:linuxX64Test` runs `CrossPlatformGoldenTest` natively, with values produced on the JVM. Number text matches `String.format` exactly over 216 cases. The example project's and demo's `.uge` exports are byte-identical (length + 64-bit hash). Every degree of the four built-in tunings lands on the same note and `40y` bend. Cents computed from ratios differ in the last bits of `log2` (JVM vs native libm, up to ~1e-13 cents on just-5-limit). That is far below the 5/10/20 ¢ limits, so cents are compared within 1e-9.
 
-Not yet checked: physical button presses (no one pressed them), Gaming Mode as a non-Steam game, suspend/resume, back paddles and trackpads under Steam Input.
+Those early checks did not cover physical buttons, Gaming Mode, suspend/resume, back paddles or trackpads. Current release evidence is in the verification record; do not read this historical list as a new 1.0 hardware test.
 
 ## Packaging
 
@@ -52,9 +52,9 @@ and must be deployed with it.
 
 To install a release on the Deck, see the main README's "Steam Deck" section. Gamepad: as on the Thor (D-pad moves, hold A + D-pad edits, B clears, L2+A / L2+B undo/redo, Start plays/stops, L2+Y loops, R2+A/B/X/Y and R2+↑/→/↓ switch views, two quick right-stick flicks up/down jump Pattern to the pattern's first/last row); Select+Start or a back grip opens the menu, which has Quit. Keyboard: arrows, Z/X/A/S = A/B/X/Y, Space = Start, Tab = Select, F1 = menu, Esc = back.
 
-## Open questions for the real port
+## Platform-specific limits
 
-- On-screen keyboard for the song title field in Gaming Mode (a physical keyboard works; the title can also be edited letter by letter in the Song view).
-- Touchscreen input.
-- Shapes are not anti-aliased on the Deck yet (SDL geometry); circles and rounded corners look slightly stepped.
-- Files: Open/Save/Export through SDL3 file dialogs (desktop portal) or a built-in browser in Gaming Mode.
+- The controller-first workflow and in-app file browser work without a desktop file picker. Steam's keyboard (**Steam + X**) or letter-by-letter Song editing can enter titles.
+- Android's touch controller dock is not a promise of the same touch-only interface on Linux.
+- SDL geometry is not anti-aliased; some circles and rounded corners have stepped edges.
+- Suspend/resume, trackpads and back-grip mappings depend on the device/Steam Input setup. Keep those checks separate from headless AppImage playback verification.

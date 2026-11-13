@@ -20,7 +20,7 @@ Native HTML disclosures, visible focus, a skip link, current-page indication and
 <!-- include: README.md :: Controller reference -->
 ```
 
-The generator renders the source once, selects the whole heading section (including its subsections), preserves its fragments and rewrites URLs relative to the original source. Missing or ambiguous includes fail the build. Selecting a nested section promotes its heading to H2 without changing its fragment. Source Markdown updates therefore appear automatically in the guide. Future zoom or other controls should enter through canonical documentation only after integration; no pattern-mute or touch-only implementation is advertised.
+The generator renders the source once, selects the whole heading section (including its subsections), preserves its fragments and rewrites URLs relative to the original source. Missing or ambiguous includes fail the build. Selecting a nested section promotes its heading to H2 without changing its fragment. Source Markdown updates therefore appear automatically in the guide. Advertise controls only after integration: Android's controller dock, zoom and Sound panels are shipped; pattern-local mute remains deferred.
 
 The full README, Deck README, UGE reference, audio-engine reference, backend-design history and verification record are also rendered, not forked. Long engineering records retain their historical claims and are labelled accordingly. They are references, not download recommendations. The short format/family indexes are editorial summaries grounded in the backend registry/export declarations and must be reviewed when those declarations change; the workflow watches that source tree.
 
@@ -46,7 +46,7 @@ For a root deployment, pass `--base /` to **both** commands. The production work
 
 ## Publication checklist (integration owner)
 
-No build, tests or browser verification were run by the source-only implementation worker. Run the commands above after integrating canonical documentation changes.
+Verify changed pages with the production-base build and a real browser, then check the published site and release links. No Gradle/native compilation is needed for documentation-only changes.
 
 1. Run the unit suite and production-base build. Build twice with unchanged inputs if checking reproducibility; compare the entire output tree, not just the landing page. Resolve every broken local URL/fragment rather than bypassing validation.
 2. In a browser, open `/thortracker/` at 1440×1000, 844×390, 390×844 and 320×640. Inspect all eight guide pages and the manual. Confirm no page-wide horizontal overflow; scroll a control table and a code block independently. At 200% zoom, navigation and text must remain usable.
@@ -55,16 +55,15 @@ No build, tests or browser verification were run by the source-only implementati
 5. Disable JavaScript and repeat navigation. All functionality is still available. In the network panel confirm requests stay local except explicit navigation to official GitHub/source links. Font loading must use `assets/deck/fonts/`; no analytics or remote asset origins should appear.
 6. Check deep links by opening/reloading `/thortracker/downloads/#brick-hammer--nextui`, `/thortracker/controls/#controller-reference`, `/thortracker/files/#saving-and-recovery`, `/thortracker/manual/#microtuning-song-tuning-from-a-scala-scl-file`, and the OPL3/POKEY links on Sound systems. Open an animated example, use Back, and confirm the original section remains usable. Open `/thortracker/404.html` and follow its navigation.
 7. Follow Downloads → official latest release. Check that APK, x86_64 AppImage and Brick zip are offered by the official release (not a candidate run). Check source, GPL, NOTICE, font licence, issue-template and external reference links. Review historical status notes in canonical README/audio/backend docs rather than rewriting them only in site output.
-8. Review parent-owned README/PLAN/VERIFICATION changes below. Merge only after the app release and accepted controls are reflected in canonical prose.
+8. Reconcile README/PLAN/VERIFICATION changes with current release evidence. Merge only after shipped controls and export limits are reflected in canonical prose.
 9. Repository **Settings → Pages → Build and deployment → Source: GitHub Actions**. Ensure the `github-pages` environment permits **main**, and any required approval is understood. No deploy key or personal token is required. Keep repository Actions allowed to use the pinned official actions.
 10. Merge the source to main (parent only), or dispatch **Documentation Pages** on main. PRs build and upload the site but cannot deploy. Confirm the build and deploy jobs pass, then visit the environment URL `https://esko997.github.io/thortracker/` and repeat deep-link reload, mobile navigation, fonts/media, official downloads and 404 checks on the actual host. The existing `build.yml` is independent and unchanged.
 
-## Proposed parent-owned documentation updates
+## Maintaining the 1.0 public documentation
 
-- **README:** add a prominent link to the published manual at `https://esko997.github.io/thortracker/` after the first successful deployment. Reconcile dated WonderSwan, Virtual Boy and SAA candidate-status prose against current release evidence; those sections are deliberately included verbatim, not silently reinterpreted by the site. Update About/diagnostics prose to cover the Linux handheld projects directory, preserving the release branch's HelpPainter correction. Add persistent zoom only once integrated and verified. Do not advertise the deferred pattern-mute or touch-only proposal.
-- **PLAN:** record the static site as implemented and its publication/browser acceptance status separately; link this maintainer checklist. Keep mute and touch-only work deferred.
-- **VERIFICATION:** after parent checks, record the exact source commit, Python/Markdown versions, unit/build results, tested viewports, keyboard/accessibility/overflow checks, deployed workflow run and live URL. Record any remaining physical-app checks separately; site screenshots are not runtime evidence for a new release.
-
-## Owned files
-
-Only `site/` and `.github/workflows/pages.yml`. No README, PLAN, VERIFICATION, production app sources, app versions or release workflow changes. Generated files, virtual environments and Python caches are ignored by `site/.gitignore`.
+- Keep the README introduction and repository description multi-system and cross-platform. Canonical sections remain the source for detailed controls and limits.
+- Keep Android touch-dock guidance current; do not confuse it with earlier archived interface proposals.
+- Downloads distinguishes the SD-root Brick ZIP from the Pak-root `ThorTracker.pak.zip`. Preserve `/ThorTunez` during upgrades and do not claim Pak Store availability before the listing is accepted.
+- Public screenshots use bundled demo songs only. `docs/NEXTUI_STORE_ENTRY.md` records capture provenance, captions and the draft listing.
+- Version metadata lives in `app/build.gradle.kts` and root `pak.json`; package generation checks that metadata and runtime `BUILD-INFO` agree.
+- Record actual publication/browser/artifact checks in release evidence. Never turn historical measurements into current all-device guarantees.
