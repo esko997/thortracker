@@ -1,23 +1,26 @@
 # Thor Tracker
 
-Thor Tracker is a controller-first music tracker for Game Boy / Game Boy Color sound, built for the AYN Thor's two screens: write patterns on one display while the other shows the arrangement, an instrument, a piano keyboard or a phrase sketchpad, then swap them with a chord. What you hear is the real hUGEDriver 6.1.3 running inside an embedded binjgb Game Boy emulator, and songs export as hUGETracker `.uge` v6 files ready for GB homebrew. It also runs on single-screen Android handhelds.
+Thor Tracker is a **controller-first chiptune tracker for Android, Steam Deck and Brick Hammer / NextUI**. Write patterns, shape instruments, arrange songs and export music for classic consoles and computers. It supports single-screen play, the AYN Thor's dual displays, and an Android touchscreen controller dock that hides when a controller is connected.
 
 Read the **[documentation website](https://esko997.github.io/thortracker/)** for installation,
 controls, sound systems, exports and troubleshooting.
 
-**0.42.0 promotes the approved touch controls and Game Boy Sound editor to the normal app.**
-Without a usable physical controller, Android shows a two-thumb controller dock and navigation
-drawer; attaching a controller hides the dock. Game Boy pulse instruments offer musical
-Sound controls beside the precise Advanced editor. Both edit the same instrument and Undo history.
+## 1.0: compose on the handheld
 
-**0.44.0 extends Sound to every supported chip family**, including expansion, wavetable,
-noise, sample and percussion voices. Musical controls and machine-specific panels sit beside
-the exact Advanced editors, with the same instrument list and Undo history.
-[Actual handheld gallery, controls and hardware limits](docs/INSTRUMENT_PANELS.md).
-The APK still updates the normal **Thor Tracker** app; no new preview identity is introduced.
+- **Classic sound systems:** Game Boy, NES and expansions, C64 SID, Yamaha FM, Sega PSG, AY/YM machines, wavetable systems and more. GBA/Maxmod adds eight sample voices for GBA homebrew.
+- **Instrument design:** musical Sound panels alongside precise Advanced editors, sharing the same patch, instrument list and Undo history. [See the instrument gallery and limits](docs/INSTRUMENT_PANELS.md).
+- **A controller workflow:** pattern editing, arrangement, audition, Sketch, scales/tunings, themes, zoom and rebindable shortcuts. Most backends support multiple effect columns.
+- **Keep editable work:** `.thor` projects, named saves and working-song recovery. Export WAV audio or the selected backend's supported music formats.
+- **Free software:** GPL-3.0-or-later, with no accounts, telemetry or in-app network access.
 
-**0.45.0 adds Game Boy Advance / Maxmod:** eight sample voices, editable sample instruments,
-WAV import and eight-channel FastTracker II `.xm` export for GBA homebrew.
+The **NextUI build is a soft launch**, tested on Brick Hammer. Shared `tg5040` packaging
+does not imply every device on that platform has been verified. See the
+[verification record](docs/VERIFICATION.md) for bounded test results and remaining checks.
+
+Each song targets one sound system. Formats such as Game Boy `.uge`, NES `.nsf`,
+SID `.sid` and GBA `.xm` serve different toolchains; **a VGM register log is not a
+ready-to-run game driver**, and WAV is an audio recording, not hardware music code.
+The [sound-system guide](https://esko997.github.io/thortracker/systems/) explains the choices.
 
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
@@ -60,7 +63,7 @@ fine pitches. Review the report, listen, then save the converted document under 
 
 ## Steam Deck
 
-Thor Tracker also runs on the Steam Deck (and other x86_64 Linux) as a native program built from the same core: the same views, controls, menus and sound engine, one view at a time on the Deck's screen. It is newer than the Thor app; see `deck/README.md` for what it does and does not do yet.
+Thor Tracker runs natively on Steam Deck and x86_64 Linux, using the same core, views, controls, menus and sound engines as Android. The Deck shows one view at a time. See [`deck/README.md`](deck/README.md) for native file locations and platform-specific limits.
 
 1. In **Desktop Mode**, download `thor-tracker-<version>-x86_64.AppImage` from the [Releases page](https://github.com/esko997/thortracker/releases) (for example into `~/Applications`).
 2. In a terminal (Konsole), make it executable and give it a stable name, so Steam's shortcut never has to change:
@@ -89,15 +92,31 @@ ThorTracker from NextUI's Tools. The printed A/B/X/Y buttons retain their meanin
 are modifier layers, including their combined layer. **Menu** or **Select+Start** opens the
 application menu; **Quit** returns through NextUI's normal Pak launcher.
 
-<img src="docs/media/brick-paper.png" width="620" alt="Thor Tracker's Pattern view in Paper on the actual 1024×768 Brick Hammer display">
+<img src="docs/media/brick-pattern.png" width="620" alt="The bundled Thor Groove demo playing in Thor Tracker on the actual 1024×768 Brick Hammer display">
 
-*Actual Brick framebuffer after quitting and reopening the Pak with Paper retained.*
 
 Projects and exports live in `/mnt/SDCARD/ThorTunez`; recovery, keymap, theme, tuning packs
 and user-supplied firmware live in `/mnt/SDCARD/ThorTunez/.thortracker`. Updates replace only
 `ThorTracker.pak`, not that data directory. The launcher preserves NextUI's HOME/ALSA routing
 and writes `ThorTracker.txt` under NextUI's logs directory. No vendor SDL/Mali library or
 proprietary chip firmware is bundled.
+
+**Pak Store-format package:** releases also provide `ThorTracker.pak.zip`, whose root
+contains `launch.sh`, `thortracker`, assets and `pak.json`. For a local install, extract
+its contents **inside** `Tools/tg5040/ThorTracker.pak/`, not at the SD-card root.
+Keep `/ThorTunez` when removing/replacing the Pak. This store-format package has passed
+a fresh local install on Brick Hammer; **store submission is pending discussion**.
+Other `tg5040` devices are not yet verified.
+
+Maintainers: bump root `pak.json`'s `version` alongside the app version. CI builds both
+archive layouts and checksum sidecars; packaging refuses a metadata/runtime version
+mismatch. To prepare the store ZIP from an already checksum-verified official manual ZIP
+without relinking or changing its executable/`BUILD-INFO`:
+
+```sh
+python3 brick/tools/package-store.py dist/thor-tracker-1.0.0-brick-nextui.zip
+# Output: dist/ThorTracker.pak.zip and dist/ThorTracker.pak.zip.sha256
+```
 
 ## Colour themes
 
@@ -382,7 +401,7 @@ Hold **both** L2 and R2 (in either order) and press the same buttons to show tha
 
 ## How playback works
 
-Projects use a versioned `.thor` document; export produces hUGETracker `.uge` v6 files. Playback runs the actual pinned hUGEDriver 6.1.3 inside binjgb, through Android AAudio. There is no runtime compiler or separate approximate sequencer. The editor keeps the song in memory; new snapshots are prepared away from the audio callback and applied between driver ticks without restarting the song.
+Projects use a versioned `.thor` document. Export formats and playback engines belong to the selected sound system. The Game Boy backend exports hUGETracker `.uge` v6 and plays the pinned hUGEDriver 6.1.3 inside binjgb, rather than an approximate sequencer; other backends have their own drivers/models and explicit export limits. The shared editor prepares playback updates away from the audio callback. See [the audio-engine contracts](docs/AUDIO_ENGINE.md) for each backend.
 
 ## Build from source
 
