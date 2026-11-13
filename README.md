@@ -2,6 +2,8 @@
 
 A controller-first chiptune tracker for Android, Steam Deck / Linux and Brick Hammer with NextUI. Write patterns, shape instruments, arrange songs and export music for classic consoles and computers.
 
+> **AI disclosure:** AI tools are used in the development of this project.
+
 **[Download](https://github.com/esko997/thortracker/releases/latest) · [Documentation](https://esko997.github.io/thortracker/) · [User guide](https://esko997.github.io/thortracker/getting-started/)**
 
 - **Chip-specific backends:** Game Boy, NES and expansions, C64 SID, Yamaha FM, Sega PSG, wavetable systems and more. GBA/Maxmod adds eight sample voices and XM export.
