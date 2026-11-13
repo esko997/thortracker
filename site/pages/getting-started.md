@@ -11,19 +11,19 @@ Start with [a first session](#a-first-session), or go directly to:
 - [Microtuning](#microtuning-song-tuning-from-a-scala-scl-file): Scala imports, tuning library and reachable pitches.
 - [Save and export](#save-and-export): editable projects and delivery formats.
 
-<!-- include: README.md :: A first session -->
+<!-- include: docs/MANUAL.md :: A first session -->
 
-<!-- include: README.md :: Views and displays -->
+<!-- include: docs/MANUAL.md :: Views and displays -->
 
-<!-- include: README.md :: Pattern workflow -->
+<!-- include: docs/MANUAL.md :: Pattern workflow -->
 
-<!-- include: README.md :: Instrument workflow -->
+<!-- include: docs/MANUAL.md :: Instrument workflow -->
 
-<!-- include: README.md :: Song view: arrangement, loop point and parked orders -->
+<!-- include: docs/MANUAL.md :: Song view: arrangement, loop point and parked orders -->
 
 For alternative note-entry tools, see [Keyboard](/manual/#keyboard-view) and [Sketch](/manual/#sketch-explore-a-key-try-phrases). For detailed pattern controls, see [scales](/manual/#pattern-scales) and [pattern length and polyrhythms](/manual/#pattern-length-and-polyrhythms).
 
-<!-- include: README.md :: Microtuning (song tuning from a Scala -->
+<!-- include: docs/MANUAL.md :: Microtuning (song tuning from a Scala -->
 
 ## Save and export
 

@@ -718,7 +718,7 @@ effect field for the duration of an Edit hold, then may shrink on release/cancel
 
 ### Current capacity and compatibility review (0.41.0)
 
-The [manual's capability matrix](../README.md#multiple-effects-per-row) covers all 43 registered
+The [manual's capability matrix](MANUAL.md#multiple-effects-per-row) covers all 43 registered
 systems: **2 one-column, 3 two-column and 38 four-column variants**. All 15 NES/FamiStudio variants
 and TIA NTSC/PAL declare four columns on every lane. Declared capacity does not promise arbitrary combinations.
 

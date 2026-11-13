@@ -224,7 +224,7 @@ shared swing remain design proposals; pattern-local mute remains explicitly defe
   playback, export or Undo changes. Nova, DMG, Konkr and the actual CI AppImage pass compact-screen,
   persistence and frontend acceptance; zoom does not depend on future touchscreen support.
 - **Multiple effects per row — NES in 0.40.0, TIA in 0.41.0:** the
-  [manual matrix](README.md#multiple-effects-per-row) covers all 43 variants: **2 with one column,
+  [manual matrix](docs/MANUAL.md#multiple-effects-per-row) covers all 43 variants: **2 with one column,
   3 with two and 38 with four**. All 15 FamiStudio NES variants and both TIA regions accept four
   ordered columns. TIA's image/project schema is unchanged; old players reject added-column
   content. More columns do not add voices, independent pitch targets or shared hardware controls.

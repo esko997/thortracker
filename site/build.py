@@ -19,7 +19,7 @@ SITE = ROOT / "site"
 REPO = "https://github.com/esko997/thortracker"
 # Publish user and technical references; engineering work logs remain in the source repository.
 DOCUMENTS = {
-    "README.md": ("manual", "Complete manual"),
+    "docs/MANUAL.md": ("manual", "Complete manual"),
     "deck/README.md": ("deck-reference", "Linux reference"),
     "docs/UGE_EXPORT.md": ("uge-reference", "UGE reference"),
 }

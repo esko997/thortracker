@@ -6,18 +6,19 @@ native HTML navigation, with no JavaScript or analytics.
 
 ## Content
 
-`pages/*.md` contains the user guides. The manual, Linux reference and UGE reference
-are generated from their repository sources. Engineering records, development plans
-and verification logs remain in the source repository rather than becoming website pages.
+`pages/*.md` contains the user guides. `docs/MANUAL.md` is the complete manual and
+the source for shared reference sections; the root README is a concise project overview.
+The manual, Linux reference and UGE reference retain their published routes.
+Engineering records, development plans and verification logs remain in the source repository.
 
 Include a canonical section by its source path and unique heading prefix:
 
 ```html
-<!-- include: README.md :: Controller reference -->
+<!-- include: docs/MANUAL.md :: Controller reference -->
 ```
 
-The generator preserves heading fragments and rewrites relative links. Bare fragment
-links in excerpts stay on the current page when it includes the target heading from
+The generator preserves heading fragments and resolves relative links against each source file.
+Bare fragment links in excerpts stay on the current page when it includes the target heading from
 the same source; otherwise they link to the full reference. Explicit document paths
 always retain their destination. Missing or ambiguous includes fail the build.
 Images are copied to `assets/`; other source links point to GitHub. GIFs appear as

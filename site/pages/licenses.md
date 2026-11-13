@@ -2,7 +2,7 @@
 
 Thor Tracker is **GPL-3.0-or-later** free software. The [source repository](https://github.com/esko997/thortracker) includes the application, native audio engines, offline tools and this documentation pipeline. [Official releases](https://github.com/esko997/thortracker/releases) provide the release tags and downloadable source archives alongside the application packages.
 
-<!-- include: README.md :: License -->
+<!-- include: docs/MANUAL.md :: License -->
 
 ## Full notices
 
@@ -17,7 +17,7 @@ The application and website use Noto Condensed and Noto Mono under the SIL Open 
 
 The only site build dependency is [Python-Markdown](https://python-markdown.github.io/), pinned in the source with its wheel hash (BSD-3-Clause). Its code runs at build time, not in your browser. There is no JavaScript framework runtime, analytics service, tracking pixel or remote font request. The static host is GitHub Pages; ordinary hosting logs are governed by GitHub's policies, not application telemetry.
 
-<!-- include: README.md :: Dependencies -->
+<!-- include: docs/MANUAL.md :: Dependencies -->
 
 ## Build or contribute
 

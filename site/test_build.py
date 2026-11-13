@@ -37,23 +37,23 @@ class SiteTests(unittest.TestCase):
         self.builder = Builder(self.root, "/thortracker/")
 
     def test_source_relative_links_use_pages_base(self):
-        self.assertEqual(self.builder.resolve("../README.md#install", "deck/README.md"), "/thortracker/manual/#install")
+        self.assertEqual(self.builder.resolve("../docs/MANUAL.md#install", "deck/README.md"), "/thortracker/manual/#install")
         self.assertEqual(self.builder.resolve("/files/#saving-and-recovery", "site/pages/index.md"), "/thortracker/files/#saving-and-recovery")
-        self.assertEqual(self.builder.resolve("#install", "README.md"), "/thortracker/manual/#install")
+        self.assertEqual(self.builder.resolve("#install", "docs/MANUAL.md"), "/thortracker/manual/#install")
         self.assertEqual(self.builder.resolve("controls.md", "site/pages/index.md"), "/thortracker/controls/")
 
     def test_excerpt_links_stay_on_page_only_for_included_source_headings(self):
         manual = render_markdown(
             "## Links\n\n[local](#local--section) [elsewhere](#elsewhere) "
-            "[explicit](README.md#local-section) [other source](#collision) "
+            "[explicit](MANUAL.md#local-section) [other source](#collision) "
             "[unicode](#caf%C3%A9)\n\n"
             "## Local section\n\n## Café\n\n## Elsewhere\n\n## Collision\n"
         )
-        self.builder.documents["README.md"] = manual
+        self.builder.documents["docs/MANUAL.md"] = manual
         page = Page("guide", "Guide", [
-            ("README.md", section(manual, "Links")),
-            ("README.md", section(manual, "Local section")),
-            ("README.md", section(manual, "Café")),
+            ("docs/MANUAL.md", section(manual, "Links")),
+            ("docs/MANUAL.md", section(manual, "Local section")),
+            ("docs/MANUAL.md", section(manual, "Café")),
             ("deck/README.md", render_markdown("## Collision\n")),
         ])
         inventory = LinkInventory()
@@ -72,18 +72,18 @@ class SiteTests(unittest.TestCase):
 
     def test_root_deployment(self):
         builder = Builder(self.root, "/")
-        self.assertEqual(builder.resolve("README.md#install", "README.md"), "/manual/#install")
+        self.assertEqual(builder.resolve("MANUAL.md#install", "docs/MANUAL.md"), "/manual/#install")
 
     def test_unsafe_and_missing_references_fail(self):
         for url in ("javascript:alert(1)", "../../../private", "not-a-real-image.png"):
             with self.assertRaises(ValueError):
-                self.builder.resolve(url, "README.md")
+                self.builder.resolve(url, "docs/MANUAL.md")
         with self.assertRaises(ValueError):
-            self.builder.resolve("https://example.org/tracking.png", "README.md", asset=True)
+            self.builder.resolve("https://example.org/tracking.png", "docs/MANUAL.md", asset=True)
 
     def test_raw_images_and_tables_are_accessible(self):
-        writer = Rewriter(self.builder, "README.md")
-        writer.feed('<img src="docs/media/brick-paper.png" alt="Brick Pattern"><table><tr><th>Input</th></tr></table>')
+        writer = Rewriter(self.builder, "docs/MANUAL.md")
+        writer.feed('<img src="media/brick-paper.png" alt="Brick Pattern"><table><tr><th>Input</th></tr></table>')
         result = "".join(writer.parts)
         self.assertIn('/thortracker/assets/docs/media/brick-paper.png', result)
         self.assertIn('loading="lazy"', result)
@@ -91,8 +91,8 @@ class SiteTests(unittest.TestCase):
         self.assertIn('scope="col"', result)
 
     def test_animations_require_explicit_navigation(self):
-        writer = Rewriter(self.builder, "README.md")
-        writer.feed('<img src="docs/media/view-chords-r2.gif" alt="View switching">')
+        writer = Rewriter(self.builder, "docs/MANUAL.md")
+        writer.feed('<img src="media/view-chords-r2.gif" alt="View switching">')
         result = "".join(writer.parts)
         self.assertNotIn("<img", result)
         self.assertIn("Open animated demonstration", result)
