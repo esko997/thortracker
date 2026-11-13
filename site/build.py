@@ -25,7 +25,7 @@ DOCUMENTS = {
 }
 NAV = [
     ("", "Overview"), ("downloads", "Download & install"),
-    ("getting-started", "Getting started"), ("controls", "Controller reference"),
+    ("getting-started", "User guide"), ("controls", "Input & controls"),
     ("systems", "Sound systems"), ("files", "Projects & exports"),
     ("troubleshooting", "Troubleshooting"), ("licenses", "Source & licences"),
     ("manual", "Complete manual"),

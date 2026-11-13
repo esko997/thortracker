@@ -34,4 +34,4 @@ Recovery is separate from an external Save. The previous-project slot holds only
 
 Open the [issue form](https://github.com/esko997/thortracker/issues/new/choose). Include what you expected, what happened, and the smallest sequence that reproduces it. State the release version, device/OS, sound system and whether the problem concerns editing, live playback or exported audio. Attach a small `.thor` project when you can share it; review diagnostics before posting. Never include signing keys, private paths you do not want public, or proprietary firmware.
 
-Documentation corrections also belong in the [source repository](https://github.com/esko997/thortracker). Each page footer links to the Markdown that generated it.
+Documentation corrections also belong in the [source repository](https://github.com/esko997/thortracker).

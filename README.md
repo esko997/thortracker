@@ -1,16 +1,18 @@
 # Thor Tracker
 
-Thor Tracker is a **controller-first chiptune tracker for Android, Steam Deck and Brick Hammer / NextUI**. Write patterns, shape instruments, arrange songs and export music for classic consoles and computers. It supports single-screen play, the AYN Thor's dual displays, and an Android touchscreen controller dock that hides when a controller is connected.
+Thor Tracker is a **controller-first chiptune tracker for Android, Steam Deck and Brick Hammer / NextUI**. Write patterns, shape instruments, arrange songs and export music for classic consoles and computers. Work on one screen or pair independent editors across [dual displays](#views-and-displays), design one patch through [Sound and Advanced](#instrument-workflow), and import [Scala `.scl` tunings](#microtuning-song-tuning-from-a-scala-scl-file).
 
 Read the **[documentation website](https://esko997.github.io/thortracker/)** for installation,
 controls, sound systems, exports and troubleshooting.
 
 ## 1.0: compose on the handheld
 
-- **Classic sound systems:** Game Boy, NES and expansions, C64 SID, Yamaha FM, Sega PSG, AY/YM machines, wavetable systems and more. GBA/Maxmod adds eight sample voices for GBA homebrew.
-- **Instrument design:** musical Sound panels alongside precise Advanced editors, sharing the same patch, instrument list and Undo history. [See the instrument gallery and limits](docs/INSTRUMENT_PANELS.md).
-- **A controller workflow:** pattern editing, arrangement, audition, Sketch, scales/tunings, themes, zoom and rebindable shortcuts. Most backends support multiple effect columns.
-- **Keep editable work:** `.thor` projects, named saves and working-song recovery. Export WAV audio or the selected backend's supported music formats.
+- **Genuinely different sound systems:** Game Boy, NES and expansions, C64 SID, Yamaha FM, Sega PSG, AY/YM machines, wavetable systems and more, with their own channels, instruments, effects and export contracts. GBA/Maxmod adds eight sample voices for GBA homebrew.
+- **Instrument design:** musical Sound controls for quick timbre changes, alongside Advanced's precise envelopes, tables, operators and sample mappings—all editing the same patch. [Instrument workflow](#instrument-workflow) · [gallery and chip-specific limits](docs/INSTRUMENT_PANELS.md).
+- **Independent views:** keep Pattern beside Keyboard, Instrument or Song on two displays, or switch views on one. Placement, selection-following and controller focus are separate. [Views and displays](#views-and-displays).
+- **Controller-first editing, with touch:** note entry, blocks, clipboard, arrangement and audition use rebindable controls; Android also has direct touch editing and an on-screen controller dock. [First session](#a-first-session) · [controller reference](#controller-reference).
+- **Scales and microtuning:** pattern-scale entry guides, Sketch and local Scala `.scl` imports, with reachable pitches determined by the selected chip and driver. [Tuning workflow and limits](#microtuning-song-tuning-from-a-scala-scl-file).
+- **Keep editable work:** `.thor` projects, named saves and working-song recovery are separate from WAV recordings and backend-specific music exports. [Saving and recovery](#saving-and-recovery).
 - **Free software:** GPL-3.0-or-later, with no accounts, telemetry or in-app network access.
 
 Each song targets one sound system. Formats such as Game Boy `.uge`, NES `.nsf`,
@@ -20,7 +22,7 @@ The [sound-system guide](https://esko997.github.io/thortracker/systems/) explain
 
 ![Thor Tracker on both Thor screens during playback: the top screen's pattern grid follows the playhead while the bottom screen's Song view shows the arrangement, which skips the parked order 03 and moves from order 02 to order 04](docs/media/hero-dual-screen-playback.gif)
 
-*Dual-screen playback: Pattern view above, Song arrangement below. Android emulator capture.*
+*Dual-screen playback: Pattern view above, Song arrangement below.*
 
 ## Install
 
@@ -31,11 +33,11 @@ and its data are not migrated or removed; export any songs from it through its f
 
 Each release has `thor-tracker-<version>.apk` and a `.sha256` file to check it with (`sha256sum -c thor-tracker-<version>.apk.sha256`). Releases are signed with the Thor Tracker release key (certificate SHA-256 `d12064692cbaa5c2feecf3cf5a2d3719a088e7bafe1ffa55e1f00aeecafed469`), so each one installs over the last. A build from before 0.8.4, or one you built yourself with the debug key, must be uninstalled once first. That removes the app's private data (recovery copy, button mapping, screen layout); projects saved or exported through the file picker, and exported keymaps, are kept.
 
-The first launch opens the demo song **Thor Groove**. Later launches recover your working document. **File → New blank song** asks which sound chip the song is for (Game Boy, NES, C64 SID, OPL3, Mega Drive, Sega 8-bit, AY-3-8910 / YM2149, PC Engine, MSX SCC, OPM, PC-88/98 OPN/OPNA, Atari 8-bit POKEY, Atari 2600 TIA, VIC-20 VIC, C16 / Plus/4 TED or Virtual Boy). **NES…** offers the plain NES, NES + VRC6, NES + VRC7, **NES + N163…** with 1-8 N163 channels, NES + Sunsoft 5B, NES + FDS, NES + MMC5 and NES + EPSM. **Sega 8-bit…** offers Master System, Game Gear and two SMS FM Sound Unit layouts. **AY-3-8910 / YM2149…** offers ZX Spectrum 128, MSX, Atari ST and Amstrad CPC. **MSX SCC…** offers the Konami SCC (K051649) or SCC+ (K052539). **Atari 2600…** offers NTSC and PAL. VIC/TED songs select PAL or NTSC in the Song view. **Load demo** asks the same.
-
-**Philips SAA1099…** offers **SAM Coupé** (six voices on one chip) and **Creative Music System** (twelve voices on two chips), in both New and Load demo.
-
-**Game Boy Advance (Maxmod)** offers eight sample lanes and the original **Prism Circuit** demo.
+The first launch opens the Game Boy demo **Thor Groove**; later launches recover your working document.
+**Menu → Files → New blank song** selects a sound system and its variant; **Load demo** offers the same
+selection with a ready-made arrangement. Families include NES cartridge expansions, Sega PSG/FM layouts,
+AY/YM computers, SCC/SCC+, WonderSwan/Color, Philips SAA1099 and GBA/Maxmod.
+The [sound-system guide](https://esko997.github.io/thortracker/systems/) describes their differences.
 
 ## Converting between systems
 
@@ -115,12 +117,11 @@ python3 brick/tools/package-store.py dist/thor-tracker-1.0.0-brick-nextui.zip
 or **Contrast** (higher-contrast dark). The choice applies immediately to the views, menus and
 platform controls, and is remembered as a workspace preference—not part of the song. It does
 not change notes, instruments, Undo history or exports. Both displays use the same selection.
-Scanlines remain a separate, deferred idea.
 
-<img src="docs/media/theme-paper-nova.png" width="49%" alt="Paper theme on a Nova: dark text and channel colours on a light pattern grid">
-<img src="docs/media/theme-contrast-nova.png" width="49%" alt="Contrast theme on a Nova: bright text and channel colours on a near-black pattern grid">
+<img src="docs/media/theme-paper-nova.png" width="49%" alt="Paper theme: dark text and channel colours on a light pattern grid">
+<img src="docs/media/theme-contrast-nova.png" width="49%" alt="Contrast theme: bright text and channel colours on a near-black pattern grid">
 
-*Actual Nova captures. The default Slate palette retains the original colours and layout.*
+*The default Slate palette retains the original colours and layout.*
 
 ## View zoom
 
@@ -137,8 +138,33 @@ remember the single view's setting. The selected pattern field stays in view as 
 no default binding, so an existing custom keymap is not overwritten. Visual column compression
 remains a separate control.
 
-<img src="docs/media/zoom-75-nova.png" width="49%" alt="Actual Nova pattern at 75 percent zoom, showing four expanded FM channels">
-<img src="docs/media/zoom-150-nova.png" width="49%" alt="The same Nova pattern at 150 percent zoom, showing two larger FM channels with the last effect field visible">
+<img src="docs/media/zoom-75-nova.png" width="49%" alt="Pattern view at 75 percent zoom, showing four expanded FM channels">
+<img src="docs/media/zoom-150-nova.png" width="49%" alt="Pattern view at 150 percent zoom, showing two larger FM channels with the last effect field visible">
+
+## A first session
+
+1. **Choose a document.** Open **Menu → Files** and choose **New blank song**, **Open project**
+   (`.thor`) or **Load demo**. New and Demo ask for the sound system and variant; this determines
+   the channels, instruments, effects and exports. Save any working song you want to keep before replacing it.
+2. **Enter and hear a phrase.** Show Pattern (**R2+Up**). Move to a note cell, hold **A + D-pad**
+   to choose a pitch, and set its adjacent instrument field. **X** auditions without writing;
+   **Start** plays from the current order's row 00 and stops playback. Set **Menu → Entry step**
+   for repeated note entry. See [Pattern workflow](#pattern-workflow).
+3. **Shape the sound.** Show Instrument (**R2+B**), select a channel-compatible slot and adjust
+   its **Sound** controls while listening with **X**. Switch to **Advanced** for precise native
+   parameters; neither face creates a separate patch. Return with the same view chord.
+4. **Arrange.** Show Song (**R2+A**). Use **Repeat** for another reference to the same pattern,
+   or **Clone** for a separately editable variation; use **New** for an empty pattern.
+   Set **Loop here**, then use **Menu → Play from song start** to hear the arrangement.
+   See [Song view](#song-view-arrangement-loop-point-and-parked-orders).
+5. **Save, then export.** Use **Menu → Files → Save as…** to keep an editable `.thor` project.
+   Open Help's **Check** page, resolve errors, then choose one of that system's **Export**
+   entries or **Export .wav…** in Files. Exporting does not replace saving the project.
+
+These are the default physical bindings; **Menu → Controls** lists your active mappings.
+On Android, use the touch **Menu** drawer for views and Files, and tap cells, keys and controls
+directly or use the controller dock. One screen switches between editors; two screens can keep
+Pattern beside Instrument or Keyboard. See [Views and displays](#views-and-displays).
 
 ## A quick tour
 
@@ -146,7 +172,10 @@ remains a separate control.
 
 ![The Keyboard view on the bottom screen writing notes C-4, E-4, G-4, C-5, G-4, E-4, C-4 down the Pulse 2 column of the top screen's pattern, one row per press](docs/media/pattern-keyboard-write.gif)
 
-The Pattern view is a four-channel hUGE grid (Pulse 1, Pulse 2, Wave, Noise) with an inspector that explains the selected note, sound or effect. Hold A and use the D-pad to change a value, or put the Keyboard on the other screen in **Write** mode. Each press writes a note at the pattern cursor and moves down a row. Both screens edit the same song, and the order list beside the grid shows where you are.
+Pattern shows the selected system's channels, with note, instrument and effect fields and an
+inspector explaining the selected cell. Hold A and use the D-pad to change a value, or put Keyboard
+on the other screen in **Write** mode. Each entered note advances by the selected entry step.
+Both screens edit the same song; the order list beside the grid locates the current pattern.
 
 When space permits, a channel header names the instrument assigned most often in that channel's
 current pattern—not the instrument selected for entering new notes. Only active pattern rows
@@ -158,13 +187,52 @@ headers alone.
 
 <img src="docs/media/song-view-parked-order.png" width="620" alt="Song view showing title, artist, ticks per row (about 149 BPM), loop point at order 01 marked with a loop arrow, and order 03 dimmed and labelled Parked, with the order command row Repeat, New, Clone, Delete, Earlier, Later, Loop here, Unpark">
 
-Title, tempo, loop point and the order list with a density strip for each pattern. Order commands repeat, add, clone, delete, move, set the loop point and **park** an order: a parked order keeps its place but playback and export skip it.
+Song contains title, artist, tempo, loop point and the order list. **An order references a pattern**:
+several orders can use the same pattern, and editing it changes every occurrence.
+
+With the controller, **Up/Down** selects a header or order; on an order, **Left/Right** selects
+its command and **A** activates it. Touch the corresponding command to use it directly.
+On the **Pattern** field, **hold A + Left/Right** to assign an existing pattern.
+
+| Command | Result |
+| --- | --- |
+| Repeat | Insert another order below using the **same** pattern; edits remain shared |
+| New | Insert a new empty pattern and its order below |
+| Clone | Copy the pattern into a new pattern and order below; notes can then vary independently, but instrument slots remain shared |
+| Delete | Remove this order, not its pattern |
+| Earlier / Later | Move this order one place |
+| Loop here | Set the song's return order after its last playing order |
+| Park / Unpark | Keep an order in the arrangement but exclude/include it in song playback and export |
+
+**Select+Up** repeats below, **Select+Down** deletes the order, and **Select+Y** clones.
+**Select+X / Select+A** copies/pastes a whole pattern's played rows, length and scale guide;
+paste changes the destination pattern, including every order referring to it.
+
+**Menu → Song details / tempo** opens Song with **Ticks per row** selected.
+Hold **A+Left/Right** to adjust it; fewer ticks is faster. System-specific settings, such as
+BPM where supported, follow the shared header fields. **New patterns** sets the scale guide
+for future New patterns (**A+Left/Right** scale, **A+Up/Down** root, **B** Chromatic);
+Repeat and Clone retain their source guide.
+
+Parked orders are dimmed and labelled **Parked**; Pattern marks them `‖`.
+Starting directly on a parked order loops it alone until stopped, so you can work on a section
+without adding it to the song. Repeat, New and Clone beside a parked order are parked too.
+The last playing order cannot be parked or deleted. A loop or jump aimed at a parked order
+continues to the next playing order, or the song loop if none follows.
+
+Moving, inserting and deleting orders preserves loop/jump targets on their original entries;
+a target deleted from the list moves to its replacement. Relative jump commands retain their
+backend meaning. **L2+Y** is a separate, editor-only pattern loop: it does not change the
+song's loop point or exports.
 
 ### Instrument and Wave: sound design
 
 ![Top screen: the Wave view editing wave 5, a 32-step V shape, with Sine, Triangle, Saw, Square, Invert, Shift and Smooth tools. Bottom screen: the Instrument view's Wave bank, with sound 01 Triangle bass using wave 5 at 100% output](docs/media/sound-design-wave-instrument.png)
 
-Fifteen instruments in each of the pulse, wave and noise banks, each with live sliders and a preview of its envelope or waveform, plus sixteen 32-sample wave tables you draw directly or start from a preset shape.
+Instrument edits the selected system's native sounds through **Sound** and **Advanced**.
+For example, Game Boy has pulse, wave and noise banks, with fifteen slots in each and sixteen
+shared 32-sample wavetables. Other systems use their own banks, envelopes, operators and sample
+maps. See [Instrument workflow](#instrument-workflow) and the [instrument guide](docs/INSTRUMENT_PANELS.md).
 
 ### Game Boy Advance: Maxmod samples and XM
 
@@ -378,6 +446,42 @@ Hold R2 and press A, B, X or Y to show Song, Instrument, Sketch or Keyboard on t
 
 Hold **both** L2 and R2 (in either order) and press the same buttons to show that view on the **other** display while the controller stays where it is, e.g. L2 + R2 + Y puts Keyboard on the other screen beside the pattern you are editing. With one display, the view shows on it.
 
+## Instrument workflow
+
+Select the target channel and instrument field in Pattern, then open Instrument (**R2+B**).
+Use a slot the channel can play: a mixed FM/PSG/sample system does not make its instrument
+types interchangeable. New incompatible note/instrument assignments are refused; the
+inspector and **Help → Check** explain existing problems.
+
+**Sound and Advanced are two editors for the same instrument**, not separate presets or
+synthesis engines. They share the instrument list and document Undo history. Switching faces
+does not convert or normalize a native patch. A Sound control labelled **Custom** means its
+native values do not match one of that control's choices; opening the face preserves them.
+
+1. In **Sound**, **Up/Down** chooses the slot and **Left/Right** cycles controls.
+   Hold **A+Left/Right** to adjust; **X** auditions. The horizontal cycle also reaches **Name**
+   and **Sound/Advanced**; press **A** on the face selector to switch.
+2. Use the musical controls for focused changes: Game Boy **Shape/Length** gives a short
+   pluck or held sound; SID **Pulse/Color** shapes PWM and filter programs; Mega Drive FM
+   **Brightness/Edge** changes modulation and feedback without replacing the whole voice.
+   Controls differ by chip and voice type; unavailable controls reflect native limits.
+3. Use **Advanced** for exact envelopes, table steps, operator registers, wave/sample data or
+   mappings. Its navigation is editor-specific: follow the on-screen hints and **L1/R1**
+   bank/page controls. On Sound's Name control, **A+Left/Right** edits the letter and
+   **A+Up/Down** moves the letter cursor.
+4. Touch **Sound/Advanced** to switch faces; drag musical controls horizontally.
+   Hold **X** or **A** while changing a control to hear accepted edits.
+   **Select+L1/R1**, or **L2+Left/Right** in sound views, changes the listening octave.
+5. Return to Pattern and assign the slot to notes. Editing a shared slot affects all notes
+   that use it, including other patterns; hearing a change on an already-sustained voice
+   depends on the driver. Audition or retrigger a note to compare the patch.
+
+A continuous adjustment is one Undo step (**L2+A**); **L2+B** redoes. Shared waves, samples,
+noise generators, filters and envelopes retain their chip-specific ownership—choosing a
+different slot does not necessarily duplicate those resources. See the
+[instrument gallery and control mappings](docs/INSTRUMENT_PANELS.md) and
+[audio-engine/export contracts](docs/AUDIO_ENGINE.md) for the selected system.
+
 ## How playback works
 
 Projects use a versioned `.thor` document. Export formats and playback engines belong to the selected sound system. The Game Boy backend exports hUGETracker `.uge` v6 and plays the pinned hUGEDriver 6.1.3 inside binjgb, rather than an approximate sequencer; other backends have their own drivers/models and explicit export limits. The shared editor prepares playback updates away from the audio callback. See [the audio-engine contracts](docs/AUDIO_ENGINE.md) for each backend.
@@ -418,34 +522,87 @@ Generate a sample project and export:
 
 ## Views and displays
 
-Each display has one full-size view: **Pattern**, **Song**, **Instrument**, **Wave**, **Keyboard**, **Sketch**, or **Help**. There is no designated “top-screen view” or “bottom-screen view.” Both displays can show the same kind of view and edit the same document. On a single-screen device, switch between views with the view button.
+**One screen:** one full-size editor is visible at a time. Switch with the view chords or
+the view menu; returning to a view retains its cursor. **Two screens:** each has an independent
+editor, and either can show Pattern, Song, Instrument, Keyboard, Sketch, Help or an available
+Wave editor. There is no fixed top/bottom role, and both may show the same view.
+Available views depend on the sound system.
 
-- **View button:** choose a view on that display. Choosing one pins it.
-- **Pinned / Context button:** open behavior and layout options.
-- **Pin:** prevent automatic changes of view kind.
-- **Follow selected item:** follow the other view's published selection.
-- **Lock to this item:** retain the current channel, instrument, or wave rather than following selection. Changing the kind of editor releases its old subject lock; swapping views preserves it.
-- **Swap:** exchange complete view states, including cursor and scrolling.
-- **Focus / R3:** choose which display receives controller input. Touch does not silently move controller focus. The focused view has an amber border and title marker.
-- **Follow playhead:** optional in the pattern view; editing can stay at its cursor while playback continues elsewhere.
+**Placement is not controller focus.** **R2+A/B/X/Y** shows Song/Instrument/Sketch/Keyboard
+on the focused display; **R2+Up/Right/Down** shows Pattern/Wave/Help. Press the same chord
+again to return. Add **L2** to place that view on the other display without moving focus;
+on one screen, those chords use the visible display. **R3**, the Focus button, or
+**Menu → Switch controller focus** changes which display the controller drives.
+An amber border/title marker identifies it. Direct editor touch does not move controller focus.
 
-Preset layouts are Pattern + Keyboard and Pattern + Instrument. View layout, behavior and controller bindings persist between launches. Undo/redo belongs to the document, not the display.
+Both editors share **one song, transport, clipboard and Undo history**, but retain pane-local
+cursors, scrolling, zoom and display preferences. With **Follow selected item** enabled,
+published selection updates the relevant subject—for example Pattern's order/row/channel,
+or Instrument's slot. Stop following selection to navigate independently; selecting a sound
+still updates the corresponding Pattern entry instrument.
+Open **Menu → Views / layout** (or the Android toolbar's **Pinned / Context** button):
 
-The toolbar is hidden over the full-height editor rather than reserving a row. **Select+Start** reveals it and gives it controller focus: Left/Right choose, A activates, and B/Back returns to the editor. It stays visible while controller-focused. Tap or pull the small top-centre handle for touch use; that reveal hides after six idle seconds. Neither transition moves the grid. On the narrower display, **Swap**, **Undo/redo** and **File** remain available through **Menu**.
+- **Pin this view / Allow contextual view changes:** keep the editor kind fixed, or let a
+  non-focused view change kind with the selected item.
+- **Follow selected item / Stop following selection:** follow published subjects such as
+  channel, instrument or wave, or navigate independently.
+- **Lock to this item / Unlock subject:** keep the current subject. Changing editor kind
+  releases its old subject lock; swapping views preserves it.
+- **Swap complete views / L2+X:** exchange view states, including cursor, scroll and zoom.
+  Android can also swap to its other saved view with only one display; native single-screen
+  frontends have no swap/focus action.
+- **Pattern + keyboard / Pattern + instrument:** paired layout presets where available.
+- **Follow playhead / Stop following playhead:** choose whether Pattern follows playback.
+  This is separate from following editor selection.
 
-The right end of each display's hint bar shows the battery: grey normally, cyan while plugged in or charging, red at 15% or below on battery.
+Android persists its layout, behavior and controller mappings. Linux handhelds retain their
+single view's zoom and controls; musical edits and Undo belong to the document.
 
-App menus, confirmations, rename fields and errors are in-app overlays on their originating display. Up/Down choose, A activates, B/Back returns one level, and L1/R1 page long menus. Android's document picker and keyboard remain system-owned.
+**Menus and toolbars differ by frontend:**
 
-Short cell and key afterglows, channel activity lamps, and focus/view transitions provide feedback without moving the grid or obscuring text. Animations settle completely when idle and honor Android's animator-duration setting, including disabled animations.
+- **Android main screen:** the persistent **Menu / Play** header opens a touch drawer for
+  views, Files, tuning and editing commands. **Settings, controls and help** opens the full
+  application menu. The on-screen controller dock appears when no usable physical controller
+  is attached and hides when one connects. Hold its face buttons with arrows for edits;
+  tap Select/L2/R2/L3 to latch a modifier, and tap again to release it. Direct cell, key,
+  control and drawing gestures remain available with or without the dock.
+  Dock input targets the primary display, unlike a direct editor touch on either display.
+- **Android toolbar:** **Select+Start** reveals and focuses the overlay on the focused display.
+  **Left/Right** chooses a button, **A** activates, and **B/Back** returns to the editor.
+  It stays visible while controller-focused. On the secondary display, tap/pull the top-centre
+  handle for a touch reveal, which hides after six idle seconds. Narrow toolbars omit
+  dedicated Swap, Undo/Redo and File buttons; use **Menu** instead.
+- **Steam Deck / Brick:** **Select+Start** opens the application menu directly; there is
+  no Android overlay toolbar or touch controller dock.
+
+Throughout this guide, **Menu → Files** means the application menu's Files submenu;
+Android's touch drawer also provides **Files — new, open, save, export**.
+In in-app menus, **Up/Down** chooses, **A** activates, **B/Back** returns and **L1/R1**
+pages long lists. Android's document picker and text keyboard remain system-owned.
+
+The hint bar shows current controls and battery state (cyan while charging, red at 15% or
+below on battery). Hold a modifier to see its active chords. See
+[View zoom](#view-zoom) for text/cell sizing and [Pattern workflow](#pattern-workflow)
+for visual channel compression.
 
 ## Controller reference
 
-Every control is rebindable in **Menu → Controls**: one row per control, grouped by area, with its current binding on the right. Choose a row, then press the new button, or hold **Select, L2, R2 or L3**, or two of them such as **L2 + R2** (in either order), and press a button for a chord. Held controls (D-pad, Edit, Clear, Listen, Select block) take a single button. Some controls only act in certain views; their rows name those views, e.g. "Delete row / order (Pattern, Song)". Two controls can share a binding when no view has both, so one chord can mean different things per view (by default **L2+→** opens the pattern panel in Pattern and raises the listening octave in Instrument, Wave, Keyboard and Sketch). Assigning a binding another control in an overlapping view uses asks first and leaves that control unbound; the D-pad, Edit and Clear can never be left without a button. Menu and Back are fixed, so the screen is always reachable. The hint bar, held-modifier chord hints, popups and Help show your bindings for the focused view.
+Controls are rebindable in **Menu → Controls**, grouped by area with their current bindings.
+Choose a row, then press a button or hold **Select, L2, R2 or L3** (at most two) before
+pressing its chord button. Held controls—D-pad, Edit, Clear, Listen and Select block—need
+single buttons. View-scoped actions can share a binding when their views do not overlap.
+A conflicting assignment asks before unbinding the old action; D-pad, Edit and Clear must
+remain bound. Menu/Back are fixed system keys, and right-stick double-flick gestures are not
+rebindable. Hints, menus and Help show the active bindings for the focused view.
 
 ![Menu → Controls: rows grouped by area such as Clipboard and rows, each naming the views it acts in, e.g. "Listening octave up (Instrument, Wave, Keyboard, Sketch)" bound to L2+→ and "Copy (Pattern, Song, Instrument, Wave)" bound to Sel+X](docs/media/controls-remap-menu.png)
 
-Bindings survive app updates. Uninstalling or clearing app data removes them, so use **Export keymap…** to save a `thor-tracker-keymap.json` anywhere (e.g. Download) and **Import keymap…** to restore it, or to copy it to another handheld. The file is readable JSON (`"UNDO": "L2+A"`, `"OTHER_SONG": "L2+R2+A"`). Remaps from earlier versions are converted automatically. A keymap from an earlier version gains each newer control's default, unless that file already uses the same button for something in the same view; then the new control starts unbound. A keymap you never changed takes the current defaults, including moved ones (0.8 moved Redo from R2+A to L2+B for the R2 view chords); a changed one keeps its Redo on R2+A and leaves Show Song unbound. 0.8.1 writes keymap version 4 (adds Loop pattern on L2+Y); 0.8.6 writes version 5, giving Pattern, Wave and Help their R2 + ↑ / → / ↓ chords (an older keymap gains them unless it already uses those chords). Version 6 adds two-modifier chords and the L2 + R2 other-display view chords, which every older keymap gains (none could use that layer). Earlier versions do not import newer keymap files. The table below lists the defaults.
+Bindings survive updates. **Export keymap…** saves `thor-tracker-keymap.json`;
+**Import keymap…** restores it or transfers it to another handheld. Uninstalling or clearing
+app data removes local mappings. Older keymaps migrate automatically: new actions gain their
+defaults unless a binding conflicts in the same view, in which case the new action starts
+unbound. Unmodified keymaps follow current defaults; customized mappings are retained.
+Older app versions may reject newer keymap files. The table below lists the current defaults.
 
 | Input | Action |
 | --- | --- |
@@ -462,10 +619,10 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | L2 / R2 alone | No action; chord modifiers only |
 | L2 + A / L2 + B | Undo / redo |
 | R2 + A / B / X / Y | Show Song / Instrument / Sketch / Keyboard on the focused display; the same chord again returns to the previous view |
-| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise (Wave: Game Boy songs only) |
+| R2 + ↑ / → / ↓ | Show Pattern / Wave / Help on the focused display, likewise; Wave is available only on backends with a Wave view |
 | L2 + R2 + A / B / X / Y / ↑ / → / ↓ | Hold both triggers, in either order: show Song / Instrument / Sketch / Keyboard / Pattern / Wave / Help on the **other** display, keeping controller focus here (with one display, on it); again returns to the previous view |
-| L2 + X | Swap complete views, including their cursors and scrolling |
-| Select + X / A / B | Copy / paste / cut |
+| L2 + X | Android: swap complete views, including cursors, scrolling and zoom; native single-screen frontends: no action |
+| Select + X / A / B | Copy / paste / cut, where supported by the current view; Song has no cut binding |
 | Select + Y | Duplicate (C64 Instrument view, on a program row: a copy of the row below it) |
 | Select + L1 / R1 | Lower / raise the octave (Pattern entry; listening note elsewhere) |
 | L2 + Left / Right | Instrument, Wave, Keyboard, Sketch: lower / raise the listening octave; while X is held the sound restarts at the new octave |
@@ -475,7 +632,7 @@ Bindings survive app updates. Uninstalling or clearing app data removes them, so
 | Start | Play from row 00 of the current pattern's order, or stop |
 | L2 + Start | Play from the current cursor, or stop |
 | L2 + Y | Loop the current pattern on / off (header shows **Looping**). Playing, the loop keeps the current row if that pattern is playing, otherwise starts it at row 00; turning it off plays on through the song. While on, Start / L2 + Start loop whichever pattern they play. The loop follows its pattern when orders are inserted, deleted or moved. Editor playback only; the song's own loop and export are unchanged |
-| Select + Start | Reveal/focus the toolbar, or return to the editor |
+| Select + Start | Android: reveal/focus the toolbar or return to the editor. Steam Deck / Brick: open the application menu |
 | R3 | Switch controller focus between displays |
 | Menu / Back | Application menu; Back closes a popup or focused toolbar first |
 
@@ -492,15 +649,40 @@ Hold the modifier **before** pressing its chord button. While Select, L2, R2 or 
 
 ![Pattern view playing with L2+Y on: the header reads "Pattern 00 Intro · Looping", the playhead row is highlighted, and the status line says "Looping pattern 00 (order 00)"](docs/media/pattern-loop-playback.png)
 
+## Pattern workflow
+
+Each lane has note and instrument fields followed by the selected backend's effect columns.
+The inspector explains the focused field; **Help → Effects** lists that system's commands
+and parameter limits. Effect letters/numbers, OFF behavior and legato are not universal
+across sound systems.
+
+Select an effect's **type** field and hold **A+Left/Right** to choose a command, then move
+to its value field and adjust the parameter. Read the inspector before reusing a familiar
+code: the same code can mean something different on another backend.
+
 ### Enter a phrase
 
-1. Choose Pattern. Navigate to a note field, hold A and use the D-pad to select a pitch. The adjacent sound field selects an instrument.
-2. Tap A on subsequent empty rows to repeat the last note. **Menu → Entry step** sets the row advance.
-3. Alternatively, put Keyboard on the other display, select **Write** with Y, and enter notes there. **Listen** mode auditions without changing the pattern.
-4. Hold Y and move to mark a phrase; Select+X copies it, Select+A pastes it. L2+A undoes a mistake.
-   **B is Clear**, not Cut: it clears the selected field without replacing the clipboard.
-   **Select+B cuts the cell or marked block**, including its sound and every effect, for Select+A paste.
-5. Press Start to hear the phrase, edit while it plays, and stop/start or seek without saving or exporting.
+1. Choose Pattern (**R2+Up**). **D-pad** moves through rows and fields; **L1/R1** changes
+   channel. Hold **A+D-pad** to change a field (horizontal fine, vertical coarse; note
+   entry uses scale/tuning steps where applicable). Tap **A** on an empty note cell to
+   enter the last note with the current entry instrument; the adjacent sound field edits its assignment.
+2. **Menu → Entry step** sets advance after entry to Stay, 1, 2, 4, 8 or 16 rows.
+   Set an entry octave with **Select+L1/R1**. **Hold X** to audition without writing.
+3. In Keyboard, **Y** toggles **Listen / Write**. Listen only auditions; Write enters
+   notes at the shared pattern cursor and advances by the chosen step. This works on
+   one screen as well as beside Pattern on two. **B** in Write enters OFF.
+4. **Hold Y + D-pad** to mark a rectangular block; tap Y to drop the selection.
+   **Select+X / Select+A / Select+B** copies/pastes/cuts the cell or block, including
+   its instrument and **all** effect columns. Paste starts at the cursor and clips at
+   pattern boundaries. **Select+Y** duplicates below; **Select+Up/Down** inserts/deletes
+   a row in the channel or selected channels, shifting played rows rather than the whole song.
+5. **B** clears a field (or the marked cells), without changing the clipboard.
+   On an empty note cell it enters **OFF**; on Game Boy this consumes the row's effect
+   slot, so clear an existing effect first. Other systems implement their own cut/release
+   behavior. **L2+A / L2+B** undo/redo.
+6. **Start** plays from row 00 of this order or stops; **L2+Start** starts from the cursor.
+   **L2+Y** toggles an editor-only loop of the current pattern; turn it off to continue
+   through the song. Use **Menu → Play from song start** for the complete arrangement.
 
 New/Open resets remembered note, sound, effect and tuned-pitch entry for the new document; ordinary
 edits, Undo/Redo and display swaps retain it. Instrument slot numbers from another song are not reused.
@@ -516,11 +698,14 @@ and every effect column. This is a per-pane workspace preference, preserved acro
 swaps—not a mute, song edit or export change. The action is rebindable in Controls; migrating an older
 custom keymap preserves a conflicting binding and leaves the new action unbound rather than stealing it.
 
-**Menu → Song details / tempo** opens the Song view with **Ticks per row** selected. Hold A+Left/Right to change it; a lower value is faster. The view also edits title, artist, arrangement, loop point and **New patterns**, the scale guide every pattern made with New starts in (A+Left/Right scale, A+Up/Down root, B Chromatic; Clone and Repeat keep the source pattern's scale, and existing patterns are unchanged), with repeat/new/clone/delete/move commands. Inserting, deleting, moving or cloning orders keeps the loop point and every stored `Bxx` jump on the same order entry (`B00`, "next order", is relative and unchanged); a jump aimed at a deleted order lands on the order that takes its place. Deleting an order never deletes its pattern. Instrument edits affect later note triggers. The Wave view edits the 32 four-bit samples directly; held drawing and touch drags are grouped for undo.
+Use [Song view](#song-view-arrangement-loop-point-and-parked-orders) for tempo, order commands,
+shared-pattern references, parking and the song loop. Pattern edits change every order that
+references that pattern; Clone first when you need an independent variation.
 
-**Parking orders.** In the Song view, the **Park** command on an order keeps it in place, with its pattern and everything in it, but song playback and `.uge` export skip it. Parked rows are dimmed and marked "Parked"; the Pattern view's order list marks them `‖` and its header says "Parked". **Unpark** puts the order back in the song. Starting playback on a parked order loops it on its own until you stop. Repeat, New and Clone next to a parked order are parked too. A loop point or `Bxx` jump aimed at a parked order goes to the next played order after it, or the loop point if none follows. Insert, delete, move and undo keep the parking with its order. The last playing order can't be parked or deleted.
+Keyboard's base octave stops at 7; keys above B-8 are unavailable. A backend's smaller
+note range or channel restrictions can further limit playable keys.
 
-The keyboard's base octave is limited to 7. Keys above B-8 are dark and unavailable rather than silently clamped to another pitch.
+## Pattern reference
 
 ### Multiple effects per row
 
@@ -533,8 +718,6 @@ number of voices or on how many instrument envelopes can run:
 | 2 | VIC-20; C16/Plus/4 TED; Virtual Boy |
 | 4 | NES/FamiStudio and all expansion variants, including EPSM; Atari 2600 TIA (NTSC/PAL); OPL3; Mega Drive; Master System/Game Gear and both SMS FM layouts; AY/YM computers; PC Engine; SCC/SCC+; OPM; OPN/OPNA; POKEY; WonderSwan/Color; SAA1099 |
 
-The 43 registered variants comprise **2 one-column, 3 two-column and 38 four-column systems**
-in 0.41.0.
 
 On a multi-column system, open the Pattern panel with **L2+Right** (or tap **Scale**) and choose
 **Columns**. Left/Right changes the focused channel's visible count; L1/R1 selects a channel;
@@ -570,21 +753,60 @@ integration**, not a claim that the physical chips could never support a differe
 
 ### Pattern scales
 
-Tap **Scale** in the Pattern header or press **L2+Right**. Up/Down chooses Root, Scale, Length or Notes; Left/Right changes it; B resets that field and A/Done (or L2+Right again) closes. On **Notes**, A (or a tap on the button) runs **Fit notes to scale**: every played Pulse/Wave note outside the scale moves to the nearest scale note, an exact tie going down, as one undo step. Instruments and effects stay; Noise, hidden rows past the pattern length and OFF are untouched. It does nothing for Chromatic, and in a tuned song it points to **Menu → Tuning → Fit notes** instead. The root strip and arrows are also touchable.
+Tap **Scale** in the Pattern header or press **L2+Right**. Up/Down chooses a panel field;
+Left/Right changes it; B resets that field and A/Done (or L2+Right again) closes.
+On **Notes**, A (or a tap) runs **Fit notes to scale**: played tonal notes outside the guide
+move to the nearest scale note, ties downward, as one Undo step. Instruments and effects
+stay; non-tonal channels, hidden rows and OFF are untouched. In a tuned song use
+**Menu → Tuning → Fit notes** instead. The root strip and arrows are also touchable.
 
 ![The pattern panel opened with L2+Right: Pattern 00 set to root A, scale Natural minor, length 64 rows (full), with the Fit notes to A Natural minor button; the header's Scale button reads "Scale A Natural minor"](docs/media/pattern-scale-panel.png)
 
 Moved notes are rewritten, and each one is marked in the grid with an amber field and a ▴/▾ tick showing which way it went; the inspector reads e.g. "Note G#5 · fitted from A-5". Fitting again after choosing another scale keeps the marks relative to the notes before the first Fit, so chained Fits show their total drift; a note that lands back on its original pitch loses its mark. A mark stays while its cell holds exactly what the Fit wrote: editing that cell (note, sound or effect) removes just its mark, other marks stay, and undoing the Fit removes them all. Inserting or deleting rows clears the pattern's marks, since the notes no longer sit where they were fitted. Marks are not saved with the project. **Menu → Tuning → Fit notes** marks its moves the same way, including a note whose `40y` bend alone changed (the inspector shows e.g. "fitted from E-5+7").
 
-Chromatic is the default. Every other scale constrains Pulse/Wave D-pad note entry to the chosen root's scale: Major, Natural/Harmonic/Melodic minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Major/Minor pentatonic, Blues, Whole tone, Phrygian dominant, Double harmonic, Hungarian minor, Hirajoshi and Miyako-bushi (In). Horizontal edits visit successive scale notes; vertical edits move an octave, snapping an existing out-of-scale pitch in the edit direction. Changing the guide never transposes written notes. Noise and the piano keyboard remain chromatic; effect parameters remain raw hUGE values.
+Chromatic is the default. Other guides constrain tonal D-pad entry to the pattern's root/scale:
+Major, Natural/Harmonic/Melodic minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian,
+Major/Minor pentatonic, Blues, Whole tone, Phrygian dominant, Double harmonic, Hungarian minor,
+Hirajoshi and Miyako-bushi (In). Horizontal edits visit scale notes; vertical edits move an
+octave. Changing the guide never transposes written notes. Keyboard remains chromatic
+unless a song tuning is active; effect parameters retain their backend meaning.
 
-The guide belongs to the pattern, so repeated orders share it. It is undoable, saved in the project and preserved by pattern cloning/whole-pattern paste. Block paste still copies cells only. Scale metadata itself changes neither preview bytes nor `.uge` output.
+The guide belongs to the pattern, so repeated orders share it. It is undoable and saved in
+`.thor`, and Clone/whole-pattern paste retain it; block paste copies cells only.
+The guide itself is editor metadata, not a playback/export transposition.
 
 ### Microtuning (song tuning from a Scala `.scl` file)
 
+To use an individual scale:
+
+1. Choose **Menu → Tuning → Load .scl file…** and select a local Scala file in the file picker.
+   The scale accepts ascending ratios or cents, with implicit 1/1 and the final degree as
+   its repeating period; non-octave periods are supported. Files are limited to 64 KiB,
+   256 degrees and an average interval of at least one cent.
+2. In **Tuning**, set **1/1 sounds on…** and **Accuracy limit…** (5¢, 10¢ or 20¢).
+   The status reports how many degrees the current backend can reach. Applying a scale
+   preserves the previous root/limit when replacing another tuning and does not rewrite notes.
+3. Enter notes on a supported tonal lane: horizontal note edits step through reachable
+   degrees, vertical edits move a period; Keyboard maps keys to reachable degrees.
+   To change existing material, explicitly choose **Fit notes in this pattern** or
+   **Fit notes in whole song**. Undo restores the pre-fit notes.
+4. Audition and run **Help → Check** before export. Save the `.thor` project to retain the
+   chosen degrees, root, accuracy and source credit. **Remove tuning (back to 12-note)**
+   leaves written cells unchanged; it does not reverse an earlier Fit.
+
+**A Scala import is not a promise of arbitrary accurate pitch on every chip.** The backend's
+note range, frequency resolution, fine-pitch commands or retuned tables determine what is
+reachable. Error is measured against its own note grid, not necessarily ideal concert tuning;
+noise/sample-trigger lanes are not generally tuned. Fine-pitch commands can compete for an
+effect slot. Loading `.scl` cannot add fractional-pitch support to a backend that lacks it
+(for example the current Sega 8-bit integration). **GBA/Maxmod rejects song microtuning**;
+use twelve-tone notes there (pattern-scale guides still work). See the selected system's
+Help and [engine contracts](docs/AUDIO_ENGINE.md).
+
 **Menu → Tuning → Tuning library…** contains **500 entries**: the four stock choices (19-TET, 22-EDO, 24-TET and 5-limit just intonation), **424 DaMuSc measured tunings** regenerated from its CC BY 4.0 data, and **1–72 EDO** generated independently. Collections offer categories, search and controller-friendly pages. Details show the actual degrees and period, source/licence credit and original Scala text; non-octave periods are not forced to an octave. Applying a tuning preserves the current root and accuracy limit, does not move written notes, and can be undone. **Tuning source…** retains its credit with the song.
 
-**Load .scl file…** still imports an individual [Scala](https://www.huygens-fokker.org/scala/scl_format.html) scale. The menu also chooses which note sounds 1/1, the **accuracy limit** (5¢, 10¢ or 20¢), fits existing notes, or removes the tuning. Reachable pitches remain limited by the selected chip and driver.
+See the [Scala scale-file specification](https://www.huygens-fokker.org/scala/scl_format.html)
+for ratio/cents syntax; importing a scale is distinct from installing a catalogue below.
 
 **Import pack…** installs a local UTF-8 `.thorscales` collection through the normal file picker. Same-id replacement requires confirmation; bundled collections cannot be replaced or removed. Removing a user collection leaves any tuning already selected in a song intact. Invalid Scala entries remain visible with their error, rather than disappearing. Packs are loaded only when opening the library, not at app startup.
 
@@ -599,7 +821,9 @@ The optional `--attribution-file` adds a local credit/licence notice. Entry path
 
 Only the licensed DaMuSc subset, independently generated EDO scales and stock choices ship. Other collections from Naren's scale-library are **not redistributed**; optional installation does not grant redistribution rights. Bundled data and notices are in `app/src/main/assets/tunings/`; pinned licensed inputs and attribution are in `third_party/damusc/`. `python3 tools/tuning_packs.py bundled` reproduces the three default packs offline.
 
-The stock GB driver has no microtuning, so each tuned degree is written as the nearest note plus `40y`, a fixed upward bend of 0–15 driver steps; degrees that coincide with a normal note need no effect. Preview and `.uge` export are ordinary hUGE data.
+**Game Boy-specific realization:** the stock GB driver has no microtuning, so each tuned degree
+uses the nearest note plus `40y`, a fixed upward bend of 0–15 driver steps. Degrees coinciding
+with a normal note need no effect. Preview and `.uge` export use ordinary hUGE data.
 
 - **Entry stays in tuning.** In a tuned song, hold A + Left/Right on a Pulse/Wave note steps through reachable degrees only; Up/Down moves a whole period. The Keyboard view plays and writes the nearest reachable degree. Noise is never tuned.
 - **Reachable means within the accuracy limit**, measured against the driver's own 12-note grid (so plain notes stay plain and a 12-equal `.scl` needs no bends). That grid is itself up to about 25¢ off true 12-TET in the highest octaves, so the inspector's `±x¢` is relative to the driver, and absolute error can be larger there. Bends are tiny in low octaves: with 24-TET at 5¢, octave 5 has all 24 quarter tones, octave 6 has 23, octave 3 only the 12 ordinary notes. The status line after loading reports how many degrees are reachable.
@@ -612,18 +836,26 @@ The stock GB driver has no microtuning, so each tuned degree is written as the n
 
 The same panel's **Length** row sets how many rows the pattern plays, 1–64. Press Down to reach it; Left/Right changes it by 1, L1/R1 by 8, B returns to 64, and the ◀ ▶ arrows are touchable. Every order that uses the pattern plays that many rows and then moves to the next order. Rows past the length are hidden, not deleted: lengthening the pattern brings them back, and insert/delete row only shifts the played rows.
 
-Lengths apply to all four channels together; the GB driver has no per-channel position. For polyrhythms, combine pattern lengths in the arrangement (for example 48 then 20), or write different phrase lengths in one pattern whose length is their common multiple. The Song view's order list labels short patterns with their length and draws their density strips proportionally shorter.
+Length applies to every channel in the pattern, not to independent lane positions.
+For polyrhythms, combine lengths in the arrangement (for example 48 then 20), or write
+different phrases inside a common-multiple pattern. Song labels short patterns and shortens
+their density strips proportionally.
 
-For preview and export, hidden rows are blank and the last played row receives `D01` in the first free effect slot (unless it already has `Dxx` or `Bxx`). A song check error asks you to free one effect slot if that row uses all four. Whole-pattern copy/paste and pattern cloning keep the length. `Dxx` breaks that would land on a hidden row of the next pattern are reported.
+The backend lowers shortened patterns for playback/export; on Game Boy the last played row
+needs a free effect slot for `D01`, unless a `Dxx`/`Bxx` already ends it. Check reports occupied
+slots or breaks targeting hidden rows. Clone and whole-pattern copy/paste retain the length.
 
 ### Sketch: explore a key, try phrases
 
-Press **R2+X**, or reveal the toolbar, choose the current **View** button, then **Sketch**. If you opened the toolbar with Select+Start, press B/Back after choosing the view to return controller focus to the editor. Sketch can be pinned on either display, swapped with L2+X, or opened independently on both.
+Press **R2+X** to show Sketch; press the same chord to return. Android's touch Menu drawer
+also offers Sketch. On two displays it can be pinned on either screen, swapped with
+**L2+X**, or opened independently on both. On native single-screen frontends use the view
+chord; there is no overlay toolbar.
 
 - **Up/Down** chooses settings, chords, notes or phrase; **Left/Right** chooses within that row.
 - On settings, **hold A + D-pad** to change root, scale, tonal channel, sound, octave or **Chords** (Triads or Circle). Touch the left/right half of a setting to decrease/increase it.
 - **Hold A or X** on a chord to hear a repeating root-position arpeggio; on a note to sustain it. Release to stop. Touch and hold a pad, or slide between pads, for the same preview.
-- **L1/R1** chooses Pulse 1, Pulse 2 or Wave. Noise is intentionally excluded from this tonal reference.
+- **L1/R1** chooses among the selected system's tonal channels; non-tonal noise/sample-trigger lanes are excluded.
 - **Y** or **Pattern key** returns to the pattern's root/scale. Until you change it, Sketch follows that guide; after a local change, the pattern's guide and all written notes remain untouched.
 
 Seven-note scales show their stacked-third triads; stacks that are not major, minor, diminished or augmented (e.g. double harmonic's V) are left out. Other scales (pentatonics, blues, whole tone, Japanese scales) show only standard triads made entirely of their notes. Chromatic offers twelve note pads and asks you to choose a scale for a chord shortlist. Notes show pitch and interval degree; the selected chord marks its root, third and fifth. Degrees and roman numerals use major-scale-relative intervals (`b3`, `#4`, `bIII`, etc.); pitch names use the tracker's sharp spelling.
@@ -644,30 +876,50 @@ Seven-note scales show their stacked-third triads; stacks that are not major, mi
 
 Generated notes come only from the key (any semitone for Chromatic), within about an octave and a half from the Sketch octave's root, and always start on row 0. The phrase keeps its notes when you change key or octave; Another and Vary use the current ones.
 
-Apart from Insert, Sketch never writes notes, consumes undo history or changes project/export bytes. Local key, circle, phrase and cursor settings belong to the device workspace and survive reopening. The preview uses the selected song instrument through hUGEDriver and temporarily borrows that channel while the other channels continue. Chord notes repeat every 180 ms as a listening reference; voicings near the top of the GB range shift down together rather than clipping notes. Menus, view swaps, focus/lifecycle changes and release cancel held previews.
+Apart from Insert, Sketch never writes notes or changes document Undo/export data. Its
+key, circle, phrase and cursor are pane-local exploration state; Android retains these in
+the workspace. Preview uses the song's selected instrument through the current backend.
+Chord notes repeat every 180 ms; high voicings shift down together to fit the system's
+note range. Releasing the preview, opening menus or changing views/focus ends held audition.
 
 In a tuned song Sketch stays a 12-note reference (its header says so); Insert moves each note to the nearest reachable tuned pitch and skips, and counts, notes whose bend would need a row's occupied effect slot.
 
 ### Arpeggio and OFF
 
-The effect-type picker distinguishes **no effect** from selecting **0 (arpeggio)**. Choosing 0 displays `000` and its explanation without changing the sound. Move to the value field and set `xy` to produce `0xy`; for example `047` alternates the note, +4 and +7 semitones. `000` itself remains no effect.
+**Game Boy/hUGE:** the effect picker distinguishes no effect from **0 (arpeggio)**.
+Selecting 0 shows `000` and its explanation; edit the value to make `0xy` (for example,
+`047` alternates the note, +4 and +7 semitones). `000` itself remains no effect.
 
-**OFF** immediately silences the channel, with no release tail; it uses that row's effect slot as `E00`. For stutter/retrigger, repeat a note with a nonzero instrument on successive rows, adjusting ticks per row if finer spacing is needed. The supported hUGE effect set has no dedicated retrigger command; that is a driver/editor limitation, not a prohibition in the GBC sound hardware.
+Game Boy **OFF** immediately silences the channel without a release tail and uses `E00`.
+For stutter/retrigger, repeat a note with a nonzero instrument on successive rows.
+hUGE has no dedicated retrigger command; other backends have their own effect sets and
+OFF/release semantics. Consult **Help → Effects** rather than reusing commands across chips.
 
 ## Sound and export rules
 
-The first backend is explicitly **GB/hUGE**: two pulse channels, one wave channel and one noise channel; up to 64 rows per pattern; one effect per channel per row. There are 15 instrument slots in each pulse/wave/noise bank and 16 wave tables. Instrument 0 means **legato**: it does not retrigger or reload an instrument. A legato note after a cut can therefore remain silent.
+Each song uses one backend's actual channel layout, patch types, effect rules and playback
+engine. Open **Help → Effects** for commands and **Help → Check** for errors and warnings.
+An invalid or unfinished song can still be saved as `.thor`; exports validate the selected
+format and refuse content they cannot represent.
 
-- Pattern edits are heard from the next row; updates do not restart transport.
-- Instrument changes apply on the next note that loads that instrument. A sustained note keeps its existing envelope/settings.
-- Wave edits reload on the next wave-channel note with an instrument.
-- The base tempo can change while playing.
-- Audition temporarily borrows the selected channel; the other song channels continue. The borrowed song channel resumes at its next note after audition release.
-- Seeking reconstructs driver state by silently running earlier rows. Extremely long or unreachable positions use a fresh state at the requested order's beginning; see the audio document for the exact bound.
+If a live edit cannot be lowered, playback retains the last playable version and displays
+**Playing the last playable version, not your latest edits: …** until repaired.
+Patch-update and audition behavior is driver-specific; do not assume a sustained note
+reloads its instrument immediately.
 
-**Help → Check** lists export errors and warnings. The app will not silently export unsupported driver routines or broken noise pitch effects. An unfinished, export-invalid song can still be saved as a project. A problem in a pattern no order plays (for example a `Bxx` to an order that no longer exists) is only a warning until an order uses that pattern again. If a live edit cannot be lowered, playback keeps the last playable version and a message stays on screen ("Playing the last playable version, not your latest edits: …") until the problem is fixed.
+**Game Boy/hUGE specifics:** two pulse channels, wave and noise; up to 64 rows; one effect
+per lane/row; fifteen slots per pulse/wave/noise bank and sixteen shared waves.
+Instrument 0 means **legato**, not a retrigger; after a cut it may remain silent.
+Pattern edits apply from the next row without restarting transport. Instrument and wave
+edits load on the next instrument-bearing note. Audition borrows its channel, which resumes
+the song at its next note after release. Seeking reconstructs driver state by silent playback
+of earlier rows, with the bound documented in the audio-engine contract.
 
-The Game Boy's own export is `.uge`; every system can also export a `.wav` recording (below). GB-specific editing semantics live in the backend; future backends can define different channels, instruments and editors without pretending that GB songs convert losslessly to other chips.
+**Menu → Files** lists the selected system's native formats and WAV. Examples include
+Game Boy `.uge`, NES `.nsf`/FamiStudio text, SID `.sid`/GoatTracker, Mega Drive XGM2 and
+GBA/Maxmod `.xm`; availability and restrictions differ by backend and instrument type.
+VGM is a register log, WAV is rendered audio, and neither supplies a game's music driver.
+Keep a `.thor` project as the editable source.
 
 - [UGE export format, effects and limits](docs/UGE_EXPORT.md)
 - [Audio-engine architecture and export contracts](docs/AUDIO_ENGINE.md)
@@ -696,12 +948,39 @@ Thor Tracker has no network access and no telemetry: nothing leaves the device u
 
 ## Saving and recovery
 
-**File → Save / Save as / Open / Export .uge** uses Android's document picker and user-selected locations; no broad storage permission is requested.
+Use **Menu → Files → Save / Save as…** for editable **`.thor` projects**, and **Open project**
+to resume them. Save updates the associated project file or asks for a location when none is
+associated; Save as chooses another file. The project retains the selected backend, patterns
+(including unused/hidden material), instruments, arrangement and tuning metadata.
+Exports are separate deliverables, not the recovery copy or a substitute for the project.
 
-- Working changes are automatically written to an app-private, atomically replaced recovery file after a short debounce and when the activity pauses.
-- Replacing a document retains one previous-project recovery backup. A later replacement overwrites that single slot: use named project files for permanent versions.
-- Unreadable recovery files are quarantined intact rather than replaced in place. The app reports the failure and retained location.
-- Opening a project validates its version and structure before replacing the working document.
+- **Android:** the system document picker chooses project and export locations; no broad
+  storage permission is requested.
+- **Steam Deck / Linux:** the in-app file browser starts in `~/ThorTracker`.
+- **Brick:** projects and exports use `/mnt/SDCARD/ThorTunez`.
+
+**Recovery protects the working document, not a version history.**
+
+- Working changes are automatically written to a recovery file after a short debounce.
+  Android also saves on activity pause; Linux handhelds keep the working copy in their data directory.
+  These updates do **not** replace explicit Save of your named project.
+- Replacing a document retains one previous-project backup, available through
+  **Menu → Files → Recover previous project**. Another replacement overwrites that single slot;
+  use named `.thor` files for versions you want to keep.
+- Android quarantines unreadable recovery files intact and reports their retained location.
+  Opening a project validates its version and structure before replacing the working document.
+
+For a deliverable, open **Help → Check**, then choose the system-specific **Export** item
+or **Export .wav…** in Files. A backend or format can reject unsupported content even when
+the editable project saves successfully. See [Sound and export rules](#sound-and-export-rules)
+and [WAV options](#export-to-wav).
+
+Undo/redo is session history, not part of a saved project. Keep external backups; uninstalling
+or clearing app storage removes app-private recovery. See [Project compatibility](#project-compatibility)
+when exchanging files between versions.
+
+## Project compatibility
+
 - 0.28.0 saves **project format 10**, adding optional `tuning.provenance` for the chosen scale's identity and source credit—not the whole catalogue. **Earlier releases cannot open format 10**, including songs without a tuning. Formats 1–9 still open and migrate. The sound system remains in `backend`, its instruments in `sound`, and notes retain format 9's scientific pitch (0 = C0, A4 = 57 = 440 Hz); displayed names remain each tracker's own (hUGETracker's C-3 is C2). Formats 1–7 are Game Boy projects, development format 8 upgrades its old pitch convention, and legacy Game Boy `.uge` exports remain byte-identical. Missing older fields retain their documented defaults: Chromatic, 64-row, untuned patterns with nothing parked. The backend layouts below are independent of this outer project-format version.
 - NES songs with the DPCM channel save NES data version 2 (`backendVersion` 2): a fifth pattern track (DPCM), the song's DPCM samples (`sound.samples`: name, DMC bytes, initial value) and each instrument's note → sample mappings (`dpcm`). NES data version 1 songs (0.9.0) open with an empty DPCM track and keep the whole song budget while they have no samples; releases before DPCM cannot open version 2 files. Game Boy files keep `backendVersion` 1 and are unchanged. NES + VRC6 songs save backend `nes-famistudio-vrc6` (NES data version 2): eight pattern tracks, `sound.expansion` = `"vrc6"`, and on VRC6 sounds `chip` = `"vrc6"` and `sawVolume` (`full`, `quarter`; Half is left out); plain NES files are written exactly as before. Releases before the VRC6 cannot open NES + VRC6 files.
 - NES + VRC7 songs save backend `nes-famistudio-vrc7` (NES data version 2): eleven pattern tracks, `sound.expansion` = `"vrc7"`, `sound.vrc7Sustain` (`release`, `stop`; left out when both are off), and on VRC7 sounds `chip` = `"vrc7"` and `fm` (`preset` 0-15, 0 = custom, and the 8 patch `regs`; a built-in patch stores its ROM values, as FamiStudio does). Releases before the VRC7 cannot open these files; plain NES and NES + VRC6 files are unchanged.
@@ -725,7 +1004,6 @@ Thor Tracker has no network access and no telemetry: nothing leaves the device u
 - Saving captures the version selected for that operation. If editing continues, the app reports that newer edits remain unsaved. Completing an older save cannot attach its destination to a different document.
 - Android document providers control the durability and atomicity of writes to their own destinations; the app-private recovery copy remains separate.
 
-Undo/redo is session history, not part of the serialized project format. App-private recovery is not a substitute for external backups; uninstalling or clearing app storage removes it.
 
 ## Verification commands
 

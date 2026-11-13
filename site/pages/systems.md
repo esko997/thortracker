@@ -8,7 +8,7 @@ The registry covers **Game Boy / Game Boy Color**, **NES** and its **VRC6, VRC7,
 
 **Game Boy Advance / Maxmod** adds eight sample voices and `.xm` export for GBA homebrew.
 
-The sections below describe each system's instruments, effects and export formats.
+Start with the [instrument workflow](/getting-started/#instrument-workflow) for selecting sounds and using Sound and Advanced on the same patch. The references below describe each system's instruments, effects and export formats; the [instrument panel reference](../../docs/INSTRUMENT_PANELS.md) covers the chip-family Sound controls.
 
 <!-- include: README.md :: Multiple effects per row -->
 
