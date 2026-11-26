@@ -159,6 +159,9 @@ typedef struct ChipEngineOps {
      * when position() moves into a newly started row instance (also a row re-entered by a jump
      * to itself). start() resets it. Used by the WAV export's loop detection (chip_wav.c). */
     uint32_t (*row_serial)(const ChipMachine* m);
+
+    /* Optional: update a held audition's sound without restarting its envelope. */
+    void (*apply_audition_image)(ChipMachine* m, const ChipImage* image);
 } ChipEngineOps;
 
 /* The implementation for a system id, or NULL if this build has none. */

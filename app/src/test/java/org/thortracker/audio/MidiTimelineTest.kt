@@ -5,6 +5,7 @@ import org.junit.Test
 import org.thortracker.midi.*
 import org.thortracker.model.*
 import org.thortracker.system.midi.*
+import org.thortracker.system.studio.*
 import java.util.PriorityQueue
 import java.util.concurrent.*
 
@@ -344,6 +345,52 @@ class MidiTimelineTest {
             assertEquals(listOf(0x90, 69, 100), receiver.trace[1].bytes)
             assertEquals(Message(125_000_000, listOf(0xb0, 1, 78)), receiver.trace.last())
             assertEquals(0, audio.position().row)
+        }
+    }
+    @Test fun mixedUsbWaitsForRenderedRowAndCancelsAtRouteChange() {
+        val clock = Clock()
+        val receiver = Receiver()
+        val midi = MidiTrack(2, 4, "port")
+        val state = StudioSound(listOf(StudioTrack(MidiTrack(1, 0)), StudioTrack(midi, StudioTarget.USB_MIDI)), clock = true, nextId = 3)
+        val monoRows = List(Songs.ROWS) { Cell(25) }
+        val usbRows = List(Songs.ROWS) { Cell(48 + it % 12) }
+        val song = Song(patterns = listOf(Pattern(tracks = listOf(monoRows, usbRows), length = 2)), orders = listOf(0), sound = state)
+        var playing = false
+        var starts = 0
+        val control = object : TrackerAudio {
+            override fun update(song: Song) {}
+            override fun play(order: Int, row: Int) { playing = true; starts++ }
+            override fun stop() { playing = false }
+            override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {}
+            override fun releaseAudition() {}
+            override fun position() = PlaybackPosition(playing)
+            override fun error(): String? = null
+            override fun close() {}
+        }
+        val timeline = StudioTimeline(control) { cursor, data ->
+            check(playing)
+            val first = cursor < 0
+            data[0] = if (first) 1 else 2
+            data[1] = 0; data[2] = if (first) 0 else 1
+            data[3] = if (first) 40_000_000 else 190_000_000 // hardware row 2 is NOT at nominal 165 ms
+            song
+        }
+        val failures = mutableListOf<String>()
+        MidiAudio(clock, { clock.now }, { _, _ -> receiver }, timeline) { failures += it }.use { audio ->
+            audio.update(song); audio.play()
+            clock.advance(39_999_999); assertTrue(receiver.trace.isEmpty())
+            clock.advance(189_999_999)
+            assertEquals(listOf(Message(40_000_000, listOf(0x94, 60, 100))), receiver.trace.filter { it.bytes[0] shr 4 == 9 })
+            clock.advance(190_000_000)
+            assertEquals(Message(190_000_000, listOf(0x94, 61, 100)), receiver.trace.last())
+            val unbound = state.copy(tracks = listOf(state.tracks[0], StudioTrack(midi.copy(port = ""), StudioTarget.USB_MIDI)))
+            audio.update(song.copy(sound = unbound))
+            assertFalse(playing)
+            val last = receiver.trace.toList()
+            assertTrue(last.any { it.bytes == listOf(0x84, 61, 0) })
+            audio.play(); clock.advance(1_000_000_000)
+            assertEquals(1, starts); assertEquals(last, receiver.trace)
+            assertTrue(failures.single().contains("Bind each MIDI track"))
         }
     }
 }

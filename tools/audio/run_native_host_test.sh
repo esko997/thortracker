@@ -104,6 +104,7 @@ includes=(-I "$cpp" -I "$cpp/third_party/binjgb/src" -I "$cpp/nes" -I "$cpp/sid"
   -I "$cpp/pce" -I "$cpp/scc" -I "$cpp/third_party/chips" -I "$cpp/third_party/blip_buf" -I "$cpp/third_party/resid-1.0"
   -I "$cpp/third_party/nuked-opl3" -I "$cpp/third_party/ymfm" -I "$cpp/third_party/mednafen-pce-psg/shim"
   -I "$root/third_party/ayumi" -I "$root/app/src/test/cpp")
+includes+=(-I "$cpp/studio")
 includes+=(-I "$cpp/opm")
 includes+=(-I "$cpp/opn")
 includes+=(-I "$cpp/tia" -I "$cpp/third_party/stella-tia" -I "$cpp/third_party/stella-tia/shim")
@@ -112,6 +113,7 @@ includes+=(-I "$cpp/cbm" -I "$cpp/ws" -I "$cpp/vsu" -I "$cpp/saa")
 includes+=(-I "$root/third_party/maxmod/include" -I "$root/third_party/maxmod/source")
 c_engines=(
   "$cpp/chip_engine.c" "$cpp/chip_wav.c" "$cpp/cpu6502.c"
+  "$cpp/studio/studio_chip.c" "$cpp/studio/mono_synth.c"
   "$cpp/huge_machine.c" "$cpp/huge_chip.c" "$cpp/third_party/binjgb/src/common.c"
   "$cpp/nes/nes_machine.c" "$cpp/nes/nes_image.c" "$cpp/nes/nes_apu.c" "$cpp/nes/nes_vrc6.c" "$cpp/nes/nes_vrc7.c" "$cpp/nes/nes_n163.c"
   "$cpp/nes/nes_fds.c" "$cpp/nes/nes_s5b.c" "$cpp/nes/nes_epsm_unit.c" "$cpp/third_party/emu2413/emu2413.c" "$cpp/chip_opll.c"
@@ -157,7 +159,7 @@ for src in "${cxx_engines[@]}"; do
   "$CXX" -std=c++17 -O2 -fwrapv -DNDEBUG=1 -w "${includes[@]}" -c "$src" -o "$o"
   objs+=("$o")
 done
-for t in huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
+for t in studio_engine_test mono_synth_test huge_machine_test nes_machine_test nes_vrc6_test nes_vrc7_test nes_n163_test nes_fds_test nes_s5b_test \
   nes_s5b_fallback_test nes_epsm_test nes_mmc5_test nes_mmc5_pcm_test nes_mix_budget_test sid_machine_test \
   opl3_machine_test ym_machine_test sms_machine_test ay_machine_test pce_machine_test scc_machine_test opm_machine_test opn_machine_test pokey_machine_test tia_machine_test cbm_machine_test ws_machine_test vsu_machine_test saa_machine_test wav_render_test; do
   "$CC" -std=gnu11 -O2 "${warn[@]}" "${includes[@]}" -c "$root/app/src/test/cpp/$t.c" -o "$build/obj/$t.o"
@@ -166,6 +168,8 @@ done
 "$CXX" -std=c++17 -O2 -fwrapv "${includes[@]}" "$root/tools/audio/gba_native_test.cpp" \
   "${objs[@]}" -lm -pthread -o "$build/gba_native_test"
 status=0
+"$build/studio_engine_test" || status=1
+"$build/mono_synth_test" || status=1
 "$build/gba_native_test" || status=1
 "$build/huge_machine_test" "$out" || status=1
 "$build/nes_machine_test" "$out" || status=1

@@ -10,6 +10,8 @@ The registry covers **Game Boy / Game Boy Color**, **NES** and its **VRC6, VRC7,
 
 Start with the [instrument workflow](/getting-started/#instrument-workflow) for selecting sounds and using Sound and Advanced on the same patch. The references below describe each system's instruments, effects and export formats; the [instrument panel reference](../../docs/INSTRUMENT_PANELS.md) covers the chip-family Sound controls.
 
+<!-- include: docs/MANUAL.md :: Studio: internal instruments -->
+
 <!-- include: docs/MANUAL.md :: Multiple effects per row -->
 
 ## Game Boy / Game Boy Color

@@ -104,6 +104,21 @@ JNIEXPORT jlong JNICALL Java_org_thortracker_audio_ChipAudio_nativePosition(JNIE
     return engine(h)->position();
 }
 
+JNIEXPORT jboolean JNICALL Java_org_thortracker_audio_ChipAudio_nativeClockAlive(JNIEnv*, jclass, jlong h) {
+    return engine(h)->clock_alive() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeNextRow(JNIEnv* env, jclass, jlong h, jlong cursor,
+                                                                         jlongArray row) {
+    int64_t out[5];
+    const int result = engine(h)->next_row(cursor, out);
+    if (result == 1) {
+        jlong values[5] = {out[0], out[1], out[2], out[3], out[4]};
+        env->SetLongArrayRegion(row, 0, 5, values);
+    }
+    return result;
+}
+
 JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeStats(JNIEnv* env, jclass, jlong h,
                                                                        jlongArray out) {
     int64_t values[Engine::kStatCount] = {};

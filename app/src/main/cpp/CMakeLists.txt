@@ -77,6 +77,8 @@ set_target_properties(ymfm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # clock-exact port of SAASound's model (saa/saa_core.c, BSD-3-Clause).
 add_library(chip_engines STATIC
     chip_engine.c
+    studio/studio_chip.c
+    studio/mono_synth.c
     chip_wav.c
     cpu6502.c
     huge_chip.c

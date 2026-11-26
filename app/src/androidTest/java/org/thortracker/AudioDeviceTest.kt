@@ -21,6 +21,11 @@ import org.thortracker.system.cbm.cbmInstrument
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import org.thortracker.system.midi.MidiTrack
+import org.thortracker.system.studio.StudioSound
+import org.thortracker.system.studio.StudioTarget
+import org.thortracker.system.studio.StudioTrack
+import org.thortracker.system.studio.studio
 
 /** Uses the real JNI engine and Android audio device, not a fake callback or sequencer. */
 @RunWith(AndroidJUnit4::class)
@@ -246,6 +251,108 @@ class AudioDeviceTest {
             // Pattern B is 3 rows long; reaching row 6 of the second order proves it is pattern C.
             assertTrue("the second heard order is pattern C: $seen", (1 to 6) in seen && (0 to 4) in seen)
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+        }
+    }
+
+    @Test
+    fun studioUsbClockReadsOrderedNativeRowsAndTheirExactLivePatchVersion() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val sound = StudioSound(tracks = listOf(
+            StudioTrack(MidiTrack(1, 0)),
+            StudioTrack(MidiTrack(2, 1), StudioTarget.USB_MIDI),
+        ), nextId = 3)
+        val song = sound.system.blank().copy(sound = sound, patterns = listOf(
+            org.thortracker.model.Pattern.blank(sound.tracks.size).copy(length = 4)))
+        ChipAudio(context, true).use { audio ->
+            audio.update(song)
+            audio.play(0, 0)
+            val row = LongArray(5)
+            var cursor = -1L
+            fun nextRow(): org.thortracker.model.Song {
+                var heard: org.thortracker.model.Song? = null
+                await("rendered Studio row", audio) {
+                    heard = audio.studioRow(cursor, row)
+                    heard != null
+                }
+                cursor = row[0]
+                return checkNotNull(heard)
+            }
+            var previousTime = 0L
+            repeat(6) { index ->
+                assertEquals(sound, nextRow().studio)
+                assertEquals(0L, row[1])
+                assertEquals((index % 4).toLong(), row[2])
+                assertTrue("native row deadlines advance across loops", row[3] > previousTime)
+                previousTime = row[3]
+            }
+            val edited = song.copy(sound = sound.withPatch(1, sound.patch(1)!!.copy(cutoff = 23)))
+            audio.update(edited)
+            var heard = nextRow()
+            repeat(8) { if (heard.studio.patch(1)!!.cutoff != 23) heard = nextRow() }
+            assertEquals(23, heard.studio.patch(1)!!.cutoff)
+            assertEquals(sound.tracks, heard.studio.tracks)
+            audio.stop()
+            await("mixed native timeline stops", audio) { !audio.pending() && !audio.position().playing }
+            audio.play(0, 2)
+            cursor = -1
+            assertEquals(23, nextRow().studio.patch(1)!!.cutoff)
+            assertEquals(2L, row[2])
+            assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+            audio.stop()
+        }
+    }
+
+    @Test
+    fun studioPatchEditsAuditionAndSeekPreserveNativeTransport() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val blank = org.thortracker.system.studio.StudioSound().system.blank()
+        val song = blank.copy(patterns = blank.patterns.map { pattern ->
+            pattern.copy(tracks = pattern.tracks.map { cells ->
+                cells.mapIndexed { row, _ ->
+                    if (row % 4 == 0) org.thortracker.model.Cell(note = 36 + row / 4, instrument = 1)
+                    else org.thortracker.model.Cell.BLANK
+                }
+            })
+        })
+        ChipAudio(instrumentation.targetContext).use { audio ->
+            audio.update(song)
+            audio.play()
+            await("Studio starts and advances", audio) { audio.position().playing && audio.position().row >= 3 }
+            val before = audio.position().row
+            val sound = song.sound as org.thortracker.system.studio.StudioSound
+            val changed = sound.withPatch(1, sound.patch(1)!!.copy(waveform = 1, cutoff = 28, resonance = 65))
+            audio.update(song.copy(sound = changed))
+            await("Studio keeps advancing after a live patch edit", audio) {
+                audio.position().playing && audio.position().row > before
+            }
+            audio.audition(0, 60, 1)
+            await("Studio audition reaches the real engine", audio) {
+                audio.diagnostics().getValue("lastAuditionPrepNs") > 0
+            }
+            audio.releaseAudition()
+            val auditionRow = audio.position().row
+            await("Studio continues after releasing the borrowed voice", audio) {
+                audio.position().playing && audio.position().row > auditionRow
+            }
+            audio.stop()
+            await("Studio stop completes", audio) { !audio.position().playing && !audio.position().pending }
+            audio.play(0, 16)
+            await("Studio seeks to the requested phrase", audio) {
+                val position = audio.position()
+                position.playing && position.order == 0 && position.row in 16..23
+            }
+            assertEquals("Studio engine fault", 0L, audio.diagnostics().getValue("driverFaults"))
+            audio.stop()
+            await("Studio stops before switching systems", audio) {
+                !audio.position().playing && !audio.position().pending
+            }
+            audio.update(Songs.demo())
+            audio.play()
+            await("Game Boy still plays after Studio", audio) {
+                audio.position().playing && audio.position().row in 1..7
+            }
+            audio.stop()
+            await("Game Boy stop completes", audio) { !audio.position().playing && !audio.position().pending }
         }
     }
 

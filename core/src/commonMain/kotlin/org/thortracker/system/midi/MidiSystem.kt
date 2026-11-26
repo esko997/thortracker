@@ -52,10 +52,18 @@ fun Song.removeMidiTrack(index: Int): Song {
         patterns = patterns.map { p -> p.copy(tracks = p.tracks.filterIndexed { i, _ -> i != index }) })
 }
 
-class MidiSystem(state: MidiSound) : SoundSystem {
+class MidiSystem(state: MidiSound) : TrackSystem(state.tracks) {
     override val id = ID
     override val name = "USB MIDI (Beta)"
-    override val channels = state.tracks.map { ChannelSpec("Track ${it.id}", ChannelKind.VOICE, 0, true) }
+    override val soundSerializer = MidiSound.serializer()
+    override val driverDescription = "Android USB MIDI 1.0"
+    override fun blank() = Song(patterns = listOf(Pattern.blank(1)), orders = listOf(0), sound = MidiSound())
+    companion object { const val ID = "android-usb-midi" }
+}
+
+/** Shared four-column tracker grammar. A destination chooses its bank, parameters and playback. */
+abstract class TrackSystem(protected val trackSettings: List<MidiTrack>) : SoundSystem {
+    override val channels = trackSettings.map { ChannelSpec("Track ${it.id}", ChannelKind.VOICE, 0, true) }
     override val banks = listOf(BankSpec("Track defaults", 1))
     override val noteRange = 0..115
     override val nameOctaveOffset = 0
@@ -71,12 +79,9 @@ class MidiSystem(state: MidiSound) : SoundSystem {
     override val offEffect: String? = null
     override val tickHz = 48.0
     override val maxOrders = 256
-    override val soundSerializer = MidiSound.serializer()
     override val backendVersion = 1
-    override val driverDescription = "Android USB MIDI 1.0"
     override fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int) =
         if (note in noteRange) null else "MIDI notes must be C0–G9"
-    override fun blank() = Song(patterns = listOf(Pattern.blank(1)), orders = listOf(0), sound = MidiSound())
     override fun demo() = blank()
     override fun upgradeProject(song: JsonObject, version: Int) = song
     override fun upgradeBackend(song: JsonObject, backendVersion: Int) = song
@@ -84,35 +89,35 @@ class MidiSystem(state: MidiSound) : SoundSystem {
     override fun effectColumns(channel: Int) = 4
     override fun describeEffect(song: Song, channel: Int, effect: Int, param: Int) =
         effects.getOrNull(effect)?.let { spec ->
-            val name = (song.sound as MidiSound).tracks[channel].bindings.getOrNull(effect - 9)?.name ?: spec.name
+            val name = trackSettings[channel].bindings.getOrNull(effect - 9)?.name ?: spec.name
             "$name $param (${spec.param})"
         } ?: "Unknown MIDI effect"
     override fun cellProblem(song: Song, channel: Int, cell: Cell): String? {
-        if (cell.note !in Cell.CUT..115 || cell.instrument !in 0..1) return "Invalid MIDI note or instrument"
+        if (cell.note !in Cell.CUT..noteRange.last || cell.instrument !in 0..banks[channels[channel].bank].slots) return "Invalid track note or instrument"
         for (column in 0..cell.more.size) {
             val code = cell.effectCode(column)
-            val limit = when (code) { 5 -> 1..16; 7 -> 1..8; 8 -> 1..127; 9, 10 -> 0..127; else -> 0..255 }
-            if (code !in effects.indices || cell.effectParam(column) !in limit) return "Invalid MIDI effect in column ${column + 1}"
+            val limit = when (code) { 5 -> 1..16; 7 -> 1..8; 8 -> 1..127; 9, 10, 11 -> 0..127; 12 -> 0..1; else -> 0..255 }
+            if (code !in effectsFor(channel).indices || cell.effectParam(column) !in limit) return "Invalid effect in column ${column + 1} for ${channels[channel].name}"
         }
         return null
     }
     override fun structuralErrors(song: Song): List<String> {
-        val sound = song.sound as? MidiSound ?: return listOf("Missing MIDI track settings")
         if (song.orders.size !in 1..maxOrders || song.orders.any { it !in song.patterns.indices } ||
             song.loopOrder !in song.orders.indices || song.ticksPerRow !in 1..255 ||
             song.parkedOrders != song.parkedOrders.distinct().sorted() || song.parkedOrders.any { it !in song.orders.indices })
-            return listOf("Invalid MIDI arrangement or speed")
+            return listOf("Invalid $name arrangement or speed")
         if (song.newPatternScale.root !in 0..11) return listOf("Invalid default scale root")
         song.tuning?.problems(song.system)?.takeIf { it.isNotEmpty() }?.let { return it }
+        val maxSlot = banks.maxOf { it.slots }
         for (p in song.patterns) {
-            if (p.length !in 1..Songs.ROWS || p.tracks.size != sound.tracks.size || p.scale.root !in 0..11)
-                return listOf("Invalid MIDI pattern dimensions or scale")
+            if (p.length !in 1..Songs.ROWS || p.tracks.size != channels.size || p.scale.root !in 0..11)
+                return listOf("Invalid $name pattern dimensions or scale")
             for ((ch, track) in p.tracks.withIndex()) {
-                if (track.size != Songs.ROWS) return listOf("Invalid MIDI track length")
+                if (track.size != Songs.ROWS) return listOf("Invalid track length on ${channels[ch].name}")
                 // Preserve editable intermediate effect values. Playback validates their musical limits.
-                if (track.any { c -> c.note !in Cell.CUT..115 || c.instrument !in 0..1 ||
+                if (track.any { c -> c.note !in Cell.CUT..noteRange.last || c.instrument !in 0..maxSlot ||
                     (0..c.more.size).any { c.effectCode(it) !in effects.indices || c.effectParam(it) !in 0..255 } })
-                    return listOf("Invalid MIDI cell on track ${ch + 1}")
+                    return listOf("Invalid cell on ${channels[ch].name}")
             }
         }
         return emptyList()
@@ -120,21 +125,23 @@ class MidiSystem(state: MidiSound) : SoundSystem {
     override fun errors(song: Song): List<String> {
         structuralErrors(song).takeIf { it.isNotEmpty() }?.let { return it }
         if (Songs.playedOrders(song).isEmpty()) return listOf("Unpark an order to play")
-        for (p in song.patterns) for ((ch, track) in p.tracks.withIndex()) for (c in track.take(p.length))
-            cellProblem(song, ch, c)?.let { return listOf(it) }
+        for (p in song.patterns) for ((ch, track) in p.tracks.withIndex()) for (row in 0 until p.length)
+            cellProblem(song, ch, track[row])?.let { return listOf(it) }
         return emptyList()
     }
-    override fun warnings(song: Song) = (song.sound as MidiSound).tracks.groupBy { it.port to it.channel }
+    protected open val usbTracks get() = trackSettings
+    override fun warnings(song: Song) = usbTracks.groupBy { it.port to it.channel }
         .values.filter { it.size > 1 }.map { "Tracks ${it.joinToString { t -> t.id.toString() }} share patch, bend and controllers" }
     override fun arranged(song: Song): Song {
+        if (song.parkedOrders.isEmpty()) return song
         val played = Songs.playedOrders(song)
         return song.copy(orders = played.map { song.orders[it] }, loopOrder = played.indexOfFirst { it >= song.loopOrder }.coerceAtLeast(0), parkedOrders = emptyList())
     }
     override fun patternLoop(song: Song, order: Int) = song.copy(orders = listOf(song.orders[order]), loopOrder = 0, parkedOrders = emptyList())
     override fun jumpTarget(cell: Cell): Int? = null
     override fun withJumpTarget(cell: Cell, order: Int) = cell
-    override fun instrumentName(song: Song, bank: Int, slot: Int) = "Track defaults"
-    override fun instrumentSummary(song: Song, bank: Int, slot: Int) = "Set velocity and patch in MIDI tracks"
+    override fun instrumentName(song: Song, bank: Int, slot: Int): String? = "Track defaults"
+    override fun instrumentSummary(song: Song, bank: Int, slot: Int): String? = "Set velocity and patch in MIDI tracks"
     override fun instrumentShape(song: Song, bank: Int, slot: Int): List<Float>? = null
     override fun selectSound(selection: Selection, song: Song) = selection
     override fun view(kind: ViewKind): SystemView? = null
@@ -156,7 +163,7 @@ class MidiSystem(state: MidiSound) : SoundSystem {
         override val untonalNote = ""
         override val sketchChannels = tonalChannels
         override fun viewSections(keys: Keymap) = emptyList<Pair<String, List<Pair<String, String>>>>()
-        override fun limits(song: Song) = listOf("Tracks" to "${channels.size}/64")
+        override fun limits(song: Song) = listOf("Tracks" to "${channels.size}/$trackLimit")
     }
-    companion object { const val ID = "android-usb-midi" }
+    protected open val trackLimit get() = 64
 }

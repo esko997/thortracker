@@ -4,7 +4,7 @@ import org.thortracker.model.Cell
 
 /** Scientific semitones, normalized dynamics, and track-local named parameter slots. */
 sealed interface MusicalEvent {
-    data class Attack(val pitch: Int, val strength: Double) : MusicalEvent
+    data class Attack(val pitch: Int, val strength: Double, val accent: Int = 0, val tie: Boolean = false) : MusicalEvent
     data class Release(val pitch: Int) : MusicalEvent
     data class Pitch(val semitones: Double) : MusicalEvent
     data class PitchStep(val semitones: Double) : MusicalEvent
@@ -26,6 +26,8 @@ fun musicalRow(track: MidiTrack, cell: Cell, duration: Long): List<TimedEvent> {
     var arp = 0
     var slide: Double? = null
     var expression: Int? = null
+    var accent = 0
+    var tie = false
     for (column in 0..cell.more.size) {
         val value = cell.effectParam(column)
         when (cell.effectCode(column)) {
@@ -39,6 +41,8 @@ fun musicalRow(track: MidiTrack, cell: Cell, duration: Long): List<TimedEvent> {
             7 -> { strikes = 1 + value.coerceIn(1, 8); echo = true }
             8 -> velocity = value.coerceIn(1, 127)
             9, 10 -> emit(0, MusicalEvent.Parameter(cell.effectCode(column) - 9, value / 127.0))
+            11 -> accent = value
+            12 -> tie = value == 1
         }
     }
     if (cell.note >= 0) emit(delay, MusicalEvent.Pitch(0.0))
@@ -59,8 +63,9 @@ fun musicalRow(track: MidiTrack, cell: Cell, duration: Long): List<TimedEvent> {
             val start = delay + span * i / strikes
             val length = (span / strikes * track.gate / 100).coerceAtLeast(1)
             val strength = velocity / 127.0 * if (echo) (strikes - i).toDouble() / strikes else 1.0
-            emit(start, MusicalEvent.Attack(pitch, strength))
-            emit((start + length).coerceAtMost(duration - 1), MusicalEvent.Release(pitch))
+            val hold = tie && i == strikes - 1
+            emit(start, MusicalEvent.Attack(pitch, strength, accent, hold))
+            if (!hold) emit((start + length).coerceAtMost(duration - 1), MusicalEvent.Release(pitch))
         }
     }
     return result.sortedBy { it.offset }

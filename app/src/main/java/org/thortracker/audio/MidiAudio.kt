@@ -6,27 +6,47 @@ import org.thortracker.model.Pattern
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.system.midi.*
+import org.thortracker.system.SystemSound
+import org.thortracker.system.studio.*
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
+
+/** USB follows this renderer's row acknowledgements, never a second free-running song clock. */
+internal class StudioTimeline(audio: TrackerAudio, val running: () -> Boolean = { audio.position().playing },
+    val nextRow: (Long, LongArray) -> Song?) : TrackerAudio by audio {
+    constructor(chip: ChipAudio) : this(chip, chip::studioClockAlive, chip::studioRow)
+}
 
 /** One worker owns every connection, scheduled row, and sounding note. Nothing is queued ahead in the receiver. */
 class MidiAudio internal constructor(
     private val worker: java.util.concurrent.ScheduledExecutorService,
     private val now: () -> Long,
     makePorts: (changed: () -> Unit, error: (String) -> Unit) -> MidiOutputPorts,
+    private val studio: StudioTimeline? = null,
     private val report: (String) -> Unit,
 ) : TrackerAudio {
-    constructor(context: Context, report: (String) -> Unit) : this(
+    constructor(context: Context, mixedStudio: Boolean = false, report: (String) -> Unit) : this(
         ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }, System::nanoTime,
-        { changed, error -> AndroidMidiPorts(context, changed, error) }, report,
+        { changed, error -> AndroidMidiPorts(context, changed, error) }, if (mixedStudio) StudioTimeline(ChipAudio(context, true)) else null, report,
     )
     @Volatile private var closed = false
     @Volatile private var position = PlaybackPosition()
     @Volatile private var problem: String? = null
     private var song: Song? = null
     private var nextArrangement: Song? = null
+    internal val mixedStudio get() = studio != null
+    private val nativeRow = LongArray(5)
+    private var rowCursor = -1L
+    private var borrowedUsbId = 0
+    private var submittedStudio: StudioSound? = null // UI/update lock; intent cancels stale work immediately
+    private var usb = emptyList<MidiTrack>() // worker; excludes every Mono lane
+    private fun clock(sound: SystemSound) = when (sound) {
+        is StudioSound -> sound.clock
+        is MidiSound -> sound.clock
+        else -> false
+    }
     private var generation = 0L
     private val transportRequest = AtomicLong()
     private var activeRequest = 0L
@@ -55,7 +75,7 @@ class MidiAudio internal constructor(
     private data class RowEvent(val track: MidiTrack, val timed: TimedEvent)
     private val cachedRows = LinkedHashMap<RowKey, List<RowEvent>>(16, 0.75f, true)
     private var cachedPatterns: List<Pattern>? = null
-    private var cachedSound: MidiSound? = null
+    private var cachedSound: SystemSound? = null
     private var cachedEvents = 0
     private val ports: MidiOutputPorts = makePorts({ submit { connect() } }, { message ->
         submit { halt(); problem = message; report(message) }
@@ -80,10 +100,17 @@ class MidiAudio internal constructor(
         }
     }
     private fun connect() {
-        val required = (song?.sound as? MidiSound)?.tracks.orEmpty().map { it.port }.toSet()
+        val required = usb.map { it.port }.toSet()
         val live = endpoints()
         val stale = outputs.filter { (key, connection) -> key !in required || live.none { it.matches(connection.endpoint) } }.keys
-        if (stale.isNotEmpty()) halt()
+        if (stale.isNotEmpty()) {
+            val interrupted = studio != null && (position.playing || position.pending)
+            halt()
+            if (interrupted) {
+                problem = "Studio USB output disconnected. Rebind the route before restarting playback."
+                report(problem!!)
+            }
+        }
         for (key in stale) outputs.remove(key)?.close()
         connected = outputs.keys.toSet()
         for (endpoint in live) {
@@ -93,7 +120,7 @@ class MidiAudio internal constructor(
                     if (closed) connection?.close() else worker.execute {
                         opening.remove(endpoint.key)
                         if (connection != null) {
-                            if (!closed && (song?.sound as? MidiSound)?.tracks.orEmpty().any { it.port == endpoint.key } &&
+                            if (!closed && usb.any { it.port == endpoint.key } &&
                                 endpoints().any { it.matches(endpoint) }) {
                                 outputs[endpoint.key] = connection
                                 connected = outputs.keys.toSet()
@@ -105,15 +132,24 @@ class MidiAudio internal constructor(
         }
     }
 
-    override fun update(song: Song) = submit {
-        val soundChanged = this.song?.sound != song.sound
-        if (soundChanged) halt()
-        this.song = song
-        if (position.playing) {
-            song.system.errors(song).firstOrNull()?.let { error(it) }
-            nextArrangement = song.system.arranged(song)
+    @Synchronized override fun update(song: Song) {
+        val next = song.sound as? StudioSound
+        val previous = submittedStudio
+        val routesChanged = next != null && (previous == null || next.tracks != previous.tracks || next.clock != previous.clock)
+        submittedStudio = next
+        if (routesChanged) transportRequest.incrementAndGet()
+        submit {
+            val soundChanged = if (next == null) this.song?.sound != song.sound else routesChanged
+            if (soundChanged) halt()
+            this.song = song
+            usb = next?.tracks?.filter { it.target == StudioTarget.USB_MIDI }?.map { it.midi } ?: (song.sound as MidiSound).tracks
+            studio?.update(song)
+            if (position.playing) {
+                song.system.errors(song).firstOrNull()?.let { error(it) }
+                if (studio == null) nextArrangement = song.system.arranged(song)
+            }
+            if (soundChanged || usb.any { it.port !in outputs }) connect()
         }
-        if (soundChanged || (song.sound as? MidiSound)?.tracks.orEmpty().any { it.port !in outputs }) connect()
     }
     private fun send(key: String, status: Int, a: Int = 0, b: Int = 0, count: Int = 3) {
         if (groupSize > 0 && (groupPort != key || groupSize + count > message.size)) sendGroup()
@@ -219,7 +255,7 @@ class MidiAudio internal constructor(
     }
 
     private fun rowEvents(doc: Song, patternIndex: Int, row: Int, duration: Long): List<RowEvent> {
-        val state = doc.sound as MidiSound
+        val state = doc.sound
         if (cachedPatterns !== doc.patterns || cachedSound !== state) {
             clearRowCache()
             cachedPatterns = doc.patterns
@@ -229,9 +265,13 @@ class MidiAudio internal constructor(
         cachedRows[key]?.let { return it }
         val pattern = doc.patterns[patternIndex]
         val events = mutableListOf<RowEvent>()
-        state.tracks.forEachIndexed { lane, track ->
+        fun append(lane: Int, track: MidiTrack) {
             val cell = pattern.tracks[lane][row]
             if (!cell.isBlank) for (event in musicalRow(track, cell, duration)) events += RowEvent(track, event)
+        }
+        when (state) {
+            is MidiSound -> state.tracks.forEachIndexed(::append)
+            is StudioSound -> state.tracks.forEachIndexed { lane, t -> if (t.target == StudioTarget.USB_MIDI) append(lane, t.midi) }
         }
         // Stable sort retains lane order and the order emitted by musicalRow at equal offsets.
         events.sortBy { it.timed.offset }
@@ -287,9 +327,9 @@ class MidiAudio internal constructor(
             val invalid = document.system.errors(document).firstOrNull()
             if (!currentRequest(request)) return@submit
             if (invalid != null) error(invalid)
-            val state = document.sound as MidiSound
+            val state = document.sound
             connect()
-            require(state.tracks.all { it.port in outputs }) { "Bind each MIDI track to a connected output in Files → MIDI tracks, then play" }
+            require(usb.all { it.port in outputs }) { "Bind each MIDI track to a connected output in Files → tracks, then play" }
             val arranged = document.system.arranged(document)
             val first = order.coerceIn(arranged.orders.indices)
             problem = null
@@ -297,24 +337,33 @@ class MidiAudio internal constructor(
             val controls = chase(arranged, first, firstRow, request) ?: return@submit
             rowEvents(arranged, arranged.orders[first], firstRow, rowTimeUnits(arranged) / TICK_HZ)
             if (!currentRequest(request)) return@submit
-            for (track in state.tracks) {
-                if (!currentRequest(request)) return@submit
-                patch(track)
+            fun beginUsb() {
+                for (track in usb) {
+                    if (!currentRequest(request)) return
+                    patch(track)
+                }
+                for (write in controls) {
+                    if (!currentRequest(request)) return
+                    writeControl(write)
+                }
+                if (clock(state)) for (key in usb.map { it.port }.distinct()) {
+                    if (!currentRequest(request)) return
+                    send(key, 0xfa, count = 1)
+                    started.add(key)
+                }
             }
-            for (write in controls) {
-                if (!currentRequest(request)) return@submit
-                writeControl(write)
-            }
-            if (state.clock) for (key in state.tracks.map { it.port }.distinct()) {
-                if (!currentRequest(request)) return@submit
-                send(key, 0xfa, count = 1)
-                started.add(key)
-            }
-            if (!currentRequest(request)) return@submit
             activeRequest = request
-            position = PlaybackPosition(true, first, firstRow)
-            val start = now()
-            later(start) { playRow(arranged, first, firstRow, start, 0L) }
+            if (studio != null) {
+                rowCursor = -1
+                studio.play(first, firstRow)
+                followNative(0L, ::beginUsb)
+            } else {
+                beginUsb()
+                if (!currentRequest(request)) return@submit
+                position = PlaybackPosition(true, first, firstRow)
+                val start = now()
+                later(start) { playRow(arranged, first, firstRow, start, 0L) }
+            }
         }
     }
     private fun later(deadline: Long, action: () -> Unit) {
@@ -330,10 +379,31 @@ class MidiAudio internal constructor(
             send(key, 0xf8, count = 1)
         }
     }
+    // AAudio is the sole mixed-project row clock. Use its rendered row (including loop/seek and
+    // live image version), then dispatch only due offsets. Never queue future bytes at USB ports.
+    private fun followNative(fraction: Long, first: (() -> Unit)? = null, timeout: Long = now() + 10_000_000_000L) {
+        val master = checkNotNull(studio)
+        val doc = master.nextRow(rowCursor, nativeRow)
+        if (doc == null) {
+            check(now() < timeout) { "Studio audio clock did not advance; stopped both destinations" }
+            later(now() + 1_000_000L) { followNative(fraction, first, timeout) }
+            return
+        }
+        rowCursor = nativeRow[0]
+        val order = nativeRow[1].toInt()
+        val row = nativeRow[2].toInt()
+        val start = nativeRow[3]
+        check(start <= timeout) { "Studio audio presentation timestamp is unavailable" }
+        later(start) {
+            check(master.running()) { "Studio audio clock stopped" }
+            first?.invoke()
+            if (currentRequest(activeRequest)) playRow(doc, order, row, start, fraction)
+        }
+    }
 
     private fun playRow(doc: Song, order: Int, row: Int, start: Long, fraction: Long) {
-        val state = doc.sound as MidiSound
-        if (state.clock) pulseClock()
+        val sendClock = clock(doc.sound)
+        if (sendClock) pulseClock()
         if (!currentRequest(activeRequest)) return
         position = PlaybackPosition(true, order, row)
         val pattern = doc.orders[order]
@@ -349,7 +419,7 @@ class MidiAudio internal constructor(
             try {
                 while (index < events.size && events[index].timed.offset == offset && currentRequest(activeRequest)) {
                     val (track, timed) = events[index++]
-                    deliver(track, timed.trackId, timed.event)
+                    if (timed.trackId != borrowedUsbId) deliver(track, timed.trackId, timed.event)
                 }
             } finally {
                 grouping = false
@@ -359,11 +429,15 @@ class MidiAudio internal constructor(
 
         fun scheduleNext() {
             val eventAt = events.getOrNull(index)?.timed?.offset ?: Long.MAX_VALUE
-            val clockAt = if (state.clock && pulse < CLOCKS_PER_ROW) {
+            val clockAt = if (sendClock && pulse < CLOCKS_PER_ROW) {
                 duration * pulse / CLOCKS_PER_ROW
             } else Long.MAX_VALUE
             val offset = minOf(eventAt, clockAt)
             if (offset == Long.MAX_VALUE) {
+                if (studio != null) {
+                    later(start + duration - 2_000_000L) { followNative(endUnits % TICK_HZ) }
+                    return
+                }
                 val end = row + 1 == doc.patterns[pattern].length
                 val next = if (!end) order else if (order == doc.orders.lastIndex) doc.loopOrder else order + 1
                 later(start + duration) {
@@ -384,6 +458,7 @@ class MidiAudio internal constructor(
                 // A late worker still delivers the original groups in order. One callback at
                 // a time lets queued commands run between overdue groups.
                 later(start + due) {
+                    if (studio != null) check(studio.running()) { "Studio audio clock stopped" }
                     if (clockDue) {
                         pulseClock()
                         pulse++
@@ -398,16 +473,40 @@ class MidiAudio internal constructor(
         scheduleNext()
     }
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) = submit {
-        val track = (song?.sound as? MidiSound)?.tracks?.getOrNull(channel) ?: return@submit
+        val document = song ?: return@submit
+        val lane = (document.sound as? StudioSound)?.tracks?.getOrNull(channel)
+        if (studio != null) {
+            document.system.auditionProblem(document, channel, note, instrument, detune)?.let { error(it) }
+            borrowedUsbId = 0
+            notes.keys.toList().forEach { release(it, -1) }
+            if (lane?.target == StudioTarget.MONO) {
+                problem = null
+                studio.audition(channel, note, instrument, detune)
+                return@submit
+            }
+            studio.releaseAudition()
+        }
+        val track = lane?.midi ?: (document.sound as? MidiSound)?.tracks?.getOrNull(channel) ?: return@submit
         require(track.port in outputs) { "Bind this track to an available USB MIDI output before auditioning" }
         problem = null
+        if (studio != null) {
+            borrowedUsbId = track.id
+            notes.keys.toList().forEach { release(it, track.id) }
+        }
         notes.keys.toList().forEach { release(it, -1) }
         if (!position.playing) patch(track)
         deliver(track, -1, MusicalEvent.Attack(note, track.velocity / 127.0))
     }
-    override fun releaseAudition() = submit { notes.keys.toList().forEach { release(it, -1) } }
+    override fun releaseAudition() = submit {
+        borrowedUsbId = 0
+        studio?.releaseAudition()
+        notes.keys.toList().forEach { release(it, -1) }
+    }
     private fun halt() {
         generation++
+        studio?.stop()
+        studio?.releaseAudition()
+        borrowedUsbId = 0
         nextArrangement = null
         scheduled?.cancel(false)
         scheduled = null
@@ -429,7 +528,7 @@ class MidiAudio internal constructor(
         transportRequest.incrementAndGet()
         submit {
             halt()
-            val tracks = (song?.sound as? MidiSound)?.tracks.orEmpty().distinctBy { it.port to it.channel }
+            val tracks = usb.distinctBy { it.port to it.channel }
             for (t in tracks.filter { it.port in outputs }) {
                 for (cc in listOf(64, 123, 120)) send(t.port, 0xb0 + t.channel, cc, 0)
                 send(t.port, 0xe0 + t.channel, 0, 64)
@@ -441,12 +540,13 @@ class MidiAudio internal constructor(
         submit { halt() }
     }
     override fun position() = position
-    override fun error() = problem
+    override fun error(): String? = problem ?: studio?.error()
     @Synchronized override fun close() {
         if (closed) return
         closed = true
         worker.execute {
             try { halt() } finally {
+                studio?.close()
                 ports.close()
                 worker.shutdown()
             }

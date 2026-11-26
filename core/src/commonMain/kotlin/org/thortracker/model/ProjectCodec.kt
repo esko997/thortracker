@@ -181,7 +181,7 @@ object ProjectCodec {
         } catch (e: IllegalArgumentException) {
             throw ProjectFormatException("Project data is invalid: ${e.message}", e)
         }
-        val problems = system.structuralErrors(song)
+        val problems = song.system.structuralErrors(song)
         if (problems.isNotEmpty()) throw ProjectFormatException("Project data is invalid: ${problems.joinToString("; ")}")
         return song
     }

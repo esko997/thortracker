@@ -25,6 +25,19 @@ A fresh pattern note centers the wheel at its first strike, including a delayed 
 
 Gate is a percentage of each strike. Android runs 48 tracker ticks per second and four rows per quarter. At speed 6 the tempo is 120 BPM. Clock sends six pulses per row to each bound port. Play from cursor starts a new external transport run at that point. Pattern and song loops keep the clock running. Position-pointer and Continue messages are unsupported. MIDI output has no offline WAV render.
 
+## Internal instruments alongside USB MIDI
+
+Choose **Files → New Studio song** for internal synthesis with optional USB tracks.
+**Studio tracks and destinations…** assigns each of its one to eight tracks to Mono synth
+or USB MIDI. Mono patches are edited in Instrument; USB bank, program and CC settings stay
+with the track. See [Studio instruments](MANUAL.md#studio-internal-instruments).
+
+In a mixed Studio project, the internal audio engine supplies the row clock and image version
+used by USB dispatch. USB is paced against the native output-presentation estimate, not a
+second free-running song transport. This does not guarantee sample-accurate alignment at an
+external receiver. An unavailable route prevents playback; a failed route or audio clock
+stops both destinations. USB MIDI remains Android-only.
+
 ## Project and playback model
 
 A MIDI project uses the same patterns, cells, orders, project envelope and undo history as chip projects. Its sound data holds the track list and logical port preferences. Each track has a stable ID independent of its lane index, destination and channel. Open the project in the Android app to use its USB backend.
