@@ -94,12 +94,23 @@ class DeckShell(
     }
 
     /** The song to start with: the recovered working song, or null for the demo. */
-    fun recovered(): Song? = Files.readText(working)?.let { runCatching { ProjectCodec.decode(it) }.getOrNull() }
+    private var protectRecovery = false
+
+    fun recovered(): Song? {
+        if (!Files.exists(working)) return null
+        return runCatching {
+            ProjectCodec.decode(requireNotNull(Files.readText(working)) { "Cannot read working project" })
+        }.getOrElse {
+            protectRecovery = true
+            error("Working project preserved. ${it.message}. Use Save as for edits in this session.")
+            null
+        }
+    }
 
     /** Call every frame with the clock: writes the working song a second after it last changed. */
     fun autosave(now: ULong, force: Boolean = false) {
         val song = session.song
-        if (song === savedSong) return
+        if (protectRecovery || song === savedSong) return
         if (dirtySince == 0uL) dirtySince = now
         if (!force && now - dirtySince < 1000uL) return
         dirtySince = 0uL
@@ -152,7 +163,7 @@ class DeckShell(
     }
 
     override fun replace(song: Song) {
-        Files.write(previous, ProjectCodec.encode(session.song).encodeToByteArray())
+        if (!protectRecovery) Files.write(previous, ProjectCodec.encode(session.song).encodeToByteArray())
         session.replaceSong(song)
         currentFile = null
         autosave(0uL, force = true)
@@ -300,9 +311,8 @@ class DeckShell(
     }
 
     override fun recoverPrevious() {
-        val song = Files.readText(previous)?.let { runCatching { ProjectCodec.decode(it) }.getOrNull() }
-            ?: return error("There is no previous project to recover")
-        replace(song)
+        val text = Files.readText(previous) ?: return error("There is no readable previous project to recover")
+        runCatching { ProjectCodec.decode(text) }.fold(::replace) { error("Previous project preserved: ${it.message}") }
     }
 
     override fun exportKeymap() =
