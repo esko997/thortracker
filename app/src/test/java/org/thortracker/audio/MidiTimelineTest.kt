@@ -48,13 +48,26 @@ class MidiTimelineTest {
     private class Receiver : MidiOutputPorts, MidiConnection {
         override val endpoint = MidiEndpoint("port", "Test fixture", 1, 0)
         val trace = mutableListOf<Message>()
+        val packetSizes = mutableListOf<Int>()
         var onSend: (Message) -> Unit = {}
         override fun endpoints() = listOf(endpoint)
         override fun open(endpoint: MidiEndpoint, onOpened: (MidiConnection?) -> Unit) = onOpened(this)
         override fun send(data: ByteArray, offset: Int, count: Int, timestampNanos: Long) {
-            val message = Message(timestampNanos, data.slice(offset until offset + count).map { it.toInt() and 255 })
-            trace += message
-            onSend(message)
+            packetSizes += count
+            var i = offset
+            while (i < offset + count) {
+                val status = data[i].toInt() and 255
+                val length = when (status shr 4) {
+                    0xf -> 1
+                    0xc, 0xd -> 2
+                    else -> 3
+                }
+                require(status >= 128 && i + length <= offset + count)
+                val message = Message(timestampNanos, data.slice(i until i + length).map { it.toInt() and 255 })
+                trace += message
+                onSend(message)
+                i += length
+            }
         }
         override fun flush() {}
         override fun close() {}
@@ -63,6 +76,29 @@ class MidiTimelineTest {
     private fun oneRow(cell: Cell, speed: Int = 6, track: MidiTrack = MidiTrack(1, 0, "port")) =
         Song(patterns = listOf(Pattern(tracks = listOf(listOf(cell) + List(Songs.ROWS - 1) { Cell.BLANK }), length = 1)),
             orders = listOf(0), ticksPerRow = speed, sound = MidiSound(listOf(track), clock = true))
+
+    @Test fun simultaneousAttacksUseBoundedWholeMessagePackets() {
+        val clock = Clock()
+        val receiver = Receiver()
+        val tracks = List(64) { MidiTrack(it + 1, it % 16, "port") }
+        val cells = List(64) { lane -> List(Songs.ROWS) { row ->
+            if (row == 0) Cell(note = lane, effect = 9, param = lane) else Cell.BLANK
+        } }
+        val doc = Song(patterns = listOf(Pattern(tracks = cells)), orders = listOf(0),
+            sound = MidiSound(tracks, clock = true, nextId = 65))
+        MidiAudio(clock, { clock.now }, { _, _ -> receiver }) { fail(it) }.use { audio ->
+            audio.update(doc)
+            audio.play()
+            clock.advance(0)
+            assertEquals(listOf(1, 1, 240, 144), receiver.packetSizes)
+            for (lane in tracks.indices) {
+                assertEquals(listOf(0xb0 + lane % 16, 1, lane), receiver.trace[2 + lane * 2].bytes)
+                assertEquals(listOf(0x90 + lane % 16, 12 + lane, 100), receiver.trace[3 + lane * 2].bytes)
+            }
+            audio.stop()
+            assertEquals(64, receiver.trace.count { it.bytes[0] shr 4 == 8 })
+        }
+    }
 
     @Test fun fractionalClockKeepsItsPhaseAcrossLoopsAndLiveSpeedChange() {
         val clock = Clock()

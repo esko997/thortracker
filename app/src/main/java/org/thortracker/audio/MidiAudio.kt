@@ -32,7 +32,12 @@ class MidiAudio internal constructor(
     private var activeRequest = 0L
     private var scheduled: java.util.concurrent.ScheduledFuture<*>? = null
     // Android's send copies the bytes synchronously. Only this worker writes the buffer.
-    private val message = ByteArray(3)
+    // Coalesce only messages already due at one musical offset on the same USB port.
+    // Android's peripheral bridge otherwise receives one socket write per three-byte message.
+    private val message = ByteArray(240)
+    private var grouping = false
+    private var groupPort: String? = null
+    private var groupSize = 0
     private val outputs = mutableMapOf<String, MidiConnection>()
     private val opening = mutableSetOf<String>()
     private data class Address(val port: String, val channel: Int)
@@ -111,10 +116,21 @@ class MidiAudio internal constructor(
         if (soundChanged || (song.sound as? MidiSound)?.tracks.orEmpty().any { it.port !in outputs }) connect()
     }
     private fun send(key: String, status: Int, a: Int = 0, b: Int = 0, count: Int = 3) {
+        if (groupSize > 0 && (groupPort != key || groupSize + count > message.size)) sendGroup()
+        groupPort = key
+        message[groupSize++] = status.toByte()
+        if (count >= 2) message[groupSize++] = a.toByte()
+        if (count >= 3) message[groupSize++] = b.toByte()
+        if (!grouping) sendGroup()
+    }
+
+    private fun sendGroup() {
+        if (groupSize == 0) return
+        val key = requireNotNull(groupPort)
+        val count = groupSize
+        groupSize = 0
+        groupPort = null
         val out = outputs[key] ?: error("Choose a connected output under Files → MIDI tracks")
-        message[0] = status.toByte()
-        message[1] = a.toByte()
-        message[2] = b.toByte()
         try { out.send(message, 0, count, now()) }
         catch (e: java.io.IOException) {
             outputs.remove(key)?.close()
@@ -329,9 +345,15 @@ class MidiAudio internal constructor(
         var pulse = 1
 
         fun deliverAt(offset: Long) {
-            while (index < events.size && events[index].timed.offset == offset && currentRequest(activeRequest)) {
-                val (track, timed) = events[index++]
-                deliver(track, timed.trackId, timed.event)
+            grouping = true
+            try {
+                while (index < events.size && events[index].timed.offset == offset && currentRequest(activeRequest)) {
+                    val (track, timed) = events[index++]
+                    deliver(track, timed.trackId, timed.event)
+                }
+            } finally {
+                grouping = false
+                sendGroup()
             }
         }
 
