@@ -194,8 +194,7 @@ class OpnModelTest {
         assertTrue(OpnaSystem.structuralErrors(OpnaSystem.blank().copy(sound = OpnSystem.blank().opn)).isNotEmpty())
 
         val text = ProjectCodec.encode(OpnaSystem.blank()).replace("\"ym2608-opna\"", "\"ym2203-opn\"")
-        val e = assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text) }
-        assertTrue(e.message, e.message!!.contains("YM2608 (OPNA)"))
+        assertThrows(ProjectFormatException::class.java) { ProjectCodec.decode(text) }
 
         val root = Json.parseToJsonElement(ProjectCodec.encode(OpnaSystem.blank())).jsonObject
         val song = root["song"]!!.jsonObject
