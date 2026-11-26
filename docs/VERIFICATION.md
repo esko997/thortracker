@@ -1,5 +1,18 @@
 # Thor Tracker verification — 2026-11-13
 
+## Unreleased — Android MIDI beta
+
+- Android-only USB MIDI mode with addable tracks, four effect columns, named MIDI
+  CC controls, bank/program selection and optional MIDI Clock/Start/Stop output.
+- Create a project with **Files → New USB MIDI song (Beta)**. Connect to a computer
+  in USB MIDI peripheral mode, or to a class-compliant MIDI destination in USB host
+  mode. See the [USB MIDI guide](USB_MIDI.md) for routing and effect details.
+- MIDI playback is not yet available on Steam Deck/Linux or NextUI. Existing
+  chip backends remain available on their supported platforms.
+- Playback stops when the app leaves the foreground or the screen turns off.
+  MIDI timing depends on Android scheduling and the USB receiver; hard-real-time
+  delivery is not guaranteed.
+
 ## 1.0.0 — Android, Linux and NextUI
 
 Thor Tracker 1.0 brings together the controller-first editing workflow, chip-specific
