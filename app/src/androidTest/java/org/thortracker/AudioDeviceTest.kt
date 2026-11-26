@@ -292,7 +292,7 @@ class AudioDeviceTest {
             assertEquals(23, heard.studio.patch(1)!!.cutoff)
             assertEquals(sound.tracks, heard.studio.tracks)
             audio.stop()
-            await("mixed native timeline stops", audio) { !audio.pending() && !audio.position().playing }
+            await("mixed native timeline stops", audio) { audio.position().let { !it.pending && !it.playing } }
             audio.play(0, 2)
             cursor = -1
             assertEquals(23, nextRow().studio.patch(1)!!.cutoff)

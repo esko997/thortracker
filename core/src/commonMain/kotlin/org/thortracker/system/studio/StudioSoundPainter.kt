@@ -102,7 +102,7 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         val left = body.left + pad
         val right = body.right - pad
         var y = body.top + pad
-        val tabH = minOf(ink.dp(44f), body.height() * 0.13f)
+        val tabH = minOf(ink.unit * 2f, body.height() * 0.13f)
         for (i in modes.indices) {
             val r = modes[i]
             r.set(if (i == 0) left else body.centerX(), y, if (i == 0) body.centerX() else right, y + tabH)
@@ -114,7 +114,7 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
             if (on && st.instField == StudioSoundView.MODE) outline(c, r)
         }
         y += tabH + pad * 0.45f
-        val nameH = minOf(ink.dp(44f), body.height() * 0.125f)
+        val nameH = minOf(ink.unit * 2f, body.height() * 0.125f)
         val arrowW = minOf(nameH, (right - left) * 0.17f)
         name.set(left, y, right - 2f * arrowW, y + nameH)
         previousSlot.set(name.right, y, right - arrowW, y + nameH)
@@ -237,7 +237,7 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
     }
 
     private fun drawDial(c: Surface, r: Rect, param: Param, value: Int) {
-        val size = minOf(ink.unit, r.height() * 0.17f)
+        val size = minOf(ink.unit, r.height() * 0.23f)
         val labelH = size * 1.25f
         val cy = r.centerY()
         val cx = r.centerX()
