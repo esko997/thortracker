@@ -36,8 +36,8 @@ class MidiSongTest {
         assertTrue(trace.all { it.offset in 0L until 6000L && it.trackId == 4 })
         val automation = musicalRow(track, Cell(effect = 1, param = 100).withEffect(1, 2, 50)
             .withEffect(2, 4, 127).withEffect(3, 9, 64), 6000)
-        assertEquals(MusicalEvent.Pitch(-0.5), automation.last { it.event is MusicalEvent.Pitch }.event)
-        assertEquals(MusicalEvent.Expression(0.0), automation.last { it.event is MusicalEvent.Expression }.event)
+        assertEquals(-0.5, automation.map { it.event }.filterIsInstance<MusicalEvent.PitchStep>().sumOf { it.semitones }, 1e-12)
+        assertEquals(-1.0, automation.map { it.event }.filterIsInstance<MusicalEvent.ExpressionStep>().sumOf { it.amount }, 1e-12)
         assertTrue(automation.any { it.event == MusicalEvent.Parameter(0, 64 / 127.0) })
     }
 }

@@ -7,7 +7,8 @@ sealed interface MusicalEvent {
     data class Attack(val pitch: Int, val strength: Double) : MusicalEvent
     data class Release(val pitch: Int) : MusicalEvent
     data class Pitch(val semitones: Double) : MusicalEvent
-    data class Expression(val level: Double) : MusicalEvent
+    data class PitchStep(val semitones: Double) : MusicalEvent
+    data class ExpressionStep(val amount: Double) : MusicalEvent
     data class Parameter(val slot: Int, val level: Double) : MusicalEvent
     data object Cut : MusicalEvent
 }
@@ -40,19 +41,16 @@ fun musicalRow(track: MidiTrack, cell: Cell, duration: Long): List<TimedEvent> {
             9, 10 -> emit(0, MusicalEvent.Parameter(cell.effectCode(column) - 9, value / 127.0))
         }
     }
-    // Start each row-local ramp from a defined value, including after a seek.
-    slide?.let { bend ->
-        for (i in 0..5) emit(duration * i / 6, MusicalEvent.Pitch(bend * i / 5))
-    }
-    expression?.let { amount ->
-        for (i in 0..5) {
-            val base = if (amount < 0) 127 else 0
-            emit(duration * i / 6, MusicalEvent.Expression((base + amount * i / 5).coerceIn(0, 127) / 127.0))
-        }
+    if (cell.note >= 0) emit(delay, MusicalEvent.Pitch(0.0))
+    // Relative motion is resolved at dispatch: other tracks can write the same destination
+    // between increments. Each of the five increments contributes one fifth of the row amount.
+    for (i in 1..5) {
+        val at = duration * i / 6
+        slide?.let { emit(at, MusicalEvent.PitchStep(it / 5)) }
+        expression?.let { emit(at, MusicalEvent.ExpressionStep(it / (5 * 127.0))) }
     }
     if (cell.note == Cell.CUT) emit(delay, MusicalEvent.Cut)
     if (cell.note >= 0) {
-        if (slide == null) emit(delay, MusicalEvent.Pitch(0.0))
         if (arp != 0) strikes = maxOf(3, strikes)
         val span = duration - delay
         for (i in 0 until strikes) {

@@ -32,6 +32,11 @@ class MidiAudio internal constructor(
     private data class Key(val address: Address, val pitch: Int)
     private val notes = mutableMapOf<Key, MutableSet<Int>>()
     private val bent = mutableSetOf<Address>()
+    private val loweredExpression = mutableSetOf<Address>()
+    private val levels = mutableMapOf<Address, ChannelLevels>()
+    private data class ChannelLevels(var bend: Double = 0.0, var expression: Double = 1.0)
+    private data class Control(val address: Address, val cc: Int?)
+    private data class ControlWrite(val control: Control, val value: Int)
     private val sustain = mutableSetOf<Address>()
     private val started = mutableSetOf<String>()
     private val ports: MidiOutputPorts = makePorts({ submit { connect() } }, { message ->
@@ -121,60 +126,80 @@ class MidiAudio internal constructor(
             }
             is MusicalEvent.Release -> release(Key(addr, event.pitch), owner)
             MusicalEvent.Cut -> notes.keys.toList().forEach { release(it, owner) }
-            is MusicalEvent.Expression -> bytes(0xb0, 11, seven(event.level))
-            is MusicalEvent.Parameter -> {
-                val cc = track.bindings[event.slot].controller
-                bytes(0xb0, cc, seven(event.level))
-                if (cc == 64) { if (seven(event.level) >= 64) sustain.add(addr) else sustain.remove(addr) }
-            }
+            else -> applyControl(track, event)?.let(::writeControl)
+        }
+    }
+
+    /** Reduce actions in dispatch order. Bend is stored as wheel displacement so two tracks
+     * on one channel still share one wheel even when their configured ranges differ. */
+    private fun applyControl(track: MidiTrack, event: MusicalEvent): ControlWrite? {
+        val addr = Address(track.port, track.channel)
+        val state = levels.getOrPut(addr) { ChannelLevels() }
+        val cc = when (event) {
             is MusicalEvent.Pitch -> {
-                if (event.semitones != 0.0 || addr in bent) {
-                    val value = (8192 + 8192 * event.semitones / track.bendRange).roundToInt().coerceIn(0, 16383)
-                    bytes(0xe0, value and 127, value shr 7)
-                    if (value == 8192) bent.remove(addr) else bent.add(addr)
-                }
+                state.bend = (event.semitones / track.bendRange).coerceIn(-1.0, 1.0)
+                null
             }
+            is MusicalEvent.PitchStep -> {
+                state.bend = (state.bend + event.semitones / track.bendRange).coerceIn(-1.0, 1.0)
+                null
+            }
+            is MusicalEvent.ExpressionStep -> {
+                state.expression = (state.expression + event.amount).coerceIn(0.0, 1.0)
+                11
+            }
+            is MusicalEvent.Parameter -> {
+                val controller = track.bindings[event.slot].controller
+                if (controller == 11) state.expression = event.level
+                return ControlWrite(Control(addr, controller), (127 * event.level).roundToInt())
+            }
+            else -> return null
+        }
+        val value = if (cc == null) (8192 + 8192 * state.bend).roundToInt().coerceIn(0, 16383)
+            else (127 * state.expression).roundToInt()
+        return ControlWrite(Control(addr, cc), value)
+    }
+
+    private fun writeControl(write: ControlWrite) {
+        val (addr, cc) = write.control
+        val value = write.value
+        if (cc == null) {
+            if (value != 8192 || addr in bent) {
+                send(addr.port, 0xe0 + addr.channel, value and 127, value shr 7)
+                if (value == 8192) bent.remove(addr) else bent.add(addr)
+            }
+        } else {
+            send(addr.port, 0xb0 + addr.channel, cc, value)
+            if (cc == 11) { if (value < 127) loweredExpression.add(addr) else loweredExpression.remove(addr) }
+            if (cc == 64) { if (value >= 64) sustain.add(addr) else sustain.remove(addr) }
         }
     }
     private fun patch(t: MidiTrack) {
         t.bank?.let { send(t.port, 0xb0 + t.channel, 0, it shr 7); send(t.port, 0xb0 + t.channel, 32, it and 127) }
         t.program?.let { send(t.port, 0xc0 + t.channel, it) }
     }
-    // A seek replays only the final controller values before the cursor. Repeated orders reuse
-    // their pattern summary. Destination/channel keys account for tracks that share a receiver.
+    // Replay controller history silently through the live reducer. Relative motion means
+    // that identical pattern instances can finish at different values on successive orders.
     private fun chase(doc: Song, order: Int, row: Int) {
-        data class Setting(val address: Address, val controller: Int)
-        data class Value(val track: MidiTrack, val event: MusicalEvent)
-        val state = doc.sound as MidiSound
-        val summaries = mutableMapOf<Pair<Int, Int>, Map<Setting, Value>>()
-        val final = mutableMapOf<Setting, Value>()
+        val tracks = (doc.sound as MidiSound).tracks
+        val final = mutableMapOf<Control, ControlWrite>()
         for (orderIndex in 0..order) {
-            val patternId = doc.orders[orderIndex]
-            val pattern = doc.patterns[patternId]
+            val pattern = doc.patterns[doc.orders[orderIndex]]
             val length = if (orderIndex == order) row else pattern.length
-            val summary = summaries.getOrPut(patternId to length) {
-                val values = mutableMapOf<Setting, Value>()
-                for (r in 0 until length) {
-                    val events = state.tracks.flatMapIndexed { lane, track ->
-                        val cell = pattern.tracks[lane][r]
-                        if (cell.isBlank) emptyList() else musicalRow(track, cell, 60000).map { track to it }
-                    }.sortedBy { it.second.offset }
-                    for ((t, timed) in events) {
-                        val cc = when (val e = timed.event) {
-                            is MusicalEvent.Parameter -> t.bindings[e.slot].controller
-                            is MusicalEvent.Expression -> 11
-                            is MusicalEvent.Pitch -> -1
-                            else -> continue
-                        }
-                        values[Setting(Address(t.port, t.channel), cc)] = Value(t, timed.event)
-                    }
+            for (r in 0 until length) {
+                val events = tracks.flatMapIndexed { lane, track ->
+                    val cell = pattern.tracks[lane][r]
+                    if (cell.isBlank) emptyList() else musicalRow(track, cell, rowDuration(doc)).map { track to it }
+                }.sortedBy { it.second.offset }
+                for ((track, timed) in events) {
+                    applyControl(track, timed.event)?.let { final[it.control] = it }
                 }
-                values
             }
-            final.putAll(summary)
         }
-        final.values.forEach { deliver(it.track, it.track.id, it.event) }
+        final.values.forEach(::writeControl)
     }
+
+    private fun rowDuration(doc: Song) = 1_000_000_000L * doc.ticksPerRow / 48
 
     override fun play(order: Int, row: Int) {
         position = PlaybackPosition(pending = true)
@@ -207,7 +232,7 @@ class MidiAudio internal constructor(
         position = PlaybackPosition(true, order, row)
         val state = doc.sound as MidiSound
         val pattern = doc.patterns[doc.orders[order]]
-        val duration = 1_000_000_000L * doc.ticksPerRow / 48
+        val duration = rowDuration(doc)
         val actions = mutableListOf<Pair<Long, () -> Unit>>()
         if (state.clock) for (pulse in 0 until 6) actions += duration * pulse / 6 to {
             started.forEach { send(it, 0xf8) }
@@ -255,6 +280,8 @@ class MidiAudio internal constructor(
         notes.keys.forEach { attempt { send(it.address.port, 0x80 + it.address.channel, it.pitch + 12, 0) } }
         sustain.forEach { attempt { send(it.port, 0xb0 + it.channel, 64, 0) } }
         bent.forEach { attempt { send(it.port, 0xe0 + it.channel, 0, 64) } }
+        loweredExpression.forEach { attempt { send(it.port, 0xb0 + it.channel, 11, 127) } }
+        levels.clear(); loweredExpression.clear()
         started.clear(); notes.clear(); sustain.clear(); bent.clear()
         position = position.copy(playing = false, pending = false)
         failure?.let { problem = "USB cleanup failed: ${it.message}. Rebind and use Panic on the receiver."; report(problem!!) }
