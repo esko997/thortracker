@@ -19,6 +19,8 @@ val konanDeps = File(System.getProperty("user.home"), ".konan/dependencies")
 val buildEngine by tasks.registering(Exec::class) {
     val sources = listOf(
         engineSrc.file("chip_engine.c").asFile,
+        engineSrc.file("studio/studio_chip.c").asFile,
+        engineSrc.file("studio/mono_synth.c").asFile,
         engineSrc.file("chip_wav.c").asFile,
         engineSrc.file("cpu6502.c").asFile,
         engineSrc.file("huge_chip.c").asFile,
@@ -145,6 +147,7 @@ val buildEngine by tasks.registering(Exec::class) {
         listOf("third_party/maxmod/include", "third_party/maxmod/source").map { rootProject.layout.projectDirectory.dir(it).asFile } +
         listOf(sdlInclude.asFile, frontend.dir("native").asFile)
     inputs.files(sources, cxxFiles, engineSrc.files("chip_engine.h", "chip_wav.h", "huge_machine.h", "nes/nes_machine.h", "nes/nes_image.h",
+        "studio/mono_synth.h",
         "nes/nes_apu.h", "nes/nes_vrc6.h", "nes/nes_vrc7.h", "nes/nes_n163.h", "nes/nes_fds.h", "nes/nes_s5b.h", "nes/nes_epsm.h",
         "nes/nes_epsm_unit.h", "nes/nes_mmc5.h", "nes/nes_mmc5_pcm.h", "nes/nes_player.h",
         "generated/nes_player_image.h", "generated/nes_vrc6_player_image.h", "generated/nes_vrc7_player_image.h",

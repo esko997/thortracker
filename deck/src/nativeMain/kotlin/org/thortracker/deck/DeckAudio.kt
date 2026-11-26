@@ -41,6 +41,12 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
             if (result == 0) { hasImage = true; imageSong = song; null }
             else "Playing the last playable version, not your latest edits: the player rejected the song data (error $result)"
         } catch (e: IllegalArgumentException) {
+            if (song.sound is org.thortracker.system.studio.StudioSound) {
+                da_stop(); da_release_audition(); hasImage = false; imageSong = null
+                commandError = null
+                songError = e.message
+                return
+            }
             "Playing the last playable version, not your latest edits: ${e.message?.lineSequence()?.firstOrNull()}"
         }
     }
@@ -83,7 +89,10 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
 
     /** [next]'s engine, opening it in place of another system's (whose playback ends); null if it cannot open. */
     private fun open(next: SoundSystem): PlaybackEngine? {
-        if (next === system) return next.engine
+        if (next === system || (next.engine === org.thortracker.system.studio.StudioEngine && system?.engine === next.engine)) {
+            system = next
+            return next.engine
+        }
         da_close()
         system = null
         hasImage = false

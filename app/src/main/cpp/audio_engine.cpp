@@ -137,6 +137,7 @@ int Engine::audition(int channel, int note, int instrument, int fine) {
     if (r != CHIP_OK) return r;
     slot->seq = ++seq_;
     slot->channel = channel;
+    slot->image_version = control_image_.version;
     audition_slots_.publish();
     last_audition_ns_.store(now_ns() - t0);
     return CHIP_OK;
@@ -230,6 +231,7 @@ void Engine::record_row(uint64_t frame, int order, int row) {
     const uint32_t head = ring_head_.load(std::memory_order_relaxed);
     const uint32_t idx = head % kRing;
     ring_frame_[idx].store(frame, std::memory_order_relaxed);
+    ring_version_[idx].store(play_->image_version, std::memory_order_relaxed);
     ring_pos_[idx].store(((session_.load(std::memory_order_relaxed) & 0xFFFF) << 16) |
                              ((order & 0xFF) << 8) | (row & 0xFF),
                          std::memory_order_relaxed);
@@ -249,6 +251,7 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
         play_len_ = play_pos_ = 0;
         borrowed_channel_ = -1;
         session_.fetch_add(1, std::memory_order_relaxed);
+        session_start_.store(ring_head_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
     if (play_ && !after(play_->seq, stop_seq_.load(std::memory_order_acquire))) play_ = nullptr;
     if (audition_slots_.consume()) {
@@ -306,6 +309,10 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     i = 0;
     while (aud_ && i < frames) {
         if (aud_pos_ >= aud_len_) {
+            if (ops_->apply_audition_image && front_image_ && after(front_image_->version, aud_->image_version)) {
+                ops_->apply_audition_image(aud_->machine, front_image_->data);
+                aud_->image_version = front_image_->version;
+            }
             const int k = ops_->tick(aud_->machine, aud_buf_);
             if (k <= 0) {
                 if (k < 0) faults_.fetch_add(1, std::memory_order_relaxed);
@@ -409,6 +416,26 @@ int64_t Engine::position() {
     const int64_t pos = best >= 0 ? best : earliest;
     if (pos < 0) return last_position_.load() | kPlayingBit | pending;
     return pack_position(true, static_cast<int>((pos >> 8) & 0xFF), static_cast<int>(pos & 0xFF)) | pending;
+}
+
+int Engine::next_row(int64_t cursor, int64_t out[5]) {
+    if (start_pending()) return 0;
+    if (!playing_.load(std::memory_order_acquire) || stream_dead_.load(std::memory_order_acquire)) return -1;
+    const auto head = ring_head_.load(std::memory_order_acquire);
+    const uint32_t at = cursor < 0 ? session_start_.load(std::memory_order_acquire) : static_cast<uint32_t>(cursor);
+    if (at == head) return 0;
+    if (head - at > kRing) return -2;
+    const auto idx = at % kRing;
+    const auto pos = ring_pos_[idx].load(std::memory_order_relaxed);
+    const auto frame = static_cast<int64_t>(ring_frame_[idx].load(std::memory_order_relaxed));
+    const auto version = ring_version_[idx].load(std::memory_order_relaxed);
+    if ((pos >> 16) != (session_.load() & 0xffff) || ring_head_.load(std::memory_order_acquire) - at > kRing) return -2;
+    // This is a control worker, never the audio callback. Use the same latency estimate as the playhead.
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+    const int64_t presented = presented_frame_locked();
+    out[0] = static_cast<uint32_t>(at + 1); out[1] = (pos >> 8) & 255; out[2] = pos & 255;
+    out[3] = now_ns() + (frame - presented) * 1000000000LL / kSampleRate; out[4] = version;
+    return 1;
 }
 
 void Engine::stats(int64_t* out, int count) {

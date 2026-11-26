@@ -449,7 +449,8 @@ object SoundSystems {
     /** The system new songs use until New lets the user choose. */
     val DEFAULT: SoundSystem = GbSystem
 
-    fun find(id: String): SoundSystem? = ALL.firstOrNull { it.id == id }
+    fun find(id: String): SoundSystem? = if (id == org.thortracker.system.studio.StudioSystem.ID)
+        org.thortracker.system.studio.StudioSound().system else ALL.firstOrNull { it.id == id }
 
     /** @throws IllegalArgumentException naming the unknown [id] and the known ones. */
     fun of(id: String): SoundSystem = find(id)

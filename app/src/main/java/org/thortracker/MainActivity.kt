@@ -1143,15 +1143,18 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     private fun selectAudio(song: Song) {
-        val midi = song.sound is org.thortracker.system.midi.MidiSound
-        if (audio != null && midi == (audio is org.thortracker.audio.MidiAudio)) return
+        val studio = song.sound as? org.thortracker.system.studio.StudioSound
+        val mixed = studio?.tracks?.any { it.target == org.thortracker.system.studio.StudioTarget.USB_MIDI } == true
+        val midi = mixed || song.sound is org.thortracker.system.midi.MidiSound
+        val currentMidi = audio as? org.thortracker.audio.MidiAudio
+        if (if (midi) currentMidi?.mixedStudio == mixed else audio is ChipAudio) return
         transport.halt()
         transport.audio = null
         audio?.close()
         audio = null
         initialized = false
-        audio = if (midi) org.thortracker.audio.MidiAudio(applicationContext) { message ->
-            main.post { if (!isDestroyed && session.song.sound is org.thortracker.system.midi.MidiSound) showError(message) }
+        audio = if (midi) org.thortracker.audio.MidiAudio(applicationContext, mixed) { message ->
+            main.post { if (!isDestroyed && audio is org.thortracker.audio.MidiAudio) showError(message) }
         } else ChipAudio(applicationContext)
         if (!midi) loadRhythmRom()
         transport.audio = audio

@@ -5,6 +5,11 @@ four effect columns, CC automation and outbound Clock/Start/Stop. MIDI playback
 remains Android-only; Linux/NextUI retain their existing chip backends.
 See [USB MIDI setup and limitations](docs/USB_MIDI.md).
 
+**Next: Studio internal instruments.** A portable mono synth on Android, Linux and NextUI,
+with one to eight tracks, 32 patch slots and Sound/Advanced editing. Android Studio projects
+can combine internal voices and USB MIDI destinations; USB output remains Android-only.
+The synth is an original subtractive instrument, not a circuit model of a particular device.
+
 ## Goal
 
 A controller-first, multi-system music tracker for Android, Steam Deck / x86_64 Linux

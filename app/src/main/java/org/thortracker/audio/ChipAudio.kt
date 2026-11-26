@@ -8,6 +8,7 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.thortracker.model.Song
+import org.thortracker.system.studio.StudioEngine
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.ay.AyVgmRenderer
@@ -52,7 +53,7 @@ import org.thortracker.system.ym2612.YmExportRenderer
  *   release, resuming at that channel's next note.
  * - Work runs on one control thread; the audio callback never allocates or waits.
  */
-class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
+class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixedStudio: Boolean = false) : TrackerAudio {
     private val executor = ScheduledThreadPoolExecutor(1) { runnable ->
         Thread(runnable, "thor-audio-control").apply { isDaemon = true }
     }.apply {
@@ -82,6 +83,23 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
     private var hasImage = false
     private var idleCheck: ScheduledFuture<*>? = null
     private var retrySong: Song? = null
+    // Mixed only: resolve the native row's image version to the exact USB score heard at that boundary.
+    private val scores = if (mixedStudio) LinkedHashMap<Int, Song>() else null
+    internal fun studioClockAlive(): Boolean = synchronized(handleLock) {
+        handle != 0L && !closed && songError == null && nativeClockAlive(handle)
+    }
+
+    internal fun studioRow(cursor: Long, row: LongArray): Song? = synchronized(handleLock) {
+        if (pendingTransport.get() != 0) return null
+        error()?.let { throw IllegalStateException(it) }
+        check(handle != 0L && !closed) { "Studio audio output closed" }
+        when (nativeNextRow(handle, cursor, row)) {
+            0 -> null
+            1 -> checkNotNull(scores?.get(row[4].toInt())) { "Studio edits outran USB dispatch; stopped both destinations" }
+            -2 -> throw IllegalStateException("USB worker missed the audio row history; stopped both destinations")
+            else -> throw IllegalStateException("Studio audio clock stopped")
+        }
+    }
 
     override fun update(song: Song) {
         synchronized(songLock) {
@@ -250,18 +268,36 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
             return
         }
         try {
-            song.system.engine.lower(song, image)
+            if (mixedStudio) StudioEngine.lowerInternal(song, image) else song.system.engine.lower(song, image)
         } catch (e: IllegalArgumentException) {
+            if (song.system.engine === StudioEngine) {
+                hasImage = false
+                nativeStop(h)
+                nativeReleaseAudition(h)
+                songError = e.message ?: "Invalid Studio project"
+                return
+            }
             songError = "Playing the last playable version, not your latest edits: ${e.message ?: "invalid song"}"
             return
         }
         imageVersion++
-        val result = nativeSetImage(h, image, imageVersion)
+        val result = if (scores == null) nativeSetImage(h, image, imageVersion) else synchronized(handleLock) {
+            scores[imageVersion] = song.system.arranged(song)
+            if (scores.size > 64) scores.remove(scores.keys.first())
+            nativeSetImage(h, image, imageVersion)
+        }
         if (result == 0) {
             hasImage = true
             imageSong = song
             songError = null
         } else {
+            if (song.system.engine === StudioEngine) {
+                hasImage = false
+                nativeStop(h)
+                nativeReleaseAudition(h)
+                songError = "Studio player rejected its image (layout error $result)"
+                return
+            }
             songError = "Playing the last playable version, not your latest edits: the player rejected the song data (layout error $result)"
         }
     }
@@ -271,7 +307,10 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
      * transport, stream and image go with it). 0 when it cannot be created ([deviceError] says why).
      */
     private fun engineFor(next: SoundSystem): Long {
-        if (next === system) return handle
+        if (next === system || (next.engine === StudioEngine && system?.engine === StudioEngine)) {
+            system = next
+            return handle
+        }
         synchronized(handleLock) {
             val old = handle
             handle = 0L
@@ -406,6 +445,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context) : TrackerAudio {
         @JvmStatic private external fun nativeReleaseAudition(handle: Long)
         @JvmStatic private external fun nativeSuspendIfIdle(handle: Long): Boolean
         @JvmStatic private external fun nativePosition(handle: Long): Long
+        @JvmStatic private external fun nativeNextRow(handle: Long, cursor: Long, row: LongArray): Int
+        @JvmStatic private external fun nativeClockAlive(handle: Long): Boolean
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray

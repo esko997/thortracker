@@ -122,7 +122,7 @@ class ViewController(val session: EditorSession, var state: ViewState) {
                 if (!editHeld) return false
                 editHeld = false
                 editRelease(!editUsed)
-                stopAudition()
+                if (!auditionHeld) stopAudition()
                 editGesture?.let { session.endGesture(it) }
                 editGesture = null
                 true

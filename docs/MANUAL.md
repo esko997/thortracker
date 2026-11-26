@@ -234,6 +234,44 @@ For example, Game Boy has pulse, wave and noise banks, with fifteen slots in eac
 shared 32-sample wavetables. Other systems use their own banks, envelopes, operators and sample
 maps. See [Instrument workflow](#instrument-workflow) and the [instrument guide](INSTRUMENT_PANELS.md).
 
+### Studio: internal instruments
+
+Choose **Files → New Studio song** to start with one mono-synth track. Open
+**Files → Studio tracks and destinations…** to add or remove tracks, up to eight.
+Each track has its own voice; instrument numbers select from 32 shared patch slots.
+A blank instrument cell keeps the track's previous patch.
+
+In **Instrument**, choose a slot on the left and edit its **Sound** or **Advanced** face
+on the right. Both edit the same patch. Up/Down selects slots; Left/Right selects a control;
+hold A and press Left/Right to adjust it. Hold X to audition. Touch the waveform buttons,
+drag knobs vertically, or move the output sliders. Advanced also offers exact numeric entry.
+
+The synth has saw and square waves, cutoff, resonance, filter-envelope depth and decay,
+accent amount, glide, tuning and output level. Accent changes the response to accented rows;
+glide applies to tied notes. Clearing a slot restores its Init patch.
+
+Studio offers four effect columns. Codes `0`–`8` provide the same arpeggio, pitch/expression
+slides, repeats, delay, echoes and velocity controls as the [MIDI workflow](USB_MIDI.md).
+Mono tracks add:
+
+| Code | Action |
+| --- | --- |
+| `9xx` | Filter cutoff, `00`–`7F` |
+| `Axx` | Resonance, `00`–`7F` |
+| `Bxx` | Accent strength for this row's attacks, `00`–`7F` |
+| `C01` | Tie the final attack into the following row's first note without retriggering; use the patch's glide |
+| `C00` | Disable the tie |
+
+A blank row or OFF breaks a tie. Mono projects support Scala tunings and WAV rendering.
+The synth is an original software instrument, not a classic-chip emulator or a circuit-exact 303.
+
+On Android, a track's **Destination** can instead be **USB MIDI**. Configure its port,
+channel and CC assignments in the same track menu. USB tracks use `9xx`/`Axx` for named CCs,
+not filter controls; accent and tie are Mono-only. Use instrument `01` for USB track defaults
+and choose its bank/program in the track menu. Mixed projects do not support custom tunings
+or offline WAV rendering. Deck and NextUI keep mixed projects editable but refuse playback
+until every track targets Mono; they never silently omit the USB parts.
+
 ### Game Boy Advance: Maxmod samples and XM
 
 Choose **Files → New blank song → Game Boy Advance (Maxmod)**, or its **Prism Circuit** demo.

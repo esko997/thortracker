@@ -309,6 +309,103 @@ class ControllerWorkflowTest {
         }
     }
 
+    @Test fun studioPatchesTracksAndPlaybackSurviveRecovery() {
+        fun sound() = tracker.session.song.sound as org.thortracker.system.studio.StudioSound
+        fun tracks() { openFiles(); clickRow("Studio tracks and destinations…") }
+        fun screenshot(name: String) {
+            instrumentation.runOnMainSync {
+                val image = android.graphics.Bitmap.createBitmap(tracker.width, tracker.height,
+                    android.graphics.Bitmap.Config.ARGB_8888)
+                try {
+                    tracker.draw(android.graphics.Canvas(image))
+                    File(activity.cacheDir, name).outputStream().use {
+                        check(image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+                    }
+                } finally { image.recycle() }
+            }
+        }
+        openFiles()
+        clickRow("New Studio song")
+        clickRow("Continue")
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_B)
+        instrumentation.runOnMainSync {
+            assertEquals(ViewKind.INSTRUMENT, tracker.state.kind)
+            assertEquals(1, tracker.state.instrument)
+        }
+        tap(KeyEvent.KEYCODE_DPAD_DOWN)
+        chord(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_RIGHT)
+        instrumentation.runOnMainSync {
+            assertEquals(2, tracker.state.instrument)
+            assertEquals(1, sound().patch(2)!!.waveform)
+            assertEquals("Editing slot 2 must not change slot 1", 0, sound().patch(1)!!.waveform)
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync { assertEquals(0, sound().patch(2)!!.waveform) }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_B)
+        instrumentation.runOnMainSync { assertEquals(1, sound().patch(2)!!.waveform) }
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        chord(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_LEFT)
+        instrumentation.runOnMainSync {
+            assertEquals("Left/right must stay on the same instrument", 2, tracker.state.instrument)
+            assertEquals(59, sound().patch(2)!!.cutoff)
+        }
+        val patch = sound().patch(2)
+        repeat(3) { tap(KeyEvent.KEYCODE_DPAD_LEFT) }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertTrue(tracker.state.soundPanel("studio-mono").advanced)
+            assertEquals("Changing editor face preserves the exact patch", patch, sound().patch(2))
+        }
+        screenshot("studio-advanced.png")
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertFalse(tracker.state.soundPanel("studio-mono").advanced)
+            assertEquals(patch, sound().patch(2))
+        }
+        screenshot("studio-sound.png")
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_DPAD_UP)
+        tracks()
+        clickRow("Add track")
+        tap(KeyEvent.KEYCODE_BUTTON_R1)
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertEquals(1, tracker.state.channel)
+            val cell = tracker.session.song.patterns[0].tracks[1][0]
+            assertTrue("Controller entry creates a playable note", cell.note >= 0)
+            assertEquals("Pattern assignment uses the selected saved patch", 2, cell.instrument)
+        }
+        tracks()
+        clickRow("Remove track 2")
+        clickRow("Remove track 2")
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertEquals(2, sound().tracks.size)
+            assertEquals(2, tracker.session.song.patterns[0].tracks[1][0].instrument)
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(true)
+        awaitTrue("Studio advances through its pattern") {
+            var advancing = false
+            instrumentation.runOnMainSync { advancing = tracker.playback.playing && tracker.playback.row >= 2 }
+            advancing
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(false)
+        var saved = ""
+        instrumentation.runOnMainSync {
+            saved = org.thortracker.model.ProjectCodec.encode(tracker.session.song)
+            activity.finish()
+        }
+        instrumentation.waitForIdleSync()
+        launchActivity()
+        instrumentation.runOnMainSync {
+            assertEquals("Recovery preserves patch edits, destinations and pattern assignments",
+                saved, org.thortracker.model.ProjectCodec.encode(tracker.session.song))
+            tracker.session.replaceSong(Songs.blank())
+            assertSame(GbSystem, tracker.session.song.system)
+        }
+    }
+
     @Test fun midiRouteControlsAndDocumentPickerRoundTrip() {
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("physicalMidiCapture") == "yes")
         fun tracks() { openFiles(); clickRow("MIDI tracks and USB outputs…") }

@@ -83,6 +83,32 @@ The GBA system (`"gba-maxmod"`, 0.45.0) runs Maxmod's portable MAS player and GB
 with pinned legacy converter/runtime semantics, and exports eight-channel XM.
 See [Game Boy Advance / Maxmod](#game-boy-advance-maxmod-gba-maxmod).
 
+## Studio internal instruments (`studio-mono`)
+
+Studio shares the addable-track model and `musicalRow` expansion with USB MIDI, but its
+internal events are not encoded as MIDI bytes. One to eight tracks address 32 saved patches.
+`StudioEngine` lowers played patterns to the bounded `STM1` image: at most 32,768 internal
+actions, with reused patterns stored once. `studio/studio_chip.c` plays those actions at
+sample offsets inside 48 Hz tracker ticks through the ordinary `ChipEngineOps` interface.
+
+Each internal lane owns a `MonoSynth`: PolyBLEP saw/square, resonant TPT low-pass,
+filter envelope, accent, glide and smoothed output/parameter changes. Its sample loop
+allocates nothing and calls no transcendental functions. Float Hz and a tuned frequency
+table retain internal tuning independently of MIDI's note and controller representation.
+The implementation is original GPL-3.0-or-later code, not circuit-exact emulation.
+
+Android mixed projects use the native render-row ring, including image versions and
+presentation-time estimates, as their single song clock. The USB worker schedules only
+already-due events and retains the existing bounded port grouping and cancellation rules.
+Missing row history, stale document versions and failed destinations stop both outputs.
+Linux/NextUI preserve USB track settings but refuse mixed playback; pure Mono uses the
+same native synth through SDL. WAV rendering rejects USB destinations.
+
+Seeking reconstructs patch, tie and automation history before replaying up to 96 ticks
+of recent whole rows. Older oscillator, filter and envelope state is approximate.
+The optional `apply_audition_image` engine operation updates held Studio patches without
+restarting their voice; other engines retain their existing audition behavior.
+
 ## Chip engine interface (what a new sound system implements)
 
 Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are

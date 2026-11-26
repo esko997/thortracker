@@ -76,6 +76,10 @@ public:
     // Any thread. Packed: bit 41 = start pending callback acknowledgement, bit 40 = playing,
     // bits 16..23 order, bits 0..7 row; -1 = never played and no start pending.
     int64_t position();
+    // Studio USB worker: next recorded row of this start and its AAudio presentation deadline.
+    // cursor -1 = first row. 1 = row, 0 = preparing/not rendered, -1 = stopped, -2 = overrun.
+    int next_row(int64_t cursor, int64_t out[5]);
+    bool clock_alive() const { return playing_.load(std::memory_order_acquire) && !stream_dead_.load(std::memory_order_acquire); }
     void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
 
     // AAudio callbacks.
@@ -131,6 +135,8 @@ private:
     static constexpr int kRing = 64;
     std::atomic<uint64_t> ring_frame_[kRing];
     std::atomic<uint32_t> ring_pos_[kRing];  // session << 16 | order << 8 | row
+    std::atomic<uint32_t> ring_version_[kRing];
+    std::atomic<uint32_t> session_start_{0};
     std::atomic<uint32_t> ring_head_{0};
     std::atomic<int64_t> last_position_{-1};
     std::atomic<int64_t> frames_written_{0};

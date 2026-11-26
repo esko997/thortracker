@@ -2,13 +2,23 @@ package org.thortracker.system.midi
 
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.MenuContext
+import org.thortracker.system.studio.*
 
-fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<String, String>>, panic: () -> Unit) {
+fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<String, String>>, panic: () -> Unit, usbAvailable: Boolean = true) {
     val song = session.song
-    val sound = song.sound as MidiSound
+    val legacy = song.sound as? MidiSound
+    val studio = song.sound as? StudioSound
     val index = session.selection.channel
-    val track = sound.tracks[index]
+    val lane = studio?.tracks?.get(index)
+    val track = lane?.midi ?: requireNotNull(legacy).tracks[index]
+    val external = lane == null || lane.target == StudioTarget.USB_MIDI
+    fun editLane(label: String, change: (StudioTrack) -> StudioTrack) {
+        session.apply(label) { doc -> doc.copy(sound = doc.studio.copy(tracks = doc.studio.tracks.map {
+            if (it.midi.id == track.id) change(it) else it
+        })) }
+    }
     fun edit(label: String, change: (MidiTrack) -> MidiTrack) {
+        if (studio != null) return editLane(label) { it.copy(midi = change(it.midi)) }
         session.apply(label) { doc ->
             val state = doc.sound as MidiSound
             doc.copy(sound = state.copy(tracks = state.tracks.map { if (it.id == track.id) change(it) else it }))
@@ -23,18 +33,29 @@ fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<St
             }
         }
     val output = ports.firstOrNull { it.first == track.port }?.second ?: "Bind USB output"
-    menu.menu("MIDI track ${track.id}", buildList {
-        add(output to {
-            if (ports.isEmpty()) menu.error("Connect a data cable and select MIDI under Android USB preferences, or attach a class-compliant USB instrument. Reopen MIDI tracks to refresh.")
+    val clock = studio?.clock ?: requireNotNull(legacy).clock
+    val count = song.system.channels.size
+    menu.menu("${if (studio == null) "MIDI" else "Studio"} track ${track.id}", buildList {
+        if (lane != null) add("Destination · ${if (external) "USB MIDI" else "Mono"}" to {
+            menu.menu("Track destination", listOf(
+                "Mono synth" to { editLane("Assign Mono") { it.copy(target = StudioTarget.MONO) } },
+                "USB MIDI" to {
+                    if (usbAvailable) editLane("Assign USB MIDI") { it.copy(target = StudioTarget.USB_MIDI) }
+                    else menu.error("USB MIDI output is available on Android only")
+                }))
+        })
+        if (external) add((if (usbAvailable) output else "USB MIDI · Android only") to {
+            if (!usbAvailable) menu.error("This USB route is preserved. Play it on Android or choose Mono explicitly.")
+            else if (ports.isEmpty()) menu.error("Connect a data cable and select MIDI under Android USB preferences, or attach a class-compliant USB instrument. Reopen tracks to refresh.")
             else menu.menu("Send to USB port", ports.map { (key, label) -> label to { edit("Bind MIDI output") { it.copy(port = key) } } })
         })
-        add(number("Channel", track.channel + 1, 1..16) { t, v -> t.copy(channel = v - 1) })
+        if (external) add(number("Channel", track.channel + 1, 1..16) { t, v -> t.copy(channel = v - 1) })
         add(number("Velocity", track.velocity, 1..127) { t, v -> t.copy(velocity = v) })
         add(number("Gate % of step", track.gate, 1..100) { t, v -> t.copy(gate = v) })
-        add(number("Receiver bend range", track.bendRange, 1..24) { t, v -> t.copy(bendRange = v) })
-        add(number("Bank (-1 off)", track.bank ?: -1, -1..16383) { t, v -> t.copy(bank = v.takeIf { it >= 0 }) })
-        add(number("Program (0 off)", track.program?.plus(1) ?: 0, 0..128) { t, v -> t.copy(program = (v - 1).takeIf { it >= 0 }) })
-        track.bindings.forEachIndexed { i, binding ->
+        if (external) add(number("Receiver bend range", track.bendRange, 1..24) { t, v -> t.copy(bendRange = v) })
+        if (external) add(number("Bank (-1 off)", track.bank ?: -1, -1..16383) { t, v -> t.copy(bank = v.takeIf { it >= 0 }) })
+        if (external) add(number("Program (0 off)", track.program?.plus(1) ?: 0, 0..128) { t, v -> t.copy(program = (v - 1).takeIf { it >= 0 }) })
+        if (external) track.bindings.forEachIndexed { i, binding ->
             add(number("${binding.name} CC", binding.controller, 0..119) { t, v ->
                 t.copy(bindings = t.bindings.mapIndexed { j, b -> if (i == j) b.copy(controller = v) else b })
             })
@@ -46,16 +67,18 @@ fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<St
                 }
             })
         }
-        add("Clock / Start / Stop · ${if (sound.clock) "on" else "off"}" to {
-            session.apply("Toggle MIDI clock") { it.copy(sound = sound.copy(clock = !sound.clock)) }
+        if (external && usbAvailable) add("Clock / Start / Stop · ${if (clock) "on" else "off"}" to {
+            session.apply("Toggle MIDI clock") { it.copy(sound = studio?.copy(clock = !clock) ?: requireNotNull(legacy).copy(clock = !clock)) }
         })
-        if (sound.tracks.size < 64) add("Add track" to { session.apply("Add MIDI track") { it.addMidiTrack() }; Unit })
-        if (sound.tracks.size > 1) add("Remove track ${track.id}" to {
+        if (count < (if (studio == null) 64 else StudioSound.MAX_TRACKS)) add("Add track" to {
+            session.apply("Add track") { if (studio != null) it.addStudioTrack() else it.addMidiTrack() }; Unit
+        })
+        if (count > 1) add("Remove track ${track.id}" to {
             menu.menu("Remove track from every pattern?", listOf("Remove track ${track.id}" to {
-                session.apply("Remove MIDI track") { it.removeMidiTrack(index) }; Unit
+                session.apply("Remove track") { if (studio != null) it.removeStudioTrack(index) else it.removeMidiTrack(index) }; Unit
             }))
         })
-        add("Panic…" to { menu.menu("Silence bound channels, including other performers?", listOf("Send panic" to panic)) })
+        if (external && usbAvailable) add("Panic…" to { menu.menu("Silence bound channels, including other performers?", listOf("Send panic" to panic)) })
         song.system.warnings(song).forEach { add(it to { menu.status(it) }) }
     })
 }

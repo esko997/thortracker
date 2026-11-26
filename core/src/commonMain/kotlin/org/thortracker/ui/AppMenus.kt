@@ -518,10 +518,14 @@ class AppMenus(
             "Open project" to { confirmReplace { host.openProject() } },
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
+            "New Studio song" to { confirmReplace { host.replace(org.thortracker.system.studio.StudioSound().system.blank()) } },
         ) + (if (host.supportsUsbMidi) listOf<Pair<String, () -> Unit>>(
             "New USB MIDI song (Beta)" to { confirmReplace { host.replace(org.thortracker.system.midi.MidiSound().system.blank()) } }
         ) else emptyList()) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + (if (session.song.sound is org.thortracker.system.midi.MidiSound) listOf<Pair<String, () -> Unit>>(
             "MIDI tracks and USB outputs…" to { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic) }
+        ) else if (session.song.sound is org.thortracker.system.studio.StudioSound) listOf(
+            "Studio tracks and destinations…" to { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic, host.supportsUsbMidi) },
+            "Export .wav…" to ::exportWav,
         ) else listOf(
             "Export .wav…" to ::exportWav,
             "Convert to system…" to { chooseSystem("Convert to") { conversionPreview(it) } },
