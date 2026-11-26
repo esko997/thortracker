@@ -2,10 +2,13 @@ package org.thortracker.audio
 
 import android.content.Context
 import org.thortracker.midi.*
+import org.thortracker.model.Pattern
 import org.thortracker.model.Song
+import org.thortracker.model.Songs
 import org.thortracker.system.midi.*
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 /** One worker owns every connection, scheduled row, and sounding note. Nothing is queued ahead in the receiver. */
@@ -25,7 +28,11 @@ class MidiAudio internal constructor(
     private var song: Song? = null
     private var nextArrangement: Song? = null
     private var generation = 0L
+    private val transportRequest = AtomicLong()
+    private var activeRequest = 0L
     private var scheduled: java.util.concurrent.ScheduledFuture<*>? = null
+    // Android's send copies the bytes synchronously. Only this worker writes the buffer.
+    private val message = ByteArray(3)
     private val outputs = mutableMapOf<String, MidiConnection>()
     private val opening = mutableSetOf<String>()
     private data class Address(val port: String, val channel: Int)
@@ -39,6 +46,12 @@ class MidiAudio internal constructor(
     private data class ControlWrite(val control: Control, val value: Int)
     private val sustain = mutableSetOf<Address>()
     private val started = mutableSetOf<String>()
+    private data class RowKey(val pattern: Int, val row: Int, val duration: Long)
+    private data class RowEvent(val track: MidiTrack, val timed: TimedEvent)
+    private val cachedRows = LinkedHashMap<RowKey, List<RowEvent>>(16, 0.75f, true)
+    private var cachedPatterns: List<Pattern>? = null
+    private var cachedSound: MidiSound? = null
+    private var cachedEvents = 0
     private val ports: MidiOutputPorts = makePorts({ submit { connect() } }, { message ->
         submit { halt(); problem = message; report(message) }
     })
@@ -88,18 +101,21 @@ class MidiAudio internal constructor(
     }
 
     override fun update(song: Song) = submit {
-        if (this.song?.sound != song.sound) halt()
+        val soundChanged = this.song?.sound != song.sound
+        if (soundChanged) halt()
         this.song = song
         if (position.playing) {
             song.system.errors(song).firstOrNull()?.let { error(it) }
             nextArrangement = song.system.arranged(song)
         }
-        connect()
+        if (soundChanged || (song.sound as? MidiSound)?.tracks.orEmpty().any { it.port !in outputs }) connect()
     }
-    private fun send(key: String, vararg bytes: Int) {
+    private fun send(key: String, status: Int, a: Int = 0, b: Int = 0, count: Int = 3) {
         val out = outputs[key] ?: error("Choose a connected output under Files → MIDI tracks")
-        val data = ByteArray(bytes.size) { bytes[it].toByte() }
-        try { out.send(data, 0, data.size, now()) }
+        message[0] = status.toByte()
+        message[1] = a.toByte()
+        message[2] = b.toByte()
+        try { out.send(message, 0, count, now()) }
         catch (e: java.io.IOException) {
             outputs.remove(key)?.close()
             connected = outputs.keys.toSet()
@@ -176,89 +192,188 @@ class MidiAudio internal constructor(
     }
     private fun patch(t: MidiTrack) {
         t.bank?.let { send(t.port, 0xb0 + t.channel, 0, it shr 7); send(t.port, 0xb0 + t.channel, 32, it and 127) }
-        t.program?.let { send(t.port, 0xc0 + t.channel, it) }
+        t.program?.let { send(t.port, 0xc0 + t.channel, it, count = 2) }
     }
+
+    private fun clearRowCache() {
+        cachedRows.clear()
+        cachedPatterns = null
+        cachedSound = null
+        cachedEvents = 0
+    }
+
+    private fun rowEvents(doc: Song, patternIndex: Int, row: Int, duration: Long): List<RowEvent> {
+        val state = doc.sound as MidiSound
+        if (cachedPatterns !== doc.patterns || cachedSound !== state) {
+            clearRowCache()
+            cachedPatterns = doc.patterns
+            cachedSound = state
+        }
+        val key = RowKey(patternIndex, row, duration)
+        cachedRows[key]?.let { return it }
+        val pattern = doc.patterns[patternIndex]
+        val events = mutableListOf<RowEvent>()
+        state.tracks.forEachIndexed { lane, track ->
+            val cell = pattern.tracks[lane][row]
+            if (!cell.isBlank) for (event in musicalRow(track, cell, duration)) events += RowEvent(track, event)
+        }
+        // Stable sort retains lane order and the order emitted by musicalRow at equal offsets.
+        events.sortBy { it.timed.offset }
+        if (events.size <= MAX_CACHED_EVENTS) {
+            val oldest = cachedRows.entries.iterator()
+            while (cachedRows.size >= Songs.ROWS || cachedEvents + events.size > MAX_CACHED_EVENTS) {
+                cachedEvents -= oldest.next().value.size
+                oldest.remove()
+            }
+            cachedRows[key] = events
+            cachedEvents += events.size
+        }
+        return events
+    }
+
     // Replay controller history silently through the live reducer. Relative motion means
     // that identical pattern instances can finish at different values on successive orders.
-    private fun chase(doc: Song, order: Int, row: Int) {
-        val tracks = (doc.sound as MidiSound).tracks
+    private fun chase(doc: Song, order: Int, row: Int, request: Long): Collection<ControlWrite>? {
         val final = mutableMapOf<Control, ControlWrite>()
+        val units = rowTimeUnits(doc)
+        var fraction = 0L
         for (orderIndex in 0..order) {
-            val pattern = doc.patterns[doc.orders[orderIndex]]
-            val length = if (orderIndex == order) row else pattern.length
+            val pattern = doc.orders[orderIndex]
+            val length = if (orderIndex == order) row else doc.patterns[pattern].length
             for (r in 0 until length) {
-                val events = tracks.flatMapIndexed { lane, track ->
-                    val cell = pattern.tracks[lane][r]
-                    if (cell.isBlank) emptyList() else musicalRow(track, cell, rowDuration(doc)).map { track to it }
-                }.sortedBy { it.second.offset }
-                for ((track, timed) in events) {
-                    applyControl(track, timed.event)?.let { final[it.control] = it }
+                if (!currentRequest(request)) return null
+                val end = fraction + units
+                for ((track, timed) in rowEvents(doc, pattern, r, end / TICK_HZ)) {
+                    when (val event = timed.event) {
+                        is MusicalEvent.Attack, is MusicalEvent.Release, MusicalEvent.Cut -> Unit
+                        else -> applyControl(track, event)?.let { final[it.control] = it }
+                    }
                 }
+                fraction = end % TICK_HZ
             }
         }
-        final.values.forEach(::writeControl)
+        return final.values
     }
 
-    private fun rowDuration(doc: Song) = 1_000_000_000L * doc.ticksPerRow / 48
+    // Keep fractions of a nanosecond in units of 1/TICK_HZ ns across row boundaries.
+    private fun rowTimeUnits(doc: Song) = 1_000_000_000L * doc.ticksPerRow
+    private fun currentRequest(request: Long) = !closed && transportRequest.get() == request
 
-    override fun play(order: Int, row: Int) {
+    @Synchronized override fun play(order: Int, row: Int) {
+        if (closed) return
+        val request = transportRequest.incrementAndGet()
         position = PlaybackPosition(pending = true)
         submit {
+            if (!currentRequest(request)) return@submit
             halt()
+            position = PlaybackPosition(pending = true)
             val document = requireNotNull(song)
-            document.system.errors(document).firstOrNull()?.let { error(it) }
+            val invalid = document.system.errors(document).firstOrNull()
+            if (!currentRequest(request)) return@submit
+            if (invalid != null) error(invalid)
             val state = document.sound as MidiSound
             connect()
             require(state.tracks.all { it.port in outputs }) { "Bind each MIDI track to a connected output in Files → MIDI tracks, then play" }
             val arranged = document.system.arranged(document)
             val first = order.coerceIn(arranged.orders.indices)
             problem = null
-            state.tracks.forEach(::patch)
             val firstRow = row.coerceIn(0 until arranged.patterns[arranged.orders[first]].length)
-            chase(arranged, first, firstRow)
-            if (state.clock) for (key in state.tracks.map { it.port }.distinct()) {
-                send(key, 0xfa); started.add(key)
+            val controls = chase(arranged, first, firstRow, request) ?: return@submit
+            rowEvents(arranged, arranged.orders[first], firstRow, rowTimeUnits(arranged) / TICK_HZ)
+            if (!currentRequest(request)) return@submit
+            for (track in state.tracks) {
+                if (!currentRequest(request)) return@submit
+                patch(track)
             }
-            scheduleRow(arranged, first, firstRow, now())
+            for (write in controls) {
+                if (!currentRequest(request)) return@submit
+                writeControl(write)
+            }
+            if (state.clock) for (key in state.tracks.map { it.port }.distinct()) {
+                if (!currentRequest(request)) return@submit
+                send(key, 0xfa, count = 1)
+                started.add(key)
+            }
+            if (!currentRequest(request)) return@submit
+            activeRequest = request
+            position = PlaybackPosition(true, first, firstRow)
+            val start = now()
+            later(start) { playRow(arranged, first, firstRow, start, 0L) }
         }
     }
     private fun later(deadline: Long, action: () -> Unit) {
-        if (closed) return
+        val request = activeRequest
+        if (!currentRequest(request)) return
         val epoch = generation
-        scheduled = worker.schedule(Runnable { if (!closed && generation == epoch) guarded(action) },
+        scheduled = worker.schedule(Runnable { if (currentRequest(request) && generation == epoch) guarded(action) },
             (deadline - now()).coerceAtLeast(0), TimeUnit.NANOSECONDS)
     }
-    private fun scheduleRow(doc: Song, order: Int, row: Int, start: Long) {
-        position = PlaybackPosition(true, order, row)
+    private fun pulseClock() {
+        for (key in started) {
+            if (!currentRequest(activeRequest)) return
+            send(key, 0xf8, count = 1)
+        }
+    }
+
+    private fun playRow(doc: Song, order: Int, row: Int, start: Long, fraction: Long) {
         val state = doc.sound as MidiSound
-        val pattern = doc.patterns[doc.orders[order]]
-        val duration = rowDuration(doc)
-        val actions = mutableListOf<Pair<Long, () -> Unit>>()
-        if (state.clock) for (pulse in 0 until 6) actions += duration * pulse / 6 to {
-            started.forEach { send(it, 0xf8) }
+        if (state.clock) pulseClock()
+        if (!currentRequest(activeRequest)) return
+        position = PlaybackPosition(true, order, row)
+        val pattern = doc.orders[order]
+        val units = rowTimeUnits(doc)
+        val endUnits = fraction + units
+        val duration = endUnits / TICK_HZ
+        val events = rowEvents(doc, pattern, row, duration)
+        var index = 0
+        var pulse = 1
+
+        fun deliverAt(offset: Long) {
+            while (index < events.size && events[index].timed.offset == offset && currentRequest(activeRequest)) {
+                val (track, timed) = events[index++]
+                deliver(track, timed.trackId, timed.event)
+            }
         }
-        state.tracks.forEachIndexed { i, track ->
-            for (e in musicalRow(track, pattern.tracks[i][row], duration)) actions += e.offset to { deliver(track, e.trackId, e.event) }
-        }
-        actions.sortBy { it.first }
-        fun dispatch(index: Int) {
-            if (index == actions.size) {
-                val end = row + 1 == pattern.length
+
+        fun scheduleNext() {
+            val eventAt = events.getOrNull(index)?.timed?.offset ?: Long.MAX_VALUE
+            val clockAt = if (state.clock && pulse < CLOCKS_PER_ROW) {
+                duration * pulse / CLOCKS_PER_ROW
+            } else Long.MAX_VALUE
+            val offset = minOf(eventAt, clockAt)
+            if (offset == Long.MAX_VALUE) {
+                val end = row + 1 == doc.patterns[pattern].length
                 val next = if (!end) order else if (order == doc.orders.lastIndex) doc.loopOrder else order + 1
                 later(start + duration) {
                     val current = nextArrangement ?: doc
                     nextArrangement = null
                     val nextOrder = next.coerceIn(current.orders.indices)
                     val nextLength = current.patterns[current.orders[nextOrder]].length
-                    scheduleRow(current, nextOrder, if (end || row + 1 >= nextLength) 0 else row + 1, start + duration)
+                    playRow(current, nextOrder, if (end || row + 1 >= nextLength) 0 else row + 1,
+                        start + duration, endUnits % TICK_HZ)
                 }
-            } else later(start + actions[index].first) {
-                var i = index
-                do { actions[i++].second() } while (i < actions.size && actions[i].first == actions[index].first)
-                dispatch(i)
+            } else {
+                val clockDue = clockAt == offset
+                // Compare offsets on the musical row grid first, keeping its simultaneous
+                // clock and controller actions together even when the clock rounds by 1 ns.
+                val due = if (clockDue) {
+                    (fraction * CLOCKS_PER_ROW + units * pulse) / (TICK_HZ * CLOCKS_PER_ROW)
+                } else offset
+                // A late worker still delivers the original groups in order. One callback at
+                // a time lets queued commands run between overdue groups.
+                later(start + due) {
+                    if (clockDue) {
+                        pulseClock()
+                        pulse++
+                    }
+                    if (eventAt == offset) deliverAt(offset)
+                    scheduleNext()
+                }
             }
         }
-        dispatch(0)
+
+        deliverAt(0L)
+        scheduleNext()
     }
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) = submit {
         val track = (song?.sound as? MidiSound)?.tracks?.getOrNull(channel) ?: return@submit
@@ -273,10 +388,12 @@ class MidiAudio internal constructor(
         generation++
         nextArrangement = null
         scheduled?.cancel(false)
+        scheduled = null
+        clearRowCache()
         var failure: Throwable? = null
         fun attempt(action: () -> Unit) { try { action() } catch (e: Exception) { failure = e } }
         // Only due messages reach Android. Flushing here could discard a preceding note-off.
-        started.forEach { attempt { send(it, 0xfc) } }
+        started.forEach { attempt { send(it, 0xfc, count = 1) } }
         notes.keys.forEach { attempt { send(it.address.port, 0x80 + it.address.channel, it.pitch + 12, 0) } }
         sustain.forEach { attempt { send(it.port, 0xb0 + it.channel, 64, 0) } }
         bent.forEach { attempt { send(it.port, 0xe0 + it.channel, 0, 64) } }
@@ -286,15 +403,21 @@ class MidiAudio internal constructor(
         position = position.copy(playing = false, pending = false)
         failure?.let { problem = "USB cleanup failed: ${it.message}. Rebind and use Panic on the receiver."; report(problem!!) }
     }
-    fun panic() = submit {
-        halt()
-        val tracks = (song?.sound as? MidiSound)?.tracks.orEmpty().distinctBy { it.port to it.channel }
-        for (t in tracks.filter { it.port in outputs }) {
-            for (cc in listOf(64, 123, 120)) send(t.port, 0xb0 + t.channel, cc, 0)
-            send(t.port, 0xe0 + t.channel, 0, 64)
+    @Synchronized fun panic() {
+        transportRequest.incrementAndGet()
+        submit {
+            halt()
+            val tracks = (song?.sound as? MidiSound)?.tracks.orEmpty().distinctBy { it.port to it.channel }
+            for (t in tracks.filter { it.port in outputs }) {
+                for (cc in listOf(64, 123, 120)) send(t.port, 0xb0 + t.channel, cc, 0)
+                send(t.port, 0xe0 + t.channel, 0, 64)
+            }
         }
     }
-    override fun stop() = submit { halt() }
+    @Synchronized override fun stop() {
+        transportRequest.incrementAndGet()
+        submit { halt() }
+    }
     override fun position() = position
     override fun error() = problem
     @Synchronized override fun close() {
@@ -306,5 +429,12 @@ class MidiAudio internal constructor(
                 worker.shutdown()
             }
         }
+    }
+
+    private companion object {
+        const val TICK_HZ = 48L
+        const val CLOCKS_PER_ROW = 6
+        // Full rows on 64 dense tracks fill the event budget before the row count limit.
+        const val MAX_CACHED_EVENTS = 16_384
     }
 }

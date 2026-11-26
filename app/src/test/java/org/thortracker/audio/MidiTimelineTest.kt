@@ -9,8 +9,11 @@ import java.util.PriorityQueue
 import java.util.concurrent.*
 
 class MidiTimelineTest {
-    private class Clock : ScheduledThreadPoolExecutor(1) {
+    private class Clock(private val queueCommands: Boolean = false) : ScheduledThreadPoolExecutor(1) {
         var now = 0L
+            private set
+        var peakPending = 0
+            private set
         private var serial = 0L
         private inner class Task(val time: Long, val seq: Long, command: Runnable) :
             FutureTask<Unit>(command, Unit), ScheduledFuture<Unit> {
@@ -18,13 +21,24 @@ class MidiTimelineTest {
             override fun compareTo(other: Delayed) = getDelay(TimeUnit.NANOSECONDS).compareTo(other.getDelay(TimeUnit.NANOSECONDS))
         }
         private val pending = PriorityQueue(compareBy<Task> { it.time }.thenBy { it.seq })
-        override fun execute(command: Runnable) = command.run()
-        override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> =
-            Task(now + unit.toNanos(delay), serial++, command).also { pending.add(it) }
+        override fun execute(command: Runnable) {
+            if (queueCommands) schedule(command, 0, TimeUnit.NANOSECONDS) else command.run()
+        }
+        override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> {
+            val task = Task(now + unit.toNanos(delay), serial++, command)
+            pending.add(task)
+            peakPending = maxOf(peakPending, pending.count { !it.isCancelled })
+            return task
+        }
+        fun stallUntil(to: Long) {
+            require(to >= now)
+            now = to
+        }
         fun advance(to: Long) {
+            require(to >= now)
             while (pending.isNotEmpty() && pending.peek().time <= to) {
                 val task = pending.remove()
-                now = task.time
+                now = maxOf(now, task.time)
                 if (!task.isCancelled) { task.run(); task.get() }
             }
             now = to
@@ -34,13 +48,127 @@ class MidiTimelineTest {
     private class Receiver : MidiOutputPorts, MidiConnection {
         override val endpoint = MidiEndpoint("port", "Test fixture", 1, 0)
         val trace = mutableListOf<Message>()
+        var onSend: (Message) -> Unit = {}
         override fun endpoints() = listOf(endpoint)
         override fun open(endpoint: MidiEndpoint, onOpened: (MidiConnection?) -> Unit) = onOpened(this)
         override fun send(data: ByteArray, offset: Int, count: Int, timestampNanos: Long) {
-            trace += Message(timestampNanos, data.slice(offset until offset + count).map { it.toInt() and 255 })
+            val message = Message(timestampNanos, data.slice(offset until offset + count).map { it.toInt() and 255 })
+            trace += message
+            onSend(message)
         }
         override fun flush() {}
         override fun close() {}
+    }
+
+    private fun oneRow(cell: Cell, speed: Int = 6, track: MidiTrack = MidiTrack(1, 0, "port")) =
+        Song(patterns = listOf(Pattern(tracks = listOf(listOf(cell) + List(Songs.ROWS - 1) { Cell.BLANK }), length = 1)),
+            orders = listOf(0), ticksPerRow = speed, sound = MidiSound(listOf(track), clock = true))
+
+    @Test fun fractionalClockKeepsItsPhaseAcrossLoopsAndLiveSpeedChange() {
+        val clock = Clock()
+        val receiver = Receiver()
+        val doc = oneRow(Cell(effect = 3, param = 20), speed = 4)
+        MidiAudio(clock, { clock.now }, { _, _ -> receiver }) { fail(it) }.use { audio ->
+            audio.update(doc)
+            audio.play()
+            clock.advance(20_000_000)
+            audio.update(doc.copy(ticksPerRow = 8))
+            val clockDenominator = 48L * 6
+            val expected = (0 until 6000).map { pulse ->
+                val ticks = minOf(pulse, 6) * 4L + maxOf(0, pulse - 6) * 8L
+                1_000_000_000L * ticks / clockDenominator
+            }
+            clock.advance(expected.last())
+            assertEquals(expected, receiver.trace.filter { it.bytes == listOf(0xf8) }.map { it.nanos })
+            // Clock and a relative increment at the same row subdivision retain their order.
+            assertEquals(listOf(listOf(0xf8), listOf(0xb0, 11, 127)),
+                receiver.trace.filter { it.nanos == expected[7] }.map { it.bytes })
+            assertEquals(1, clock.peakPending)
+        }
+    }
+
+    @Test fun overdueGroupsPreserveReleasesAndEveryClockThenReturnToTheirDeadlines() {
+        val clock = Clock()
+        val receiver = Receiver()
+        val doc = oneRow(Cell(note = 48), track = MidiTrack(1, 0, "port", gate = 50))
+        MidiAudio(clock, { clock.now }, { _, _ -> receiver }) { fail(it) }.use { audio ->
+            audio.update(doc)
+            audio.play()
+            clock.advance(0)
+            clock.stallUntil(70_000_000)
+            clock.advance(70_000_000)
+            assertEquals(listOf(0xf8, 0xf8, 0xf8, 0x80),
+                receiver.trace.filter { it.nanos == 70_000_000L }.map { it.bytes.first() })
+            clock.advance(125_000_000)
+            assertEquals(listOf(0L, 70_000_000L, 70_000_000L, 70_000_000L, 83_333_333L, 104_166_666L, 125_000_000L),
+                receiver.trace.filter { it.bytes == listOf(0xf8) }.map { it.nanos })
+            assertEquals(listOf(0xf8, 0x90), receiver.trace.filter { it.nanos == 125_000_000L }.map { it.bytes.first() })
+            assertEquals(1, clock.peakPending)
+        }
+    }
+
+    @Test fun livePatternEditReplacesCachedEventsAtNextRowBoundary() {
+        val clock = Clock()
+        val receiver = Receiver()
+        val original = oneRow(Cell(note = 48))
+        val edited = original.copy(patterns = oneRow(Cell(note = 50)).patterns)
+        MidiAudio(clock, { clock.now }, { _, _ -> receiver }) { fail(it) }.use { audio ->
+            audio.update(original)
+            audio.play()
+            clock.advance(130_000_000)
+            audio.update(edited)
+            clock.advance(250_000_000)
+            assertEquals(listOf(Message(0, listOf(0x90, 60, 100)),
+                Message(125_000_000, listOf(0x90, 60, 100)),
+                Message(250_000_000, listOf(0x90, 62, 100))),
+                receiver.trace.filter { it.bytes.first() == 0x90 })
+            assertEquals(1, receiver.trace.count { it.bytes == listOf(0xfa) })
+        }
+    }
+
+    @Test fun stopCancelsAnUnstartedPlayAndAnAlreadyOverdueCallback() {
+        val clock = Clock(queueCommands = true)
+        val receiver = Receiver()
+        val doc = oneRow(Cell(note = 48).withEffect(0, 7, 4))
+        val audio = MidiAudio(clock, { clock.now }, { _, _ -> receiver }) { fail(it) }
+        audio.use {
+            audio.update(doc)
+            clock.advance(0)
+            audio.play()
+            audio.stop()
+            clock.advance(0)
+            assertTrue(receiver.trace.isEmpty())
+
+            audio.play()
+            clock.advance(0)
+            assertEquals(listOf(0xfa, 0xf8, 0x90), receiver.trace.map { it.bytes.first() })
+            clock.stallUntil(75_000_000)
+            audio.stop()
+            clock.advance(750_000_000)
+            assertEquals(listOf(0xfa, 0xf8, 0x90, 0xfc, 0x80), receiver.trace.map { it.bytes.first() })
+            assertFalse(audio.position().playing)
+            assertFalse(audio.position().pending)
+        }
+        clock.advance(clock.now)
+    }
+
+    @Test fun stopDuringSeekSetupPreventsStartAndClock() {
+        val clock = Clock(queueCommands = true)
+        val receiver = Receiver()
+        val audio = MidiAudio(clock, { clock.now }, { _, _ -> receiver }) { fail(it) }
+        audio.use {
+            receiver.onSend = { if (it.bytes[0] == 0xc0) audio.stop() }
+            val doc = oneRow(Cell(effect = 4, param = 5)).let {
+                it.copy(orders = listOf(0, 0), sound = MidiSound(listOf(MidiTrack(1, 0, "port", program = 5)), clock = true))
+            }
+            audio.update(doc)
+            clock.advance(0)
+            audio.play(1, 0)
+            clock.advance(500_000_000)
+            assertEquals(listOf(Message(0, listOf(0xc0, 5))), receiver.trace)
+            assertFalse(audio.position().pending)
+        }
+        clock.advance(clock.now)
     }
 
     @Test fun sharedPitchSurvivesAuditionAndStopCancelsClockAndDelayedNotes() {
