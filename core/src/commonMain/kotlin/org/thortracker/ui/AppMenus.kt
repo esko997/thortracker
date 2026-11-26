@@ -37,6 +37,9 @@ import org.thortracker.system.fm.Ym2608RhythmRom
  * [AppMenus] decides what the menus contain and what their choices do.
  */
 interface MenuHost {
+    val supportsUsbMidi: Boolean get() = false
+    fun midiOutputs(): List<Pair<String, String>> = emptyList()
+    fun midiPanic() {}
     /** The display popups open on (the touched one, or the controller-focused one). */
     val modalDisplay: Int
     /** How many displays show panes (2 on the Thor; 1 elsewhere). */
@@ -515,9 +518,14 @@ class AppMenus(
             "Open project" to { confirmReplace { host.openProject() } },
             "Save" to host::saveProject,
             "Save as…" to host::saveProjectAs,
-        ) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + listOf(
+        ) + (if (host.supportsUsbMidi) listOf<Pair<String, () -> Unit>>(
+            "New USB MIDI song (Beta)" to { confirmReplace { host.replace(org.thortracker.system.midi.MidiSound().system.blank()) } }
+        ) else emptyList()) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + (if (session.song.sound is org.thortracker.system.midi.MidiSound) listOf<Pair<String, () -> Unit>>(
+            "MIDI tracks and USB outputs…" to { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic) }
+        ) else listOf(
             "Export .wav…" to ::exportWav,
             "Convert to system…" to { chooseSystem("Convert to") { conversionPreview(it) } },
+        )) + listOf(
             "Rename song" to ::rename,
             "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
             "Recover previous project" to { confirmReplace { host.recoverPrevious() } },

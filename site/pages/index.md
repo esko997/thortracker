@@ -4,7 +4,9 @@
 
 <div class="actions"><a href="/downloads/">Download & install</a><a href="/getting-started/#a-first-session">Make your first song</a></div>
 
-**Thor Tracker 1.0.0** is available for Android, x86_64 Linux and Brick Hammer with NextUI.
+**Thor Tracker 1.1.0** is available for Android, x86_64 Linux and Brick Hammer with NextUI.
+
+Android also includes a [USB MIDI mode in beta](https://github.com/esko997/thortracker/blob/main/docs/USB_MIDI.md), with addable tracks, four effect columns and MIDI clock output.
 
 <figure class="hero-shot">
 <img src="../../docs/media/brick-pattern.png" alt="Thor Tracker running on Brick Hammer: the bundled Thor Groove demo playing in the four-channel Game Boy pattern editor.">

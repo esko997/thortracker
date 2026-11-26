@@ -210,8 +210,13 @@ class EditorSession(initial: Song) {
         val before = song
         val after = transform(before)
         if (after === before || after == before) return false
+        val previousSelection = selection
         song = after
-        if (!inGesture) push(Entry(label, before, after, selection, selection))
+        if (before.system.channels.size != after.system.channels.size) {
+            selection = clampSelection(selection)
+            selectionVersion++
+        }
+        if (!inGesture) push(Entry(label, before, after, previousSelection, selection))
         else { redoStack.clear(); gestureEdits++; gestureInner = label }
         message = null
         onSongChanged?.invoke(after)
@@ -261,7 +266,7 @@ class EditorSession(initial: Song) {
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         val system = song.system
         if (note !in system.noteRange || detune !in 0..system.fine.max) return
-        system.engine.auditionProblem(song, channel, note, instrument, detune)?.let { return note(it) }
+        system.auditionProblem(song, channel, note, instrument, detune)?.let { return note(it) }
         onAudition?.invoke(channel, note, instrument, detune)
     }
 
@@ -408,7 +413,7 @@ class EditorSession(initial: Song) {
     fun auditionSequence(channel: Int, steps: List<Int?>, instrument: Int, stepMillis: Long = 180) {
         val system = song.system
         if (stepMillis <= 0 || steps.none { it != null } || steps.any { it != null && it !in system.noteRange }) return
-        steps.firstNotNullOfOrNull { it?.let { n -> system.engine.auditionProblem(song, channel, n, instrument, 0) } }?.let { return note(it) }
+        steps.firstNotNullOfOrNull { it?.let { n -> system.auditionProblem(song, channel, n, instrument, 0) } }?.let { return note(it) }
         onAuditionSequence?.invoke(channel, steps, instrument, stepMillis)
     }
 

@@ -379,7 +379,10 @@ interface SoundSystem {
     fun withJumpTarget(cell: Cell, order: Int): Cell
 
     /** How the audio hosts play this system's songs. */
-    val engine: PlaybackEngine
+    val engine: PlaybackEngine get() = throw UnsupportedOperationException("$name uses external output")
+    val driverDescription: String get() = engine.driver
+    fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? =
+        engine.auditionProblem(song, channel, note, instrument, fine)
 
     /** Name of instrument [slot] (1-based) of [bank], or null for no such slot. */
     fun instrumentName(song: Song, bank: Int, slot: Int): String?

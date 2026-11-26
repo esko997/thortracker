@@ -76,7 +76,11 @@ fun main(args: Array<String>) {
     SmsExport.renderer = DeckSmsVgm
     WavExport.renderer = DeckWav
     try {
-        val app = DeckApp(platform, appDir, songPath?.let { Files.readText(it) }?.let { ProjectCodec.decode(it) }, density)
+        val requested = songPath?.let { path -> runCatching {
+            ProjectCodec.decode(requireNotNull(Files.readText(path)) { "Cannot read $path" })
+        } }
+        val app = DeckApp(platform, appDir, requested?.getOrNull(), density)
+        requested?.exceptionOrNull()?.let { app.shell.error("Project could not be opened: ${it.message}") }
         try {
             app.script = ArrayDeque(script)
             app.run(quitAfterMs)
@@ -126,7 +130,8 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
         session.onAuditionSequence = { channel, steps, instrument, stepMillis -> auditionLoop.start(channel, steps, instrument, stepMillis, platform.ticks().toLong()) }
         session.onReleaseAudition = { auditionLoop.stop(); audio.releaseAudition() }
         session.onTransport = { start -> if (start) transport.start(session.selection.order, session.selection.row) else transport.stop() }
-        val start = opened ?: shell.recovered()
+        val recovered = shell.recovered()
+        val start = opened ?: recovered
         if (start != null) { session.replaceSong(start); session.note(if (opened != null) "${start.title} opened" else "Recovered working project") }
         popups.onOpenChanged = { open -> input.resetStick(); if (open) pane.cancelInteraction() }
     }

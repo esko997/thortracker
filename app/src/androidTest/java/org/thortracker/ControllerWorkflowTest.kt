@@ -45,6 +45,7 @@ class ControllerWorkflowTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private lateinit var activity: MainActivity
     private lateinit var tracker: TrackerView
+    private var midiTimingProbe: org.thortracker.audio.ActivityMidiTimingProbe? = null
 
     private fun launchActivity() {
         activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
@@ -91,6 +92,7 @@ class ControllerWorkflowTest {
         resetControls()
         instrumentation.runOnMainSync { activity.finish() }
         instrumentation.waitForIdleSync()
+        midiTimingProbe?.save(File(instrumentation.targetContext.cacheDir, "physical-midi-activity-clock.txt"))
     }
 
     /** Restores default bindings through the app's own apply path (router, views and saved prefs together). */
@@ -272,6 +274,175 @@ class ControllerWorkflowTest {
         instrumentation.runOnMainSync { assertEquals(ViewKind.PATTERN, tracker.state.kind) }
         up(KeyEvent.KEYCODE_BUTTON_R2)
 
+    }
+
+    @Test fun usbMidiBetaEditsRecoverAndReturnToChip() {
+        fun tracks() { openFiles(); clickRow("MIDI tracks and USB outputs…") }
+        openFiles()
+        clickRow("New USB MIDI song (Beta)")
+        clickRow("Continue")
+        tracks()
+        clickRow("Add track")
+        tap(KeyEvent.KEYCODE_BUTTON_R1)
+        instrumentation.runOnMainSync {
+            assertEquals(1, tracker.state.channel)
+            val cell = Cell(note = 48, instrument = 1, effect = 8, param = 100)
+                .withEffect(1, 6, 32).withEffect(2, 7, 2).withEffect(3, 9, 32)
+            tracker.session.setCell(0, 1, 0, cell)
+        }
+        tracks()
+        clickRow("Remove track 2")
+        clickRow("Remove track 2")
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertEquals(2, tracker.session.song.system.channels.size)
+            assertEquals(3, tracker.session.song.patterns[0].tracks[1][0].lastEffectColumn)
+            activity.finish()
+        }
+        instrumentation.waitForIdleSync()
+        launchActivity()
+        instrumentation.runOnMainSync {
+            assertTrue(tracker.session.song.sound is org.thortracker.system.midi.MidiSound)
+            assertEquals(48, tracker.session.song.patterns[0].tracks[1][0].note)
+            tracker.session.replaceSong(Songs.blank())
+            assertSame(GbSystem, tracker.session.song.system)
+        }
+    }
+
+    @Test fun midiRouteControlsAndDocumentPickerRoundTrip() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("physicalMidiCapture") == "yes")
+        fun tracks() { openFiles(); clickRow("MIDI tracks and USB outputs…") }
+        fun backend() = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
+            .get(activity) as org.thortracker.audio.MidiAudio
+        fun setNumber(label: String, number: String) {
+            tracks()
+            clickRow(label)
+            fun field(view: View): android.widget.EditText? = when (view) {
+                is android.widget.EditText -> view
+                is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { field(view.getChildAt(it)) }
+                else -> null
+            }
+            instrumentation.runOnMainSync { requireNotNull(field(activity.window.decorView)).setText(number) }
+            clickRow("Apply")
+        }
+        openFiles()
+        clickRow("New USB MIDI song (Beta)")
+        clickRow("Continue")
+        // The disconnected track must refuse playback before a route is explicitly selected.
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        clickRow("OK")
+        awaitTrue("physical port discovery") { backend().endpoints().size == 1 }
+        val endpoint = backend().endpoints().single()
+        tracks()
+        clickRow("Bind USB output")
+        clickRow(endpoint.label)
+        awaitTrue("USB open") { backend().ready(endpoint.key) }
+        setNumber("Modulation CC · 1", "71")
+        tracks()
+        clickRow("Clock / Start / Stop · off")
+        if (InstrumentationRegistry.getArguments().getString("recordActivityClock") == "yes") {
+            midiTimingProbe = org.thortracker.audio.ActivityMidiTimingProbe(backend(), endpoint.key)
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(true)
+        val interactionSeconds = InstrumentationRegistry.getArguments().getString("interactionSeconds")
+        if (interactionSeconds != null) {
+            val deadline = SystemClock.elapsedRealtime() + interactionSeconds.toInt().also { require(it in 1..660) } * 1000L
+            instrumentation.runOnMainSync {
+                activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            var edits = 0
+            while (SystemClock.elapsedRealtime() < deadline) {
+                tap(KeyEvent.KEYCODE_DPAD_DOWN)
+                tap(KeyEvent.KEYCODE_BUTTON_A)
+                // Exercise the editor's live validation and recovery paths while the clock is running.
+                instrumentation.runOnMainSync {
+                    val down = SystemClock.uptimeMillis()
+                    for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                        val touch = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
+                            tracker.width * .45f, tracker.height * .55f, 0)
+                        try { tracker.dispatchTouchEvent(touch) } finally { touch.recycle() }
+                    }
+                    val row = (edits + 1) % Songs.ROWS
+                    tracker.session.setCell(0, 0, row, Cell(note = 45 + edits % 12, effect = 7, param = 2)
+                        .withEffect(1, 1, 4).withEffect(2, 3, 3).withEffect(3, 9, edits % 128))
+                    midiTimingProbe?.markEdit()
+                }
+                chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+                chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+                awaitPlayback(true)
+                SystemClock.sleep(900)
+                edits++
+            }
+            assertTrue(edits > 0)
+            instrumentation.runOnMainSync { assertTrue(activity.moveTaskToBack(true)) }
+            awaitTrue("background transport stop") { !backend().position().playing }
+            SystemClock.sleep(750)
+            instrumentation.targetContext.startActivity(Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            awaitTrue("foreground return") {
+                var focused = false
+                instrumentation.runOnMainSync { focused = activity.hasWindowFocus() }
+                focused
+            }
+            assertFalse(backend().position().playing)
+            tap(KeyEvent.KEYCODE_BUTTON_START)
+            awaitPlayback(true)
+            val keyguard = activity.getSystemService(android.app.KeyguardManager::class.java)
+            if (!keyguard.isDeviceSecure) {
+                fun shell(command: String) {
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                        instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+                }
+                shell("input keyevent KEYCODE_SLEEP")
+                try {
+                    awaitTrue("screen-off transport stop") { !backend().position().playing }
+                    SystemClock.sleep(750)
+                } finally {
+                    shell("input keyevent KEYCODE_WAKEUP")
+                    shell("wm dismiss-keyguard")
+                }
+                awaitTrue("focus after wake") {
+                    var focused = false
+                    instrumentation.runOnMainSync { focused = activity.hasWindowFocus() }
+                    focused
+                }
+                assertFalse(backend().position().playing)
+                tap(KeyEvent.KEYCODE_BUTTON_START)
+                awaitPlayback(true)
+            }
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(false)
+        val expected = tracker.session.song
+        assertEquals(71, (expected.sound as org.thortracker.system.midi.MidiSound).tracks.single().bindings.first().controller)
+        assertTrue(expected.patterns.first().tracks.single().any { it.note >= 0 })
+        val file = File(activity.cacheDir, "midi-roundtrip-${System.nanoTime()}.thor")
+        fun picker(action: String) = Instrumentation.ActivityMonitor(
+            IntentFilter(action).apply { addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*") },
+            Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(file))), true)
+        val save = picker(Intent.ACTION_CREATE_DOCUMENT)
+        val open = picker(Intent.ACTION_OPEN_DOCUMENT)
+        try {
+            instrumentation.addMonitor(save)
+            openFiles(); clickRow("Save as…")
+            awaitTrue("MIDI file save") {
+                runCatching { org.thortracker.model.ProjectCodec.decode(file.readText(), androidMidi = true) == expected }.getOrDefault(false)
+            }
+            instrumentation.runOnMainSync { tracker.session.replaceSong(Songs.blank()) }
+            tap(KeyEvent.KEYCODE_BUTTON_START)
+            awaitPlayback(true)
+            tap(KeyEvent.KEYCODE_BUTTON_START)
+            awaitPlayback(false)
+            instrumentation.addMonitor(open)
+            openFiles(); clickRow("Open project"); clickRow("Continue")
+            awaitTrue("MIDI file reopen") { tracker.session.song == expected }
+        } finally {
+            instrumentation.removeMonitor(save)
+            instrumentation.removeMonitor(open)
+            file.delete()
+        }
     }
 
     @Test fun twentyChannelPatternNavigatesEditsAndRestoresItsLastLane() {
