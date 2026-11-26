@@ -307,6 +307,72 @@ class ControllerWorkflowTest {
         }
     }
 
+    @Test fun midiRouteControlsAndDocumentPickerRoundTrip() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("physicalMidiCapture") == "yes")
+        fun tracks() { openFiles(); clickRow("MIDI tracks and USB outputs…") }
+        fun backend() = MainActivity::class.java.getDeclaredField("audio").apply { isAccessible = true }
+            .get(activity) as org.thortracker.audio.MidiAudio
+        fun setNumber(label: String, number: String) {
+            tracks()
+            clickRow(label)
+            fun field(view: View): android.widget.EditText? = when (view) {
+                is android.widget.EditText -> view
+                is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { field(view.getChildAt(it)) }
+                else -> null
+            }
+            instrumentation.runOnMainSync { requireNotNull(field(activity.window.decorView)).setText(number) }
+            clickRow("Apply")
+        }
+        openFiles()
+        clickRow("New USB MIDI song (Beta)")
+        clickRow("Continue")
+        // The disconnected track must refuse playback before a route is explicitly selected.
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        clickRow("OK")
+        awaitTrue("physical port discovery") { backend().endpoints().size == 1 }
+        val endpoint = backend().endpoints().single()
+        tracks()
+        clickRow("Bind USB output")
+        clickRow(endpoint.label)
+        awaitTrue("USB open") { backend().ready(endpoint.key) }
+        setNumber("Modulation CC · 1", "71")
+        tracks()
+        clickRow("Clock / Start / Stop · off")
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(true)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(false)
+        val expected = tracker.session.song
+        assertEquals(71, (expected.sound as org.thortracker.system.midi.MidiSound).tracks.single().bindings.first().controller)
+        assertTrue(expected.patterns.first().tracks.single().any { it.note >= 0 })
+        val file = File(activity.cacheDir, "midi-roundtrip-${System.nanoTime()}.thor")
+        fun picker(action: String) = Instrumentation.ActivityMonitor(
+            IntentFilter(action).apply { addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*") },
+            Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(file))), true)
+        val save = picker(Intent.ACTION_CREATE_DOCUMENT)
+        val open = picker(Intent.ACTION_OPEN_DOCUMENT)
+        try {
+            instrumentation.addMonitor(save)
+            openFiles(); clickRow("Save as…")
+            awaitTrue("MIDI file save") {
+                runCatching { org.thortracker.model.ProjectCodec.decode(file.readText(), androidMidi = true) == expected }.getOrDefault(false)
+            }
+            instrumentation.runOnMainSync { tracker.session.replaceSong(Songs.blank()) }
+            tap(KeyEvent.KEYCODE_BUTTON_START)
+            awaitPlayback(true)
+            tap(KeyEvent.KEYCODE_BUTTON_START)
+            awaitPlayback(false)
+            instrumentation.addMonitor(open)
+            openFiles(); clickRow("Open project"); clickRow("Continue")
+            awaitTrue("MIDI file reopen") { tracker.session.song == expected }
+        } finally {
+            instrumentation.removeMonitor(save)
+            instrumentation.removeMonitor(open)
+            file.delete()
+        }
+    }
+
     @Test fun twentyChannelPatternNavigatesEditsAndRestoresItsLastLane() {
         val demo = NesEpsmSystem.demo()
         val last = demo.system.channels.lastIndex

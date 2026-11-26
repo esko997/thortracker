@@ -29,6 +29,8 @@ class UsbOutputCaptureTest {
             audio.play()
             await { audio.position().playing }
             SystemClock.sleep(480)
+            // Deliberately hold a second pitch across Stop so an independent receiver can check cleanup.
+            audio.audition(0, 57, 1)
             audio.stop()
             await { !audio.position().playing }
             assertTrue(errors.toString(), errors.isEmpty())
