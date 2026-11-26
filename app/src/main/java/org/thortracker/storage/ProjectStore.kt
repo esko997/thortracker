@@ -31,7 +31,7 @@ class ProjectStore(context: Context) : AutoCloseable {
             var message: String? = null
             try {
                 if (recovery.baseFile.exists() || File(recovery.baseFile.path + ".bak").exists()) {
-                    song = ProjectCodec.decode(recovery.openRead().bufferedReader().use { it.readText() })
+                    song = ProjectCodec.decode(recovery.openRead().bufferedReader().use { it.readText() }, androidMidi = true)
                 }
             } catch (e: Exception) {
                 val suffix = "unreadable-${System.currentTimeMillis()}.thor"
@@ -79,7 +79,7 @@ class ProjectStore(context: Context) : AutoCloseable {
                     val bytes = stream.readBytesBounded(16 * 1024 * 1024)
                     bytes.toString(Charsets.UTF_8)
                 } ?: error("The selected provider did not open the document")
-                val song = ProjectCodec.decode(text)
+                val song = ProjectCodec.decode(text, androidMidi = true)
                 deliver { callback(song) }
             } catch (e: Exception) { fail("Open failed; current song unchanged", e) }
         }
@@ -119,7 +119,7 @@ class ProjectStore(context: Context) : AutoCloseable {
     fun previous(callback: (Song) -> Unit) {
         recoveryExecutor.execute {
             try {
-                val song = ProjectCodec.decode(previous.openRead().bufferedReader().use { it.readText() })
+                val song = ProjectCodec.decode(previous.openRead().bufferedReader().use { it.readText() }, androidMidi = true)
                 deliver { callback(song) }
             } catch (e: Exception) { fail("No readable previous-project backup", e) }
         }

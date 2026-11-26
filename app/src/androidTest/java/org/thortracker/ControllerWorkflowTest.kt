@@ -274,6 +274,39 @@ class ControllerWorkflowTest {
 
     }
 
+    @Test fun usbMidiBetaEditsRecoverAndReturnToChip() {
+        fun tracks() { openFiles(); clickRow("MIDI tracks and USB outputs…") }
+        openFiles()
+        clickRow("New USB MIDI song (Beta)")
+        clickRow("Continue")
+        tracks()
+        clickRow("Add track")
+        tap(KeyEvent.KEYCODE_BUTTON_R1)
+        instrumentation.runOnMainSync {
+            assertEquals(1, tracker.state.channel)
+            val cell = Cell(note = 48, instrument = 1, effect = 8, param = 100)
+                .withEffect(1, 6, 32).withEffect(2, 7, 2).withEffect(3, 9, 32)
+            tracker.session.setCell(0, 1, 0, cell)
+        }
+        tracks()
+        clickRow("Remove track 2")
+        clickRow("Remove track 2")
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync {
+            assertEquals(2, tracker.session.song.system.channels.size)
+            assertEquals(3, tracker.session.song.patterns[0].tracks[1][0].lastEffectColumn)
+            activity.finish()
+        }
+        instrumentation.waitForIdleSync()
+        launchActivity()
+        instrumentation.runOnMainSync {
+            assertTrue(tracker.session.song.sound is org.thortracker.system.midi.MidiSound)
+            assertEquals(48, tracker.session.song.patterns[0].tracks[1][0].note)
+            tracker.session.replaceSong(Songs.blank())
+            assertSame(GbSystem, tracker.session.song.system)
+        }
+    }
+
     @Test fun twentyChannelPatternNavigatesEditsAndRestoresItsLastLane() {
         val demo = NesEpsmSystem.demo()
         val last = demo.system.channels.lastIndex

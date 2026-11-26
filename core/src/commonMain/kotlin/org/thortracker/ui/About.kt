@@ -28,7 +28,7 @@ object About {
         for ((key, value) in platform) appendLine("$key: $value")
         val system = song.system
         appendLine("Song system: ${system.name} [${system.id}], ${song.orders.size} orders, ${song.patterns.size} patterns")
-        appendLine("Driver: ${system.engine.driver}")
+        appendLine("Driver: ${system.driverDescription}")
         val rebound = Control.entries.count { keymap.binding(it) != Keymap.DEFAULT.binding(it) }
         appendLine("Keymap: file version ${Keymap.VERSION}, ${if (rebound == 0) "default bindings" else "$rebound of ${Control.entries.size} controls rebound"}")
         val recent = RecentMessages.all()

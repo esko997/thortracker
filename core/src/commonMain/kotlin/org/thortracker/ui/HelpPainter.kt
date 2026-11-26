@@ -255,7 +255,7 @@ internal class HelpPainter(v: PaneView) : Painter(v) {
         Line.Heading("Thor Tracker ${About.version}"),
         Line.Text("A controller-first chiptune tracker. Source code, releases and the issue tracker: github.com/esko997/thortracker"),
         Line.Heading("Sound systems"),
-    ) + SoundSystems.ALL.map { Line.Text("${it.name}: ${it.engine.driver}", if (it === song.system) ink.palette.TEXT else ink.palette.DIM) } + listOf(
+    ) + SoundSystems.ALL.map { Line.Text("${it.name}: ${it.driverDescription}", if (it === song.system) ink.palette.TEXT else ink.palette.DIM) } + listOf(
         Line.Text("Files → Export .wav renders the song through the same player as playback (48 kHz 16-bit stereo): once through, " +
             "optional loop passes, then a fade-out, or ending exactly at the loop point."),
         Line.Heading("Report a bug"),

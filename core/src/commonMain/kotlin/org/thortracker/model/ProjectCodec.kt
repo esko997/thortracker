@@ -110,7 +110,7 @@ object ProjectCodec {
     }
 
     /** @throws ProjectFormatException for anything that is not a readable, structurally valid project. */
-    fun decode(text: String): Song {
+    fun decode(text: String, androidMidi: Boolean = false): Song {
         val root = try {
             json.parseToJsonElement(text)
         } catch (e: SerializationException) {
@@ -124,7 +124,10 @@ object ProjectCodec {
         if (version > VERSION) throw ProjectFormatException("Project version $version was written by a newer Thor Tracker; this version reads up to $VERSION")
         if (version < 1) throw ProjectFormatException("Project version $version is invalid")
         val backend = (root["backend"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-        val system = backend?.let(SoundSystems::find) ?: throw ProjectFormatException(
+        val system = if (backend == org.thortracker.system.midi.MidiSystem.ID) {
+            if (!androidMidi) throw ProjectFormatException("Open this USB MIDI Beta project in Thor Tracker on Android")
+            org.thortracker.system.midi.MidiSound().system
+        } else backend?.let(SoundSystems::find) ?: throw ProjectFormatException(
             "Project backend \"${backend ?: "missing"}\" is not supported; this version reads ${SoundSystems.ALL.joinToString { "\"${it.id}\"" }}"
         )
         val backendVersion = (root["backendVersion"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull

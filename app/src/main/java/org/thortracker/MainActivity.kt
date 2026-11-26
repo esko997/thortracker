@@ -105,6 +105,9 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     /** Platform side of the shared menus: document pickers, assets, displays and status. */
     private val menuHost = object : MenuHost {
         override val modalDisplay: Int get() = this@MainActivity.modalDisplay
+        override val supportsUsbMidi = true
+        override fun midiOutputs() = (audio as? org.thortracker.audio.MidiAudio)?.endpoints().orEmpty().map { it.key to it.label }
+        override fun midiPanic() { (audio as? org.thortracker.audio.MidiAudio)?.panic() }
         override val displayCount: Int get() = hosts.size
         override val keymap: Keymap get() = this@MainActivity.keymap
         override fun refresh() {
@@ -266,6 +269,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         menus = AppMenus(session, panes, transport, popups, menuHost)
         session.onMenuRequest = { build -> if (documentReady) { modalDisplay = focus; menus.open(build) } }
         session.onSongChanged = { song ->
+            if (documentReady) {
+                try { selectAudio(song) }
+                catch (e: Exception) { showError("Audio initialization failed: ${e.message}") }
+                catch (e: UnsatisfiedLinkError) { showError("Native audio could not load: ${e.message}") }
+            }
             transport.songChanged(song)
             if (documentReady) {
                 projectStore.autosave(song)
@@ -326,10 +334,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             buildPrimary()
             updateSecondary()
             try {
-                audio = ChipAudio(applicationContext)
-                loadRhythmRom()
-                transport.audio = audio
-                initialized = true
+                selectAudio(session.song)
                 statusMessage = if (recovered != null) "Recovered working project"
                 else "Demo loaded. For a blank song choose Menu, Files, New blank song"
             } catch (e: Exception) {
@@ -1135,6 +1140,22 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
                 )
             }
         }, "keymap-file").start()
+    }
+
+    private fun selectAudio(song: Song) {
+        val midi = song.sound is org.thortracker.system.midi.MidiSound
+        if (audio != null && midi == (audio is org.thortracker.audio.MidiAudio)) return
+        transport.halt()
+        transport.audio = null
+        audio?.close()
+        audio = null
+        initialized = false
+        audio = if (midi) org.thortracker.audio.MidiAudio(applicationContext) { message ->
+            main.post { if (!isDestroyed && session.song.sound is org.thortracker.system.midi.MidiSound) showError(message) }
+        } else ChipAudio(applicationContext)
+        if (!midi) loadRhythmRom()
+        transport.audio = audio
+        initialized = true
     }
 
     private fun replace(song: Song, uri: Uri? = null) {

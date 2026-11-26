@@ -342,7 +342,7 @@ internal object ConversionVoices {
             }
         }
         // Audition validation supplies lane-specific restrictions absent from a system-wide note range.
-        destination.system.engine.auditionProblem(destination, lane.target, selected, instrument, 0)?.let { problem ->
+        destination.system.auditionProblem(destination, lane.target, selected, instrument, 0)?.let { problem ->
             issues += ConversionIssue(ConversionImpact.BLOCKER, location, "Target voice cannot play this note: $problem")
         }
         return selected
