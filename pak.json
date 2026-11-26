@@ -1,6 +1,6 @@
 {
   "name": "ThorTracker",
-  "version": "v1.0.0",
+  "version": "v1.1.0",
   "type": "TOOL",
   "description": "Controller-first chiptune tracker for NextUI. Write patterns, shape instruments and export music for classic consoles and computers.",
   "author": "esko997",

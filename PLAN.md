@@ -1,8 +1,9 @@
 # Thor Tracker — release and roadmap
 
-**1.0.0/code 64:** Android, Linux and NextUI packages are available, with updated
-documentation and both NextUI archive layouts. The audio engines and project format
-are unchanged from 0.45.0.
+**1.1.0/code 65:** Android adds an opt-in USB MIDI beta with addable tracks,
+four effect columns, CC automation and outbound Clock/Start/Stop. MIDI playback
+remains Android-only; Linux/NextUI retain their existing chip backends.
+See [USB MIDI setup and limitations](docs/USB_MIDI.md).
 
 ## Goal
 

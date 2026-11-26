@@ -1,6 +1,6 @@
 # Download & install
 
-Download **1.0.0** from the [official release](https://github.com/esko997/thortracker/releases/tag/v1.0.0). Choose the package for your device; each download includes a SHA-256 checksum file.
+Download **1.1.0** from the [official release](https://github.com/esko997/thortracker/releases/tag/v1.1.0). Choose the package for your device; each download includes a SHA-256 checksum file.
 
 | Device | Release asset | Setup |
 | --- | --- | --- |

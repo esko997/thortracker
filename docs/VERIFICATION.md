@@ -1,6 +1,6 @@
-# Thor Tracker verification — 2026-11-13
+# Thor Tracker verification — 2026-11-26
 
-## Unreleased — Android MIDI beta
+## 1.1.0 — Android MIDI beta
 
 - Android-only USB MIDI mode with addable tracks, four effect columns, named MIDI
   CC controls, bank/program selection and optional MIDI Clock/Start/Stop output.

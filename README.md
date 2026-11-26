@@ -12,6 +12,7 @@ A controller-first chiptune tracker for Android, Steam Deck / Linux and Brick Ha
 - **Controller and touch:** rebindable controls, direct touch editing and an Android controller dock.
 - **Scales and tunings:** Scala `.scl` import and a built-in tuning library, within each backend's pitch capabilities.
 - **Editable projects and exports:** save `.thor` projects, render WAV, or export the selected system's music formats.
+- **USB MIDI (Android beta):** add tracks, send notes and CC automation, and synchronize external gear with MIDI clock. See the [USB MIDI guide](docs/USB_MIDI.md).
 
 <img src="docs/media/pattern-and-keyboard-dual-screen.png" width="620" alt="Pattern and Keyboard views on two displays">
 
