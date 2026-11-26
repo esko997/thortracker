@@ -20,3 +20,9 @@ Each row spans four effect columns, processed left to right. Later commands in t
 | 9xx / Axx | Send a 0–127 value to either named CC assignment |
 
 Gate is a percentage of each strike. Android runs 48 tracker ticks per second and four rows per quarter. At speed 6 the tempo is 120 BPM. Clock sends six pulses per row to each bound port. Play from cursor starts a new external transport run at that point. Pattern and song loops keep the clock running. Position-pointer and Continue messages are unsupported. MIDI output has no offline WAV render.
+
+## Project and playback model
+
+A MIDI project uses the same patterns, cells, orders, project envelope and undo history as chip projects. Its sound data holds the track list and logical port preferences. Each track has a stable ID independent of its lane index, destination and channel. Open the project in the Android app to use its USB backend.
+
+The row sequencer emits timed note, pitch, expression and named-parameter events in musical units. The Android playback worker maps them to MIDI messages, resolves port preferences and tracks note ownership. One monotonic timeline drives notes and transport clock. Stop cancels the next scheduled callback and releases owned notes, sustain and bend on the available outputs. Android cannot acknowledge that the receiver processed a message. If a cable is removed while a note is sounding, reconnect and explicitly use Panic or silence the receiver.
