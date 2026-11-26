@@ -45,6 +45,7 @@ class ControllerWorkflowTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private lateinit var activity: MainActivity
     private lateinit var tracker: TrackerView
+    private var midiTimingProbe: org.thortracker.audio.ActivityMidiTimingProbe? = null
 
     private fun launchActivity() {
         activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
@@ -91,6 +92,7 @@ class ControllerWorkflowTest {
         resetControls()
         instrumentation.runOnMainSync { activity.finish() }
         instrumentation.waitForIdleSync()
+        midiTimingProbe?.save(File(instrumentation.targetContext.cacheDir, "physical-midi-activity-clock.txt"))
     }
 
     /** Restores default bindings through the app's own apply path (router, views and saved prefs together). */
@@ -338,9 +340,79 @@ class ControllerWorkflowTest {
         setNumber("Modulation CC · 1", "71")
         tracks()
         clickRow("Clock / Start / Stop · off")
+        if (InstrumentationRegistry.getArguments().getString("recordActivityClock") == "yes") {
+            midiTimingProbe = org.thortracker.audio.ActivityMidiTimingProbe(backend(), endpoint.key)
+        }
         tap(KeyEvent.KEYCODE_BUTTON_A)
         tap(KeyEvent.KEYCODE_BUTTON_START)
         awaitPlayback(true)
+        val interactionSeconds = InstrumentationRegistry.getArguments().getString("interactionSeconds")
+        if (interactionSeconds != null) {
+            val deadline = SystemClock.elapsedRealtime() + interactionSeconds.toInt().also { require(it in 1..660) } * 1000L
+            instrumentation.runOnMainSync {
+                activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            var edits = 0
+            while (SystemClock.elapsedRealtime() < deadline) {
+                tap(KeyEvent.KEYCODE_DPAD_DOWN)
+                tap(KeyEvent.KEYCODE_BUTTON_A)
+                // Exercise the editor's live validation and recovery paths while the clock is running.
+                instrumentation.runOnMainSync {
+                    val down = SystemClock.uptimeMillis()
+                    for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                        val touch = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
+                            tracker.width * .45f, tracker.height * .55f, 0)
+                        try { tracker.dispatchTouchEvent(touch) } finally { touch.recycle() }
+                    }
+                    val row = (edits + 1) % Songs.ROWS
+                    tracker.session.setCell(0, 0, row, Cell(note = 45 + edits % 12, effect = 7, param = 2)
+                        .withEffect(1, 1, 4).withEffect(2, 3, 3).withEffect(3, 9, edits % 128))
+                    midiTimingProbe?.markEdit()
+                }
+                chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+                chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_A)
+                awaitPlayback(true)
+                SystemClock.sleep(900)
+                edits++
+            }
+            assertTrue(edits > 0)
+            instrumentation.runOnMainSync { assertTrue(activity.moveTaskToBack(true)) }
+            awaitTrue("background transport stop") { !backend().position().playing }
+            SystemClock.sleep(750)
+            instrumentation.targetContext.startActivity(Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            awaitTrue("foreground return") {
+                var focused = false
+                instrumentation.runOnMainSync { focused = activity.hasWindowFocus() }
+                focused
+            }
+            assertFalse(backend().position().playing)
+            tap(KeyEvent.KEYCODE_BUTTON_START)
+            awaitPlayback(true)
+            val keyguard = activity.getSystemService(android.app.KeyguardManager::class.java)
+            if (!keyguard.isDeviceSecure) {
+                fun shell(command: String) {
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                        instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+                }
+                shell("input keyevent KEYCODE_SLEEP")
+                try {
+                    awaitTrue("screen-off transport stop") { !backend().position().playing }
+                    SystemClock.sleep(750)
+                } finally {
+                    shell("input keyevent KEYCODE_WAKEUP")
+                    shell("wm dismiss-keyguard")
+                }
+                awaitTrue("focus after wake") {
+                    var focused = false
+                    instrumentation.runOnMainSync { focused = activity.hasWindowFocus() }
+                    focused
+                }
+                assertFalse(backend().position().playing)
+                tap(KeyEvent.KEYCODE_BUTTON_START)
+                awaitPlayback(true)
+            }
+        }
         tap(KeyEvent.KEYCODE_BUTTON_START)
         awaitPlayback(false)
         val expected = tracker.session.song
