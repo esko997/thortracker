@@ -295,6 +295,28 @@ Identical recordings are shared between patches. Ordinary knob edits share PCM w
 Undo; older history may be trimmed to keep unique current/Undo/Redo audio within
 64 MiB. Existing chip and sample-free projects retain their JSON format.
 
+#### Bounce a pattern track to a sampler
+
+In **Pattern**, select the order and internal track, then choose **Menu → Bounce
+this track to sampler…**. Pick an unused Init slot and render. The recording contains
+that pattern once, from row 00, with the track's inserts, gain and pan. Other tracks,
+USB MIDI and shared returns are excluded; audio is cut at the pattern end, including
+any remaining effect tail. Earlier orders supply instrument and automation state,
+but previous delay/reverb history starts empty, as with cursor playback.
+
+Choose **Install** when the bounce is ready. It creates one ordinary sampler patch
+and one Undo step; source rows and routing stay unchanged. **Hide** lets rendering
+continue; **Show track bounce** reopens its progress or result. Cancel or Discard
+leaves the song unchanged. Editing the document before installation invalidates the
+result, including editing and then undoing; moving the cursor or playing does not.
+
+The recording is 48 kHz stereo PCM16 without normalization. It uses the existing
+sample limits: about 43.69 seconds per recording and enough free space in the
+32 MiB project bank. Slot 01 and referenced or customized slots are never replaced.
+Playback of the new sampler still applies its own pitch, envelope and track gain;
+it is not a level-identical freeze. Custom tuning is already present in the recorded
+sound and also affects subsequent sampler playback.
+
 #### Wavetable: Play and Draw
 
 Each patch contains four editable 64-point cycles, **A–D**. **Play** blends adjacent

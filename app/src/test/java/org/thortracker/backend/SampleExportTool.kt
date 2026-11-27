@@ -90,6 +90,9 @@ object SampleExportTool {
         val studioDemo = StudioSound().system.demo()
         studioImage("studio-demo.stimg", studioDemo)
         File(directory, "studio-demo.thor").writeBytes(ProjectCodec.encodeBytes(studioDemo))
+        val bounce = studioBounceFixture()
+        File(directory, "studio-bounce-prefix.stimg").writeBytes(StudioBounce.plan(bounce, 3, 1, 32).lower())
+        File(directory, "studio-bounce-source.thor").writeBytes(ProjectCodec.encodeBytes(bounce))
         val capacity = studioCapacity(studioDemo)
         File(directory, "studio-capacity.thor").writeBytes(ProjectCodec.encodeBytes(capacity))
         File(directory, "studio-wave-pluck-capacity.thor").writeBytes(ProjectCodec.encodeBytes(wavePluckCapacity(capacity)))
@@ -579,6 +582,34 @@ object SampleExportTool {
         check(OpmSystem.errors(opmShortest).isEmpty()) { "the shortest OPM song is invalid: ${OpmSystem.errors(opmShortest)}" }
         File(directory, "opm-shortest.omimg").writeBytes(ByteArray(OpmSystem.engine.imageSize).also { OpmSystem.engine.lower(opmShortest, it) })
         println("Exported ${opm.title} and the shortest OPM song to ${directory.absolutePath}")
+    }
+
+    private fun studioBounceFixture(): Song {
+        var song = StudioSound().system.blank().addStudioTrack().addStudioTrack()
+        song = song.copy(sound = song.studio.copy(buses = listOf(StudioBus())))
+            .addStudioInsert(1, StudioKind.DRIVE).addStudioInsert(1, StudioKind.CRUSHER)
+            .addStudioInsert(-1, StudioKind.REVERB)
+        val lanes = song.studio.tracks.toMutableList()
+        lanes[1] = lanes[1].copy(gain = 75, pan = 50, sends = listOf(90, 0))
+        lanes[2] = lanes[2].copy(target = StudioTarget.USB_MIDI)
+        val sound = song.studio.withPatch(2, WavetablePatch(values = mapOf(3 to 0, 5 to 100))).copy(tracks = lanes)
+        fun pattern(name: String, length: Int, sourceCell: (Int) -> Cell) = Pattern(name, List(3) { ch ->
+            List(Songs.ROWS) { row -> when {
+                row >= length -> Cell.BLANK
+                ch == 1 -> sourceCell(row)
+                ch == 0 -> Cell(36, 1)
+                else -> Cell(72, 1)
+            } }
+        }, length = length)
+        val prefix = pattern("Held A", 64) { Cell(57, 2, 12, 1) }
+        val parked = pattern("Parked", 1) { Cell(40, 1) }
+        val body = pattern("Print", 4) { when (it) {
+            0, 1 -> Cell(57, effect = 12, param = 1)
+            2 -> Cell(Cell.CUT)
+            else -> Cell.BLANK
+        } }
+        return song.copy(title = "Studio bounce oracle", sound = sound, ticksPerRow = 8,
+            patterns = listOf(prefix, parked, body), orders = listOf(0, 1, 0, 2), parkedOrders = listOf(1))
     }
 
     /** Full documented capacity, for opted-in physical callback/RSS checks, never a factory preset. */

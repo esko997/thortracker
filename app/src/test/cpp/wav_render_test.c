@@ -707,6 +707,68 @@ static void test_studio_tail(const char* samples) {
     free(image);
 }
 
+/* A repeated, tied-wave prefix must chase like live preview, not simulate the
+ * full 1024 ticks. The printed body is four rows, including its final silence. */
+static void test_studio_bounce(const char* samples) {
+    char path[512];
+    snprintf(path, sizeof path, "%s/studio-bounce-prefix.stimg", samples);
+    size_t size = 0, wav_size = 0;
+    uint8_t* image = read_file(path, &size);
+    EXPECT(image != NULL, "Studio bounce fixture exists");
+    if (!image) return;
+    int capped = -1;
+    const char* problem = NULL;
+    uint8_t* wav = render("studio-mono", image, size, 0, 0, 1, &wav_size, &capped, &problem);
+    EXPECT(wav && wav_size == CHIP_WAV_HEADER + 32000u * 4u && capped == 0,
+           "Studio bounce retains exactly 32000 body frames (%s)", problem ? problem : "");
+    if (!wav || wav_size != CHIP_WAV_HEADER + 32000u * 4u) { free(wav); free(image); return; }
+    EXPECT(check_header("Studio bounce", wav, wav_size) == 32000, "Studio bounce canonical stereo WAV");
+    const ChipEngineOps* ops = &studio_mono_ops;
+    ChipImage* score = (ChipImage*)malloc(ops->image_storage);
+    StudioBank* bank = NULL;
+    const int loaded = score && studio_load_score(score, image, size, &bank) == CHIP_OK;
+    EXPECT(loaded, "Studio bounce score loads independently");
+    if (loaded) {
+        int different_full_seek = 0;
+        for (int pass = 0; pass < 2; ++pass) {
+            ChipMachine* machine = ops->create(RATE);
+            int seek = 0, same = 1, frames = 0;
+            const int started = machine && ops->start(machine, score, 0, 0, pass ? 65536 : 96, &seek) == CHIP_OK;
+            EXPECT(started, "Studio direct bounce reference starts (pass %d)", pass);
+            if (started) {
+                float buffer[CHIP_MAX_TICK_FRAMES * 2];
+                for (int tick = 0; tick < 32; ++tick) {
+                    const int count = ops->tick(machine, buffer);
+                    if (count != 1000) { same = 0; break; }
+                    for (int i = 0; i < count * 2; ++i) {
+                        const int16_t actual = (int16_t)u16(wav + CHIP_WAV_HEADER + (frames * 2 + i) * 2);
+                        if (chip_wav_pcm16(buffer[i]) != actual) same = 0;
+                    }
+                    frames += count;
+                }
+                if (pass == 0) EXPECT(same && frames == 32000, "Bounce matches live 96-tick chase sample-for-sample");
+                else different_full_seek = !same && frames == 32000;
+            }
+            if (machine) ops->destroy(machine);
+        }
+        EXPECT(different_full_seek, "Fixture distinguishes the obsolete full-prefix replay budget");
+    }
+    studio_bank_drop(bank);
+    free(score);
+    int panned = 1, silent_tail = 1;
+    for (int frame = 0; frame < 32000; ++frame) {
+        const int left = (int16_t)u16(wav + CHIP_WAV_HEADER + frame * 4);
+        const int right = (int16_t)u16(wav + CHIP_WAV_HEADER + frame * 4 + 2);
+        if (abs(2 * left - right) > 1) panned = 0;
+        if (frame >= 24000 && (left || right)) silent_tail = 0;
+    }
+    EXPECT(panned && peak(wav + CHIP_WAV_HEADER, 0, 16000) > 100,
+           "Bounce retains the selected post-insert half-left/full-right output");
+    EXPECT(silent_tail, "The final blank row is retained as digital silence");
+    free(wav);
+    free(image);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
@@ -741,6 +803,7 @@ int main(int argc, char** argv) {
     test_shortest_ay(2, "ay-atari-st");
     test_shortest_ay(3, "ay-cpc");
     test_studio_tail(samples);
+    test_studio_bounce(samples);
     printf("WAV export: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

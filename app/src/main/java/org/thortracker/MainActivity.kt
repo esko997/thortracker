@@ -131,6 +131,16 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         override fun export(song: Song, format: ExportFormat) { exportFormat = format; launchPicker(EXPORT, song.title, song) }
         override fun exportWav(song: Song, options: WavOptions) = startWavExport(song, options)
         override fun showWavExport(): Boolean = this@MainActivity.showWavExport()
+        override fun startStudioBounce(
+            plan: org.thortracker.system.studio.StudioBouncePlan,
+            progress: (Long) -> Unit,
+            complete: (Result<org.thortracker.system.studio.StudioPcm?>) -> Unit,
+        ): (() -> Unit)? {
+            if (wavRun != null || activeFileLoad != null || fileLoad != null) return null
+            val worker = bounceWorker ?: org.thortracker.audio.StudioBounceWorker(cacheDir, main)
+                .also { bounceWorker = it }
+            return worker.start(plan, progress, complete)
+        }
         override fun recoverPrevious() = projectStore.previous { song -> this@MainActivity.replace(song) }
         override fun exportKeymap() = launchKeymapPicker(KEYMAP_EXPORT)
         override fun importKeymap() = launchKeymapPicker(KEYMAP_IMPORT)
@@ -224,6 +234,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private var exportFormat: ExportFormat? = null
     /** The WAV export (rendering, ready to save, or being saved); null when none runs. */
     private var wavRun: WavRun? = null
+    private var bounceWorker: org.thortracker.audio.StudioBounceWorker? = null
     /** Host where the next popup opens: the touched display, or the controller-focused one. */
     private var modalDisplay = 0
     private lateinit var transport: Transport
@@ -415,6 +426,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         // Nothing can pick a destination for a render any more: free it (a file being written still completes).
         wavRun?.cancel()
         wavRun = null
+        bounceWorker?.close()
+        bounceWorker = null
         audio?.close()
         projectStore.close()
         popups.onOpenChanged = null
@@ -1080,6 +1093,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     private fun <T> chooseFile(extensions: List<String>, maxBytes: Int, title: String?,
         decode: (ByteArray) -> T, loaded: (String, String, T) -> Unit) {
         if (activeFileLoad != null || fileLoad != null) return showError("A file import is already running")
+        if (bounceWorker?.busy == true) return showError("A Studio bounce is still rendering")
         fileLoad = FileLoad(extensions, maxBytes, title) { name, extension, bytes ->
             val value = decode(bytes)
             ({ loaded(name, extension, value) })
@@ -1378,6 +1392,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     /** Renders [song] to WAV on a worker thread with a progress popup that can cancel; [wavRendered] takes over. */
     private fun startWavExport(song: Song, options: WavOptions) {
         if (showWavExport()) return
+        if (bounceWorker?.busy == true) return showError("A Studio bounce is still rendering")
         val spool = runCatching { File.createTempFile(WAV_SPOOL_PREFIX, ".part", cacheDir) }
             .getOrElse { return showError("WAV export failed: ${it.message}") }
         val run = WavRun(song.title, spool)
