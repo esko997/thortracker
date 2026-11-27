@@ -6,9 +6,9 @@ object StudioModularProfiles {
 
     fun android(manufacturer: String, model: String, soc: String?): StudioModularLimits = when {
         soc == "QCS8550" && manufacturer.equals("AYN", true) && model.equals("AYN Thor", true) ->
-            StudioModularLimits("Thor QCS8550", 5000, 1024 * MIB, 12, 14)
+            StudioModularLimits("Thor QCS8550", 1200, 1024 * MIB, 12, 14)
         soc == "QCS8550" && model.equals("Retroid Pocket Nova", true) ->
-            StudioModularLimits("Nova QCS8550", 5000, 1024 * MIB, 12, 14)
+            StudioModularLimits("Nova QCS8550", 1200, 1024 * MIB, 12, 14)
         else -> StudioModularLimits("Conservative Android", 256, 384 * MIB, 12, 14)
     }
 

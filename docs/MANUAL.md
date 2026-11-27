@@ -406,6 +406,8 @@ including effects, active audition tails and prepared graph memory. If the proje
 device's playback reserve, it remains editable and saveable without pruning or
 changing its sound. Offline WAV rendering does not use the real-time CPU limit;
 format and memory constraints still apply.
+Admission scores estimate DSP work, not CPU utilization percentages. Unrecognized
+devices use a conservative playback profile.
 
 #### Track strip and pedals
 

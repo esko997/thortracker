@@ -107,13 +107,17 @@ class StudioModularAdmissionTest {
         val base = song(8)
         val project = base.copy(sound = base.studio.withPatch(1, heavy()))
         val encoded = ProjectCodec.encodeBytes(project)
-        assertNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("AYN", "AYN Thor", "QCS8550")))
-        assertNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("Retroid", "Retroid Pocket Nova", "QCS8550")))
+        assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("AYN", "AYN Thor", "QCS8550")))
+        assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("Retroid", "Retroid Pocket Nova", "QCS8550")))
         assertNull(StudioModularAdmission.problem(project, StudioModularProfiles.linux(false, "Galileo")))
         assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.linux(true, null)))
         assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("AYN", "AYN Thor", null)))
         assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.linux(false, null)))
         assertTrue(encoded.contentEquals(ProjectCodec.encodeBytes(project)))
         assertEquals(project, ProjectCodec.decodeBytes(encoded))
+        val smaller = song(4).let { it.copy(sound = it.studio.withPatch(1, heavy())) }
+        assertNull(StudioModularAdmission.problem(smaller, StudioModularProfiles.android("AYN", "AYN Thor", "QCS8550")))
+        assertNull(StudioModularAdmission.problem(smaller, StudioModularProfiles.android("Retroid", "Retroid Pocket Nova", "QCS8550")))
+        assertNotNull(StudioModularAdmission.problem(smaller, StudioModularProfiles.linux(true, null)))
     }
 }

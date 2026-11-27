@@ -7,7 +7,7 @@ macros and shared Performance / Build faces. Playback admission is separate from
 the portable project format: an over-budget graph remains editable without changing
 its sound or topology.
 
-- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/46049701928)
+- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/46057528023)
   passes shared and Android tests, native engine/WAV checks, AppImage smoke and the
   ARM64 Pak build. Separate strict C and ASan/UBSan checks cover graph replacement
   with two consumers, feedback timing, macro isolation and malformed graphs.
@@ -27,6 +27,8 @@ its sound or topology.
   signed macro endpoints and byte-exact recovery after Activity recreation.
   A separate native-lifecycle check retains audition capacity through the release
   tail and admits the same edit only after the tail becomes inactive.
+  Incremental Android checks also preserve native row clocks, one-row loops and
+  the applied image version used by mixed USB playback.
 - Brick's four-patch demo runs for 60 seconds with held-note macro edits:
   zero reported late callbacks or driver faults, 5.55 ms worst callback and
   68,752 KiB resident high-water from `/proc`.
@@ -35,9 +37,22 @@ its sound or topology.
   callback. This uses real PipeWire audio with an offscreen application window,
   not a Gaming Mode interaction test.
 
-Android's combined graph/effect budget is still under measurement. These bounded
-checks do not establish hard-real-time timing, acoustic latency or universal
-glitch-free playback.
+Nova's foreground Android qualification includes startup rather than discarding
+warm-up underruns. Two 180-second boundary cases passed with zero xruns or driver
+faults: two 413-unit graphs plus independent held audition and 89 controller
+edits (1,239 reserved units), and one 906-unit graph with 21 delay instances
+(1,242 units). Worst callbacks were 4.41 and 3.86 ms respectively, at 48 kHz with
+192-frame bursts and a 384-frame buffer. Larger cases failed: two maximum graphs
+without effects produced nine early xruns, and one maximum graph with 40 delays
+produced a startup xrun. Those failures are not excluded from the result.
+
+The QCS8550 Android profile therefore admits 1,200 work units. Thor uses this
+Nova-derived profile; this round did not physically qualify Thor. Deck OLED and
+Brick retain their separate 4,800- and 640-unit profiles; unknown devices use a
+conservative 256-unit profile. These are estimated work reservations, not CPU
+percentages or hard-real-time guarantees. Oversized documents remain unchanged and
+offline rendering is independent of this real-time limit. The bounded checks do
+not establish acoustic latency or universal glitch-free playback.
 
 ## Unreleased — Studio track bounce
 
