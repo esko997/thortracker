@@ -27,8 +27,10 @@ projects or their hardware exports. Modules are built in, not VST/AU plugins.
    and resource checks recorded in [Verification](docs/VERIFICATION.md).
 9. Editable four-wave families with morph/scan, controller point editing and touch drawing.
 10. A three-mode plucked resonator with material, strike, damping and ring controls.
+11. One-pattern internal-track bounce into an unused sampler slot, with explicit
+    insert/gain/pan processing, shared-return exclusion and one-step Undo.
 
-Follow-on candidates: track resampling/freeze and stems, bounded polyphony,
+Follow-on candidates: reversible track freeze and stems, bounded polyphony,
 modulation macros, additional filtering/dynamics, assisted slicing and
 time-stretching. These remain roadmap entries until their complete playback, editing,
 persistence and export paths are verified.

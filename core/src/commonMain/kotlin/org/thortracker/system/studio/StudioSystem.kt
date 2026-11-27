@@ -86,7 +86,9 @@ class StudioSystem(private val state: StudioSound) : TrackSystem(state.tracks.ma
         val prefix=(0 until order).filterNot { it in song.parkedOrders }.map { song.orders[it] }
         return super.patternLoop(song,order).copy(sound=state.copy(previewPrefix=prefix))
     }
-    override fun errors(song: Song): List<String> {
+    override fun errors(song: Song): List<String> = playbackErrors(song, checkLoopEntry = true)
+
+    internal fun playbackErrors(song: Song, checkLoopEntry: Boolean): List<String> {
         if (song.tuning != null && usbTracks.isNotEmpty()) return listOf("Studio USB tracks cannot play the song’s tuning; assign Mono or remove the tuning")
         super.errors(song).takeIf { it.isNotEmpty() }?.let { return it }
         val score=arranged(song)
@@ -96,8 +98,9 @@ class StudioSystem(private val state: StudioSound) : TrackSystem(state.tracks.ma
             if(lane.target==StudioTarget.USB_MIDI) continue
             if(lane.sends.drop(state.buses.size).any { it!=0 }) return listOf("Track ${lane.midi.id}: create the missing return bus or clear its send")
             var slot=1
-            // Validate both the first pass and loop entry (which can inherit a different instrument).
-            for(pass in 0..1) for(order in (if(pass==0) 0 else state.previewPrefix.size+score.loopOrder)..orders.lastIndex) {
+            // Normal playback can inherit a different slot on loop entry. A one-pass print
+            // stops before that row starts and must not reject an unexecuted command.
+            for(pass in 0..(if (checkLoopEntry) 1 else 0)) for(order in (if(pass==0) 0 else state.previewPrefix.size+score.loopOrder)..orders.lastIndex) {
                 val pattern=score.patterns[orders[order]]
                 for(row in 0 until pattern.length) {
                     val c=pattern.tracks[ch][row]; if(c.isBlank) continue

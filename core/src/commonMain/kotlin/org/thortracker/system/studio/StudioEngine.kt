@@ -34,9 +34,13 @@ object StudioEngine : PlaybackEngine {
     }
 
     /** Android's mixed router is responsible for validating/binding *all* external destinations before play. */
-    fun lowerInternal(song: Song, out: ByteArray) {
+    fun lowerInternal(song: Song, out: ByteArray) = lowerScore(song, out, checkLoopEntry = true)
+
+    internal fun lowerOnce(song: Song, out: ByteArray) = lowerScore(song, out, checkLoopEntry = false)
+
+    private fun lowerScore(song: Song, out: ByteArray, checkLoopEntry: Boolean) {
         require(out.size == imageSize)
-        song.system.errors(song).firstOrNull()?.let { throw IllegalArgumentException(it) }
+        song.studio.system.playbackErrors(song, checkLoopEntry).firstOrNull()?.let { throw IllegalArgumentException(it) }
         val doc = song.system.arranged(song)
         val state = doc.studio
         val orders=state.previewPrefix+doc.orders

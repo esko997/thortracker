@@ -235,9 +235,21 @@ class DeckShell(
     }
 
     private var wav: WavRun? = null
+    private var bounce: DeckBounce? = null
+
+    override fun startStudioBounce(
+        plan: org.thortracker.system.studio.StudioBouncePlan,
+        progress: (Long) -> Unit,
+        complete: (Result<org.thortracker.system.studio.StudioPcm?>) -> Unit,
+    ): (() -> Unit)? {
+        if (wav != null || fileJob != null || recoveryJob != null) return null
+        val job = bounce ?: DeckBounce(data).also { bounce = it }
+        return job.start(fileWorker(), plan, progress, complete)
+    }
 
     private fun startWav(path: String, song: Song, options: WavOptions) {
         if (wav != null) return error("A WAV export is already running")
+        if (bounce?.busy == true) return error("A Studio bounce is still rendering")
         val export = try {
             WavExport(song, options, wavSpool)
         } catch (e: IllegalArgumentException) {
@@ -363,6 +375,7 @@ class DeckShell(
     /** This worker only reads or writes files. Completion closures touch the editor on the frontend thread. */
     private fun fileWork(title: String? = null, onFailure: (String) -> Unit, work: () -> (() -> Unit)) {
         if (fileJob != null) return error("A file operation is already running")
+        if (bounce?.busy == true) return error("A Studio bounce is still rendering")
         val worker = fileWorker()
         val progress = title?.let { PopupSpec(it, "Reading file…", listOf(PopupItem.dismiss())) }
         val task = worker.execute(TransferMode.SAFE, { work }) { operation -> kotlin.runCatching { operation() } }
@@ -371,6 +384,7 @@ class DeckShell(
     }
 
     fun pumpFiles() {
+        bounce?.pump()
         recoveryJob?.let { if (it.future.state == FutureState.COMPUTED) finishRecovery(it) }
         val job = fileJob ?: return
         if (job.future.state != FutureState.COMPUTED) return
@@ -425,6 +439,8 @@ class DeckShell(
 
     /** Complete pending writes and the final working snapshot; do not deliver cancelled/outstanding read results. */
     fun close() {
+        bounce?.close()
+        bounce = null
         fileWorker?.requestTermination(processScheduledJobs = true)?.result
         recoveryJob?.let(::finishRecovery)
         fileJob?.let { job ->

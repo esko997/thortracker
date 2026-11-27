@@ -14,7 +14,8 @@
 
 #define POSITIONS 256              /* orders and rows both fit in a byte (the hosts pack them so) */
 #define TRAIL_FRAMES CHIP_WAV_RATE /* silence kept after the last audible frame when fading */
-#define START_SEEK_TICKS 65536     /* (0, 0) is reached before any tick; the budget is never used */
+#define START_SEEK_TICKS 65536     /* non-Studio exports start at physical (0, 0) */
+#define STUDIO_START_SEEK_TICKS 96 /* match live preview when the score has a chased prefix */
 #define SPOOL_BUFFER (1u << 16)
 
 enum { PLAYING, FADING, DONE, FAULTED, WRITE_FAILED };
@@ -198,7 +199,8 @@ ChipWav* chip_wav_open(const char* system_id, const uint8_t* image, size_t image
     const int loaded = studio ? studio_load_score(w->image, image, image_size, &bank)
                               : ops->load_image(w->image, image, image_size);
     const int started = loaded == CHIP_OK &&
-        ops->start(w->machine, w->image, 0, 0, START_SEEK_TICKS, &seek) == CHIP_OK;
+        ops->start(w->machine, w->image, 0, 0,
+                   studio ? STUDIO_START_SEEK_TICKS : START_SEEK_TICKS, &seek) == CHIP_OK;
     studio_bank_drop(bank); /* start retains the bank; failed starts retain nothing */
     if (!started) {
         *problem = "image";

@@ -32,6 +32,8 @@ import org.thortracker.system.SoundSystems
 import org.thortracker.system.fm.RhythmRomMenu
 import org.thortracker.system.fm.Ym2608RhythmRom
 import org.thortracker.system.studio.StudioAssignments
+import org.thortracker.system.studio.StudioBouncePlan
+import org.thortracker.system.studio.StudioPcm
 import org.thortracker.system.studio.StudioSound
 import org.thortracker.system.studio.StudioInstruments
 
@@ -82,6 +84,13 @@ interface MenuHost {
     fun exportWav(song: Song, options: WavOptions)
     /** Shows the running WAV export's popup again (Hide closed it); false when no export runs. */
     fun showWavExport(): Boolean
+    /**
+     * Starts one offline pattern bounce; null if the renderer is unavailable/busy. The returned callback only
+     * requests cancellation. Deliver progress (frames) and completion on the UI thread. Complete exactly once
+     * after worker cleanup, with null PCM for cancellation; suppress delivery after host destruction.
+     */
+    fun startStudioBounce(plan: StudioBouncePlan, progress: (Long) -> Unit,
+                          complete: (Result<StudioPcm?>) -> Unit): (() -> Unit)? = null
     fun recoverPrevious()
     fun exportKeymap()
     fun importKeymap()
@@ -141,6 +150,7 @@ class AppMenus(
     private val keymap: Keymap get() = host.keymap
     private val states get() = panes.panes
     private val focus get() = panes.focus
+    private val bounce = StudioBounceMenu(session, popups, host)
 
     fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int = 0) {
         popups.show(PopupSpec(title, items = entries.map { (label, action) -> PopupItem(label, action = action) } +
@@ -248,6 +258,7 @@ class AppMenus(
         menu("Thor Tracker", buildList {
             add("Files" to ::fileMenu)
             add("Song details / tempo" to host::showSongDetails)
+            if (bounce.pending) add("Show track bounce…" to bounce::reopen)
             if (session.song.sound is StudioSound) {
                 val state = states[host.modalDisplay.coerceIn(states.indices)]
                 add("Track strip" to {
@@ -256,6 +267,10 @@ class AppMenus(
                     host.refresh()
                 })
                 add("Instrument / presets…" to { StudioInstruments.library(session, context, state.instrument) })
+                if (!bounce.pending && state.kind == ViewKind.PATTERN) {
+                    val display = host.modalDisplay.coerceIn(states.indices)
+                    add("Bounce this track to sampler…" to { bounce.chooseSlot(display) { states.getOrNull(display) } })
+                }
                 if (state.kind == ViewKind.PATTERN) add("Write module parameter…" to {
                     StudioAssignments.choose(session, context, state)
                 })
