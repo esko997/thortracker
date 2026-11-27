@@ -87,7 +87,10 @@ object SampleExportTool {
             StudioEngine.lower(document,score)
             File(directory,name).writeBytes(StudioEngine.withBank(score,document.studio.assets))
         }
-        studioImage("studio-demo.stimg",StudioSound().system.demo())
+        val studioDemo = StudioSound().system.demo()
+        studioImage("studio-demo.stimg", studioDemo)
+        File(directory, "studio-demo.thor").writeBytes(ProjectCodec.encodeBytes(studioDemo))
+        File(directory, "studio-capacity.thor").writeBytes(ProjectCodec.encodeBytes(studioCapacity(studioDemo)))
         // One tick of song (1000 frames): source ends in 5 ms, first delay return is
         // deliberately beyond the song endpoint at 80 ms. Channels have opposite signs.
         val impulse=StudioPcm.of(2,48000,FloatArray(480) { if(it%2==0) .5f else -.25f })
@@ -565,5 +568,36 @@ object SampleExportTool {
         check(OpmSystem.errors(opmShortest).isEmpty()) { "the shortest OPM song is invalid: ${OpmSystem.errors(opmShortest)}" }
         File(directory, "opm-shortest.omimg").writeBytes(ByteArray(OpmSystem.engine.imageSize).also { OpmSystem.engine.lower(opmShortest, it) })
         println("Exported ${opm.title} and the shortest OPM song to ${directory.absolutePath}")
+    }
+
+    /** Full documented capacity, for opted-in physical callback/RSS checks, never a factory preset. */
+    private fun studioCapacity(demo: Song): Song {
+        val samples = FloatArray(4 * 1024 * 1024) { index ->
+            if (index % 1024 < 64) if (index % 2 == 0) .1f else -.1f else 0f
+        }
+        val first = StudioAssets.EMPTY.add(StudioPcm.of(2, 48000, samples))
+        samples[0] = .2f
+        val second = first.assets.add(StudioPcm.of(2, 48000, samples))
+        var song = StudioSound().system.blank()
+        repeat(7) { song = song.addStudioTrack() }
+        song = song.copy(sound = song.studio.copy(buses = List(2) { StudioBus(gain = 25) }))
+        for (strip in -2..7) repeat(4) { song = song.addStudioInsert(strip, StudioKind.DELAY) }
+        fun pedals(chain: List<StudioInsert>) = chain.map {
+            it.copy(values = mapOf(0 to 0, 1 to 2000, 2 to 35, 4 to 30))
+        }
+        val patches = demo.studio.patches.toMutableList()
+        patches[0] = SamplerPatch(name = "Capacity A", assetId = first.id, end = 1024,
+            loopEnd = 1024, values = mapOf(3 to 1))
+        patches[4] = SamplerPatch(name = "Capacity B", assetId = second.id, end = 1024,
+            loopEnd = 1024, values = mapOf(3 to 1))
+        val sound = song.studio.copy(patches = patches, assets = second.assets,
+            tracks = song.studio.tracks.map { it.copy(inserts = pedals(it.inserts), gain = 20, sends = listOf(20, 20)) },
+            buses = song.studio.buses.map { it.copy(inserts = pedals(it.inserts)) })
+        return song.copy(title = "Studio capacity fixture", sound = sound,
+            patterns = listOf(Pattern.blank(8).copy(tracks = List(8) { ch ->
+                List(Songs.ROWS) { row ->
+                    if (row % 4 == 0) Cell(48 + row / 4 % 12, if (ch == 4) 5 else ch % 4 + 1) else Cell.BLANK
+                }
+            })))
     }
 }

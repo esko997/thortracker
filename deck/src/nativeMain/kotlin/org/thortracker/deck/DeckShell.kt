@@ -119,7 +119,7 @@ class DeckShell(
         val song = session.song
         val path = working
         recoveryJob = RecoveryJob(version, fileWorker().execute(TransferMode.SAFE, { path to song }) { (file, snapshot) ->
-            runCatching { check(Files.writeProject(file, snapshot)) { "Cannot write working project" } }
+            kotlin.runCatching { check(Files.writeProject(file, snapshot)) { "Cannot write working project" } }
         })
     }
 

@@ -357,6 +357,58 @@ class AudioDeviceTest {
         }
     }
 
+    /** Opt-in capacity run against an exported fixture staged in this test app's target cache. */
+    @Test fun studioCapacityTopologyAndAuditionSoak() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        val name = args.getString("studioSoakFixture")
+        org.junit.Assume.assumeTrue(name != null)
+        require(name == "studio-capacity.thor" || name == "studio-demo.thor")
+        val file = java.io.File(instrumentation.targetContext.cacheDir, name!!)
+        val song = file.inputStream().use { source ->
+            org.thortracker.model.ProjectCodec.readDocument { bytes, offset, length ->
+                source.read(bytes, offset, length)
+            }
+        }
+        val duration = args.getString("observeMillis")?.toLongOrNull()?.coerceIn(5000, 180000) ?: 30000
+        var peakPss = 0
+        var peakNative = 0L
+        ChipAudio(instrumentation.targetContext).use { audio ->
+            audio.update(song)
+            audio.play()
+            await("capacity fixture starts", audio) { audio.position().playing }
+            val start = SystemClock.elapsedRealtime()
+            var revision = 0
+            while (SystemClock.elapsedRealtime() - start < duration) {
+                val changed = song.studio.copy(tracks = song.studio.tracks.map { lane ->
+                    lane.copy(inserts = lane.inserts.reversed().mapIndexed { index, pedal ->
+                        if (index == 0 && revision % 2 == 0 &&
+                            lane.bindings.values.none { it.instance == pedal.id }) pedal.copy(
+                            kind = org.thortracker.system.studio.StudioKind.REVERB, values = emptyMap())
+                        else pedal
+                    })
+                })
+                audio.update(song.copy(sound = if (revision % 2 == 0) changed else song.studio))
+                if (revision % 4 == 0) audio.audition(0, 48 + revision % 12, 1)
+                if (revision % 4 == 1) audio.releaseAudition()
+                SystemClock.sleep(400)
+                assertNull(audio.error())
+                assertTrue("topology edits must not stop playback", audio.position().playing)
+                peakPss = maxOf(peakPss, android.os.Debug.getPss())
+                peakNative = maxOf(peakNative, android.os.Debug.getNativeHeapAllocatedSize())
+                revision++
+            }
+            audio.stop()
+            await("capacity stop", audio) { !audio.position().playing && !audio.position().pending }
+            audio.silence()
+            assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+            instrumentation.sendStatus(0, Bundle().apply {
+                putString("stream", "STUDIO_CAPACITY fixture=$name revisions=$revision " +
+                    "peakPssKiB=$peakPss peakNativeBytes=$peakNative ${audio.diagnostics()}\n")
+            })
+        }
+    }
+
     private fun await(message: String, audio: ChipAudio, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 5000
         while (!condition() && SystemClock.elapsedRealtime() < deadline) {
