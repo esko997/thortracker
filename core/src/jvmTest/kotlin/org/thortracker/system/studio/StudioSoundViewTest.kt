@@ -332,9 +332,9 @@ class StudioSoundViewTest {
 
     private open class EntryMenu : MenuContext {
         var input: ((String) -> Unit)? = null
-        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = error("Unexpected choice menu: $title")
+        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int): Unit = error("Unexpected choice menu: $title")
         override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) { input = accepted }
-        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = error("Unexpected file picker")
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit): Unit = error("Unexpected file picker")
         override fun status(message: String) = Unit
         override fun error(message: String): Nothing = throw AssertionError(message)
         override fun installRhythmRom(bytes: ByteArray): String? = null

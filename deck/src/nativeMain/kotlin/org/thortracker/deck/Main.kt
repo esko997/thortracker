@@ -178,6 +178,7 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
             if (quitAfterMs != null && now - start > quitAfterMs) {
                 running = false
                 println("audio: auditions=${audio.auditions} peak=${da_peak()}")
+                audio.diagnostics().forEach { (label, value) -> println("$label: $value") }
                 println("frames=$frames fps=${frames * 1000 / maxOf(1uL, now - start).toLong()} position=${transport.position()} popup=${popups.top?.title}")
                 println("screenshot: ${platform.screenshot()}")
             }
