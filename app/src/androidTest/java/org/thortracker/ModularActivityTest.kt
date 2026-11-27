@@ -150,7 +150,7 @@ class ModularActivityTest {
                     assertTrue("Presentation deadline must advance at $order:$row", stamp[3] > deadline)
                     cursor = stamp[0]
                     deadline = stamp[3]
-                    return checkNotNull(heard).studio.patch(1)
+                    return checkNotNull(checkNotNull(heard).studio.patch(1))
                 }
                 fun awaitPlaying() = await("native Studio transport") {
                     assertNull(audio.error())
