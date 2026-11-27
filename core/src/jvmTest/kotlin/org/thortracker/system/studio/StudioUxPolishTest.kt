@@ -43,10 +43,10 @@ class StudioUxPolishTest {
             this.title = title
             this.textPrompt = accepted
         }
-        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) =
-            error("Unexpected file picker")
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit): Unit =
+            kotlin.error("Unexpected file picker")
         override fun status(message: String) = Unit
-        override fun error(message: String) = error("Unexpected menu error: $message")
+        override fun error(message: String): Unit = kotlin.error("Unexpected menu error: $message")
         override fun installRhythmRom(bytes: ByteArray): String? = null
     }
 
@@ -236,7 +236,7 @@ class StudioUxPolishTest {
             override val keymap = Keymap.DEFAULT
             override fun refresh() = Unit
             override fun status(message: String) = Unit
-            override fun error(message: String) = error(message)
+            override fun error(message: String): Unit = kotlin.error(message)
             override fun applyKeymap(next: Keymap, message: String?) = Unit
             override fun resetInput() = Unit
             override fun editAction(action: Action) = Unit

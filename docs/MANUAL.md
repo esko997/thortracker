@@ -415,7 +415,7 @@ devices use a conservative playback profile.
 
 #### Track strip and pedals
 
-Open **Track strip** (from **Menu**, **R2+Down**, or Pattern's **Strip** header button)
+Open **Track strip** (from **Menu**, **View**, or Pattern's **Strip** header button)
 for the selected track's instrument shortcut, four serial insert slots, gain, pan and
 two post-fader sends. Drag output faders and pedal knobs directly on touch screens,
 or adjust them with **A + Left/Right**. Available pedals are **Delay**, **Drive**,

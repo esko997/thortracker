@@ -250,7 +250,14 @@ internal class StudioStripPainter(v: PaneView) : Painter(v) {
             pedal == null && active == StudioStripView.PAN && value != null -> when { value == 0 -> "Center"; value < 0 -> "Left ${-value}%"; else -> "Right $value%" }
             else -> "$value %"
         }
-        box(c, action, if (value == null) "$label…" else "$label   $shown", false, accent)
+        val actionText = when {
+            value != null -> "$label   $shown"
+            pedal == null && active == StudioStripView.ROUTE -> "Switch track, return bus or add track…"
+            pedal == null && active == StudioStripView.INSTRUMENT -> "Open $label…"
+            pedal == null && active in 2..5 -> chain.getOrNull(active - 2)?.let { "Open ${it.kind.faceName} controls…" } ?: "Insert pedal into slot ${active - 1}…"
+            else -> "$label…"
+        }
+        box(c, action, actionText, false, accent)
         box(c, prev, "‹", false, accent); box(c, next, "›", false, accent)
         rail.set(x0, action.bottom, x1, bottom)
         if (value != null && rail.width() > 0f) {
