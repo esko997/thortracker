@@ -1,4 +1,41 @@
-# Thor Tracker verification — 2026-11-26
+# Thor Tracker verification — 2026-11-27
+
+## Unreleased — Studio instruments and effects
+
+Studio combines Mono, Sampler, two-operator FM and synthesized Drums in one project.
+Each track has four serial inserts, gain/pan and two post-fader sends. Delay, Drive,
+Crusher, Reverb and Chorus share stable, track-local automation bindings. Existing
+chip projects and hardware exports are unchanged.
+
+- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/45944559287)
+  passes the core and Android host tests, Linux core build, native engine tests,
+  factory-export identity, AppImage startup and ARM64 Pak build.
+- Native ASan/UBSan checks cover sampler tuning, slice/seek state, borrowed sample
+  lifetime, insert order, post-fader sends and audition with shared effect tails.
+  WAV fixtures check delayed output after the source ends and bounded tail/fade behavior.
+- A sampled project created through Android's document picker opens on both Deck
+  and Brick without the original WAV. Its embedded PCM and checksum are independently
+  checked. Brick uses real Mali/ALSA output; Deck's isolated check uses offscreen/dummy
+  SDL and does not establish Gaming Mode or speaker-output behavior.
+- Instrument and pedal faces are exercised at compact, portrait and dual-pane sizes.
+  Controller creation, touch slice edits, sample import, exact-value editing and Undo
+  use the same document operations. The instrument sidebar remains shared.
+- Brick capacity checks run eight tracks, 32 MiB of PCM and 40 delay instances for
+  two 60-second passes, including a 20-second held audition. Both maintain 59 fps
+  with no reported ALSA underruns, late callbacks or driver faults. Peak resident
+  memory is below 264 MiB; the slowest callback is 17.85 ms against a 21.33 ms
+  device buffer. These are bounded workload measurements, not a glitch-free guarantee.
+- Nova's 60-second Pocket Circuit run reports zero xruns and driver faults. Maximum-rack
+  runs of 180 seconds and 120 seconds (295 live topology changes) report five and six
+  xruns respectively, without driver faults; the output buffers reach 28 and 32 ms.
+  In the live-edit run, the receiver's lost-frame count is unchanged from the first
+  16-second snapshot through Stop. Maximum-rack startup is not underrun-free.
+
+Studio is a software-instrument workspace, not a new hardware-export target. USB MIDI
+destinations remain Android-only. Sample limits are 16 MiB decoded per asset and 32 MiB
+per project; current/Undo/Redo PCM retention is capped at 64 MiB, excluding runtime,
+clipboard and temporary I/O storage. WAV export uses the live DSP with explicit,
+bounded tails; a fresh cursor start does not reconstruct previous reverberation.
 
 ## 1.1.0 — Android MIDI beta
 

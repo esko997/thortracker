@@ -539,6 +539,13 @@ class MidiAudio internal constructor(
         transportRequest.incrementAndGet()
         submit { halt() }
     }
+    @Synchronized override fun silence() {
+        transportRequest.incrementAndGet()
+        submit {
+            halt()
+            studio?.silence()
+        }
+    }
     override fun position() = position
     override fun error(): String? = problem ?: studio?.error()
     @Synchronized override fun close() {

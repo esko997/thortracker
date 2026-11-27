@@ -31,7 +31,7 @@ class ProjectStore(context: Context) : AutoCloseable {
             var message: String? = null
             try {
                 if (recovery.baseFile.exists() || File(recovery.baseFile.path + ".bak").exists()) {
-                    song = ProjectCodec.decode(recovery.openRead().bufferedReader().use { it.readText() }, androidMidi = true)
+                    song = recovery.openRead().buffered().use { ProjectCodec.readDocument(androidMidi = true, read = it::read) }
                 }
             } catch (e: Exception) {
                 val suffix = "unreadable-${System.currentTimeMillis()}.thor"
@@ -58,7 +58,7 @@ class ProjectStore(context: Context) : AutoCloseable {
         if (closed || !recoveryWritable) return
         scheduled?.cancel(false)
         scheduled = recoveryExecutor.schedule({
-            try { writeAtomic(recovery, ProjectCodec.encode(song)) }
+            try { writeAtomic(recovery, song) }
             catch (e: Exception) { fail("Recovery save failed", e) }
         }, if (immediate) 0 else 250, TimeUnit.MILLISECONDS)
     }
@@ -66,7 +66,7 @@ class ProjectStore(context: Context) : AutoCloseable {
     /** Preserve the outgoing document before explicitly replacing it. */
     fun archive(song: Song) {
         recoveryExecutor.execute {
-            try { writeAtomic(previous, ProjectCodec.encode(song)) }
+            try { writeAtomic(previous, song) }
             catch (e: Exception) { fail("Previous-project backup failed", e) }
         }
     }
@@ -74,12 +74,9 @@ class ProjectStore(context: Context) : AutoCloseable {
     fun open(uri: Uri, callback: (Song) -> Unit) {
         providerExecutor.execute {
             try {
-                val text = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    // Bound hostile or accidental non-project selections before materializing JSON.
-                    val bytes = stream.readBytesBounded(16 * 1024 * 1024)
-                    bytes.toString(Charsets.UTF_8)
+                val song = context.contentResolver.openInputStream(uri)?.buffered()?.use {
+                    ProjectCodec.readDocument(androidMidi = true, read = it::read)
                 } ?: error("The selected provider did not open the document")
-                val song = ProjectCodec.decode(text, androidMidi = true)
                 deliver { callback(song) }
             } catch (e: Exception) { fail("Open failed; current song unchanged", e) }
         }
@@ -88,10 +85,9 @@ class ProjectStore(context: Context) : AutoCloseable {
     fun save(uri: Uri, song: Song, callback: () -> Unit) {
         providerExecutor.execute {
             try {
-                val text = ProjectCodec.encode(song)
-                context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
-                    stream.write(text.toByteArray(Charsets.UTF_8))
-                    stream.flush()
+                val document = ProjectCodec.prepareDocument(song)
+                context.contentResolver.openOutputStream(uri, "wt")?.buffered()?.use { stream ->
+                    document.writeTo { bytes, count -> stream.write(bytes, 0, count) }
                 } ?: error("The selected provider did not open the document for writing")
                 deliver(callback)
             } catch (e: Exception) { fail("Save failed; app-private recovery retained", e) }
@@ -119,31 +115,21 @@ class ProjectStore(context: Context) : AutoCloseable {
     fun previous(callback: (Song) -> Unit) {
         recoveryExecutor.execute {
             try {
-                val song = ProjectCodec.decode(previous.openRead().bufferedReader().use { it.readText() }, androidMidi = true)
+                val song = previous.openRead().buffered().use { ProjectCodec.readDocument(androidMidi = true, read = it::read) }
                 deliver { callback(song) }
             } catch (e: Exception) { fail("No readable previous-project backup", e) }
         }
     }
 
-    private fun writeAtomic(file: AtomicFile, text: String) {
+    private fun writeAtomic(file: AtomicFile, song: Song) {
+        val document = ProjectCodec.prepareDocument(song)
         val output = file.startWrite()
         try {
-            output.write(text.toByteArray(Charsets.UTF_8))
+            document.writeTo { bytes, count -> output.write(bytes, 0, count) }
             file.finishWrite(output)
         } catch (e: Exception) {
             file.failWrite(output)
             throw e
-        }
-    }
-
-    private fun java.io.InputStream.readBytesBounded(limit: Int): ByteArray {
-        val output = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(8192)
-        while (true) {
-            val count = read(buffer)
-            if (count < 0) return output.toByteArray()
-            require(output.size() + count <= limit) { "Project exceeds the 16 MiB input limit" }
-            output.write(buffer, 0, count)
         }
     }
 

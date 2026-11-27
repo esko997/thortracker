@@ -64,7 +64,7 @@ abstract class Saa1099System internal constructor(val variant: SaaVariant) : Sou
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = SaaRules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(ExportFormat("vgm") { SaaVgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help(variant)

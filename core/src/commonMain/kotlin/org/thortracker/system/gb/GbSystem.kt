@@ -57,7 +57,7 @@ object GbSystem : SoundSystem {
     /** hUGETracker names notes an octave above scientific pitch: its C-3 is C2 (65.4 Hz). */
     override val nameOctaveOffset = 1
     override val effects: List<EffectSpec> get() = HugeRules.EFFECTS
-    override val views = ViewKind.entries.toSet()
+    override val views = ViewKind.standard
     override val exports = listOf(ExportFormat("uge") { UgeExporter.export(it) })
     override val fine: FinePitch = Detune
     override val help: SystemHelp = Help

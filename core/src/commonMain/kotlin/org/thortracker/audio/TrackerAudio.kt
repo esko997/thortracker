@@ -32,6 +32,9 @@ interface TrackerAudio : AutoCloseable {
 
     fun stop()
 
+    /** Stops owned notes and immediately cuts internal effect tails; does not panic other MIDI performers. */
+    fun silence() { stop(); releaseAudition() }
+
     /**
      * Sounds absolute [note] (scientific pitch, 0 = C0) with [instrument] (a slot of the channel's bank) on [channel] until
      * [releaseAudition], with the current song's sounds. [detune] > 0 plays the note with the system's fine pitch

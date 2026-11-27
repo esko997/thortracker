@@ -14,11 +14,12 @@
  *  - The song part: from (order 0, row 0) until the loop point is entered for the second time (the loop point is
  *    the first row instance the song enters again, wherever its order list or jumps send it back, including a row
  *    that jumps to itself), then `loops` more arrivals at the loop point (each one more pass of the loop).
- *  - Then, with fade_ms > 0, a fade-out: the song keeps playing (it is looping, nothing is released or keyed off)
- *    while its volume falls linearly to silence over fade_ms. If the faded song is silent before the end, the file
- *    stops one second after its last audible frame (a song that ends by looping an empty pattern). With fade_ms = 0
- *    the file ends at the loop boundary. The intro, chip phase and envelopes can prevent seamless file looping.
- *    No song-wide release tail is requested: the engine interface has no "stop the song with release" operation.
+ *  - Then, with fade_ms > 0, a fade-out. Traditional chip songs keep looping as their volume falls linearly
+ *    to silence. Studio instead stops source notes at the boundary and fades the existing effect tails; no
+ *    new pattern events are played. Studio's engine also bounds tails to eight seconds, so a longer fade
+ *    cannot extend them. A silent ending is trimmed to one second after its last audible frame.
+ *    With fade_ms = 0 the file ends at the loop boundary without a tail. The intro, chip phase and envelopes
+ *    can prevent seamless file looping.
  *  - The limit: a song part that reaches max_seconds (0: no limit but CHIP_WAV_MAX_FRAMES) ends there, then fades
  *    as above; the status reports it (CHIP_WAV_CAPPED) so the host can say the file is not the complete song (or not
  *    all the loop passes asked for). */
@@ -53,8 +54,9 @@ extern "C" {
 
 typedef struct ChipWav ChipWav;
 
-/* Starts a job for a lowered image of `system_id` (as chip_engine_ops looks it up; image_size = its image_size),
- * creating (or replacing) the file at `spool_path`. Returns it, or NULL with *problem (a static string): "unknown
+/* Starts a job for a lowered image of `system_id` (as chip_engine_ops looks it up; image_size = its image_size,
+ * or that prefix plus Studio's optional PCM bank trailer), creating/replacing the file at `spool_path`.
+ * Returns it, or NULL with *problem (a static string): "unknown
  * system", "image" (the loader rejected it, or the driver faulted at the start), "arguments" (fade too long),
  * "out of memory", "spool" (the file could not be created); nothing is left at spool_path then. */
 ChipWav* chip_wav_open(const char* system_id, const uint8_t* image, size_t image_size, int loops, uint32_t fade_ms,

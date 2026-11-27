@@ -4,7 +4,7 @@ Keep a **`.thor` project** as your editable master. Exports are delivery formats
 
 ## Choose a delivery format
 
-All systems can render **WAV**. Other formats depend on the song's system:
+All internal sound systems can render **WAV**. USB MIDI and mixed USB projects cannot render external instruments offline. Other formats depend on the song's system:
 
 | System | System-specific export |
 | --- | --- |
@@ -16,12 +16,17 @@ All systems can render **WAV**. Other formats depend on the song's system:
 | OPL3, AY/YM, PC Engine, SCC/SCC+, OPM, OPN/OPNA, POKEY, WonderSwan/Color, Virtual Boy, SAA1099 | `.vgm` |
 | Atari 2600 TIA, VIC-20, C16 / Plus/4 | WAV; no additional chip-log or executable export |
 | Game Boy Advance / Maxmod | Eight-channel FastTracker II `.xm` for Maxmod-based GBA games |
+| Studio | WAV, including internal instruments, inserts and shared returns |
 
 Export restrictions depend on the system: VGM is a timed register log, NSF players must support the selected expansion, and some sounds require separately supplied firmware. See the [system guide](/systems/) and [engine documentation](../../docs/AUDIO_ENGINE.md) for integration details.
 
 GBA export is currently **PCM/sample-only**; it does not include the hardware PSG
 channels. Its target is mmutil 1.10.1 / Maxmod 1.0.15, not every engine that
 accepts XM. WAV export records audio and does not create a game playback driver.
+
+Studio projects containing samples embed deduplicated audio in the `.thor` file.
+No source-WAV folder needs to accompany the project. See the
+[Studio sampler guide](/systems/#sampler-play-chop-and-shape) for supported formats and limits.
 
 Keymaps use **`thor-tracker-keymap.json`** and can be exported/imported from Controls. Tuning collections use **`.thorscales`**; individual scales use **Scala `.scl`**. These are separate from a song's `.thor` document. [Microtuning](/getting-started/#microtuning-song-tuning-from-a-scala-scl-file) describes provenance, pitch limits and collection management.
 

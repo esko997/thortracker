@@ -49,7 +49,7 @@ object PokeySystem : SoundSystem {
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = PokeyRules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(ExportFormat("vgm") { PokeyVgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help

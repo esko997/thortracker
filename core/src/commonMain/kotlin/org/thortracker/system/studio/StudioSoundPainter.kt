@@ -82,7 +82,7 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         body.set(bank.right + pad, top + pad * 0.5f, area.right - pad,
             minOf(area.bottom - pad, top + ink.unit * 37f))
         if (body.width() <= 0f || body.height() <= 0f) return
-        val patch = StudioSoundView.patch(song, st)
+        val patch = StudioSoundView.mono(song, st)
         if (cachedPatch !== patch) {
             for (param in Param.entries) {
                 val value = param.read(patch)
@@ -411,7 +411,7 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
                 else -> Travel.DIAL
             }
             drag.begin(session, param.undoLabel, Drag(st, st.instrument, st.listenChannel, p.revision,
-                param, travel, param.read(StudioSoundView.patch(song, st)), x, y, rail.left, rail.right,
+                param, travel, param.read(StudioSoundView.mono(song, st)), x, y, rail.left, rail.right,
                 fieldTarget(param).centerX(), preview, session.documentVersion))
             p.cancelTouch = cancelPointer
             if (travel != Travel.DIAL) move(x, y)

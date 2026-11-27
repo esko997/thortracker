@@ -74,7 +74,7 @@ abstract class TrackSystem(protected val trackSettings: List<MidiTrack>) : Sound
         "Velocity" to "1–127", "Control A" to "0–127", "Control B" to "0–127").mapIndexed { i, (label, unit) ->
         EffectSpec(i, label, unit, unit, true)
     }
-    override val views = ViewKind.entries.toSet() - ViewKind.INSTRUMENT - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.INSTRUMENT - ViewKind.WAVE
     override val exports = emptyList<ExportFormat>()
     override val offEffect: String? = null
     override val tickHz = 48.0

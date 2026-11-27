@@ -63,7 +63,7 @@ abstract class AySystem internal constructor(val variant: AyVariant) : SoundSyst
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = AyRules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(ExportFormat("vgm") { AyVgm.export(it) })
     override val fine: FinePitch = AyFine
     override val help: SystemHelp = AyHelp(variant)

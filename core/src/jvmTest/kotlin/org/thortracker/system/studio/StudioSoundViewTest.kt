@@ -67,7 +67,8 @@ class StudioSoundViewTest {
         panel.draw()
         panel.tap(panel.painter.fieldTarget(Param.TUNE))
         menu.input!!("-19")
-        assertEquals(before.studio.patch(7)!!.copy(tune = -19), panel.patch())
+        val original = before.studio.patch(7) as MonoPatch
+        assertEquals(original.copy(tune = -19), panel.patch())
         panel.draw()
         panel.tap(panel.painter.modeTarget(false))
         panel.key(Action.RIGHT) // Default Wave -> Cutoff on Sound, independent of Advanced's Tune focus.
@@ -75,9 +76,9 @@ class StudioSoundViewTest {
         panel.key(Action.RIGHT)
         panel.key(Action.RIGHT)
         panel.pane.release(Action.EDIT)
-        assertEquals(before.studio.patch(7)!!.copy(tune = -19, cutoff = 63), panel.patch())
+        assertEquals(original.copy(tune = -19, cutoff = 63), panel.patch())
         panel.key(Action.UNDO)
-        assertEquals(before.studio.patch(7)!!.copy(tune = -19), panel.patch())
+        assertEquals(original.copy(tune = -19), panel.patch())
         panel.key(Action.UNDO)
         assertSame(before, panel.session.song)
         panel.key(Action.REDO)
@@ -108,7 +109,7 @@ class StudioSoundViewTest {
         val x = knob.centerX()
         val y = knob.centerY()
         val heard = ArrayList<Int>()
-        panel.session.onAudition = { _, _, slot, _ -> heard += panel.session.song.studio.patch(slot)!!.cutoff }
+        panel.session.onAudition = { _, _, slot, _ -> heard += (panel.session.song.studio.patch(slot) as MonoPatch).cutoff }
         panel.pane.press(Action.EDIT)
         assertTrue(panel.pane.touchDown(x, y))
         panel.pane.touchMove(x, y - 28f)
@@ -175,7 +176,7 @@ class StudioSoundViewTest {
         session.replaceSong(session.song.copy(sound = session.song.studio.copy(tracks = tracks.map { it.copy(target = StudioTarget.USB_MIDI) })))
         primary.key(Action.AUDITION)
         assertEquals(2, auditions.size)
-        assertEquals("Assign a Mono track to audition patches", session.message)
+        assertTrue(session.message.orEmpty().contains("internal track"))
     }
 
     private class Panel(val session: EditorSession, private val width: Int, private val height: Int) {
@@ -206,7 +207,7 @@ class StudioSoundViewTest {
         }
 
         fun key(action: Action) { pane.press(action); pane.release(action) }
-        fun patch() = session.song.studio.patch(state.instrument)!!
+        fun patch() = session.song.studio.patch(state.instrument) as MonoPatch
 
         fun assertControlsFit() {
             for (param in Param.entries) {
@@ -222,9 +223,95 @@ class StudioSoundViewTest {
         }
     }
 
+    @Test fun touchingFmBrightnessEditsOnlyItsOperatorAndKeepsTheBankWhenSwitchingFaces() {
+        val original = FmPatch("Custom", mapOf(0 to 317, 1 to 127, 2 to 391, 5 to 2831))
+        val fixture = session()
+        val doc = fixture.song.copy(sound = fixture.song.studio.withPatch(7, original))
+        fixture.replaceSong(doc)
+        val st = ViewState(kind = ViewKind.INSTRUMENT, instrument = 7)
+        val canvas = Canvas()
+        val pane = PaneView(fixture, st, 1f, canvas, { 0L }, {})
+        fun draw() {
+            pane.ink.layout(640, 480, st.zoom)
+            canvas.bankRight = minOf(640 * 0.26f, pane.ink.unit * 12f)
+            canvas.bankTop = pane.ink.unit * 2f
+            canvas.bankBottom = 480 - pane.ink.unit * 1.9f
+            canvas.bank.clear()
+            canvas.centers.clear()
+            pane.draw(640, 480)
+        }
+        fun tap(label: String) {
+            val (x,y) = canvas.centers.getValue(label)
+            assertTrue(pane.touchDown(x,y))
+            pane.touchUp(x,y)
+        }
+        draw()
+        val bank = canvas.bank.toList()
+        tap("Advanced")
+        draw()
+        assertEquals(bank,canvas.bank)
+        assertSame(doc,fixture.song)
+        tap("Sound")
+        draw()
+        val (x,y) = canvas.centers.getValue("Brightness")
+        assertTrue(pane.touchDown(x,y))
+        pane.touchMove(x+20,y)
+        pane.touchMove(x+40,y)
+        pane.touchUp(x+40,y)
+        val next = fixture.song.studio.patch(7) as FmPatch
+        assertTrue(next.value(2)>391)
+        assertEquals(original.withValue(2,next.value(2)),next)
+        pane.press(Action.UNDO)
+        pane.release(Action.UNDO)
+        assertSame(doc,fixture.song)
+    }
+
+    @Test fun emptySamplerArtworkImportsARecordingAndUndoRestoresTheEmptySlot() {
+        val fixture = session()
+        val before = fixture.song.copy(sound = fixture.song.studio.withPatch(7, SamplerPatch()))
+        fixture.replaceSong(before)
+        val state = ViewState(kind = ViewKind.INSTRUMENT, instrument = 7, samplerPage = 1)
+        val canvas = Canvas()
+        val pane = PaneView(fixture, state, 1f, canvas, { 0L }, {})
+        var choose: (() -> Unit)? = null
+        var deliver: ((String, String, ByteArray) -> Unit)? = null
+        val menu = object : EntryMenu() {
+            override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) {
+                choose = entries.single().second
+            }
+            override fun pickFile(title: String, extensions: List<String>, maxBytes: Int,
+                picked: (String, String, ByteArray) -> Unit) { deliver = picked }
+        }
+        fixture.onMenuRequest = { it(menu) }
+        pane.controller.normalise()
+        pane.draw(640, 480)
+        val (x,y) = canvas.centers.getValue("Choose recording")
+        assertTrue(pane.touchDown(x,y))
+        pane.touchUp(x,y)
+        assertSame(before,fixture.song)
+        choose!!()
+        assertSame(before,fixture.song)
+        val wav = java.nio.ByteBuffer.allocate(48).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray()); putInt(40); put("WAVEfmt ".toByteArray()); putInt(16)
+            putShort(1); putShort(1); putInt(8000); putInt(8000); putShort(1); putShort(8)
+            put("data".toByteArray()); putInt(4); put(byteArrayOf(-128,-1,0,-128))
+        }.array()
+        deliver!!("Fresh", ".wav", wav)
+        val patch = fixture.song.studio.patch(7) as SamplerPatch
+        val pcm = fixture.song.studio.assets[patch.assetId!!]!!
+        assertEquals("Fresh",patch.name)
+        assertEquals(8000,pcm.sampleRate)
+        assertEquals(4,pcm.frames)
+        assertEquals(-1f,pcm.sample(2),0f)
+        assertEquals(before.studio.patch(8),fixture.song.studio.patch(8))
+        pane.press(Action.UNDO); pane.release(Action.UNDO)
+        assertSame(before,fixture.song)
+    }
+
     private class Canvas : Surface {
         val bank = ArrayList<String>()
         val text = ArrayList<String>()
+        val centers = HashMap<String,Pair<Float,Float>>()
         var bankRight = 0f
         var bankTop = 0f
         var bankBottom = 0f
@@ -237,16 +324,17 @@ class StudioSoundViewTest {
         override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) = Unit
         override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) {
             text += s
+            centers[s] = x to top+h/2
             if (x < bankRight && top >= bankTop && top < bankBottom) bank += "$s|$x|$top|$h|$color|$face|$bold|$size|$align"
         }
         override fun textWidth(s: String, face: Face, bold: Boolean, size: Float) = s.length * size / 2f
     }
 
-    private class EntryMenu : MenuContext {
+    private open class EntryMenu : MenuContext {
         var input: ((String) -> Unit)? = null
-        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = error("Unexpected choice menu: $title")
+        override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int): Unit = error("Unexpected choice menu: $title")
         override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) { input = accepted }
-        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) = error("Unexpected file picker")
+        override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit): Unit = error("Unexpected file picker")
         override fun status(message: String) = Unit
         override fun error(message: String): Nothing = throw AssertionError(message)
         override fun installRhythmRom(bytes: ByteArray): String? = null

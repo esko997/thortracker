@@ -36,19 +36,21 @@ fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<St
     val clock = studio?.clock ?: requireNotNull(legacy).clock
     val count = song.system.channels.size
     menu.menu("${if (studio == null) "MIDI" else "Studio"} track ${track.id}", buildList {
-        if (lane != null) add("Destination · ${if (external) "USB MIDI" else "Mono"}" to {
+        if (lane != null) add("Destination · ${if (external) "USB MIDI" else "Internal"}" to {
             menu.menu("Track destination", listOf(
-                "Mono synth" to { editLane("Assign Mono") { it.copy(target = StudioTarget.MONO) } },
+                "Internal instruments" to { editLane("Assign internal instruments") { it.copy(target = StudioTarget.MONO) } },
                 "USB MIDI" to {
                     if (usbAvailable) editLane("Assign USB MIDI") { it.copy(target = StudioTarget.USB_MIDI) }
                     else menu.error("USB MIDI output is available on Android only")
                 }))
         })
         if (external) add((if (usbAvailable) output else "USB MIDI · Android only") to {
-            if (!usbAvailable) menu.error("This USB route is preserved. Play it on Android or choose Mono explicitly.")
+            if (!usbAvailable) menu.error("This USB route is preserved. Play it on Android or choose internal instruments.")
             else if (ports.isEmpty()) menu.error("Connect a data cable and select MIDI under Android USB preferences, or attach a class-compliant USB instrument. Reopen tracks to refresh.")
             else menu.menu("Send to USB port", ports.map { (key, label) -> label to { edit("Bind MIDI output") { it.copy(port = key) } } })
         })
+        if(external && lane!=null && (lane.inserts.isNotEmpty() || lane.sends.any { it!=0 } || lane.gain!=100 || lane.pan!=0))
+            add("Strip inactive on USB" to { menu.status("Insert, fader, pan and sends are preserved; choose Internal to process audio.") })
         if (external) add(number("Channel", track.channel + 1, 1..16) { t, v -> t.copy(channel = v - 1) })
         add(number("Velocity", track.velocity, 1..127) { t, v -> t.copy(velocity = v) })
         add(number("Gate % of step", track.gate, 1..100) { t, v -> t.copy(gate = v) })

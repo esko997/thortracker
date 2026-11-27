@@ -71,6 +71,7 @@
 #include "chip_engine.h"
 #include "chip_wav.h"
 #include "ym2608_rhythm_rom.h"
+#include "studio/studio_runtime.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -633,6 +634,79 @@ static void test_shortest_held(const char* samples, const Demo* d) {
     free(image);
 }
 
+/* The embedded stereo pulse ends before its first delay echo. A Studio fade must
+ * release the source, not loop/retrigger it as traditional chip fades do. */
+static void test_studio_tail(const char* samples) {
+    char path[1024];
+    snprintf(path, sizeof path, "%s/studio-sampler-delay.stimg", samples);
+    size_t image_size = 0, size = 0;
+    uint8_t* image = read_file(path, &image_size);
+    EXPECT(image != NULL, "Studio sampler/delay fixture exists");
+    if (!image) return;
+    const char* problem = NULL;
+    int capped = 0;
+    uint8_t* cut = render("studio-mono", image, image_size, 0, 0, 0, &size, &capped, &problem);
+    EXPECT(cut != NULL, "sample-bearing Studio image renders without its source WAV");
+    if (cut) {
+        EXPECT(check_header("Studio cut", cut, size) == 1000, "zero fade ends at the first row boundary");
+        free(cut);
+    }
+    uint8_t* file = render("studio-mono", image, image_size, 0, 1000, 0, &size, &capped, &problem);
+    EXPECT(file != NULL, "Studio tail render succeeds");
+    if (file) {
+        const uint64_t frames = check_header("Studio tail", file, size);
+        EXPECT(frames == 1000 + RATE, "one second bounds the post-stop fade");
+        if (frames > 4200) {
+            const uint8_t* pcm = file + CHIP_WAV_HEADER;
+            EXPECT(peak(pcm, 1200, 3500) == 0, "no source retrigger while waiting for the echo");
+            EXPECT(peak(pcm, 3840, 4200) > 100, "the delayed echo survives Stop and initial silence");
+        }
+        const ChipEngineOps* ops = &studio_mono_ops;
+        ChipImage* score = calloc(1, ops->image_storage);
+        ChipMachine* machine = ops->create(RATE);
+        StudioBank* bank = NULL;
+        int seek = 0;
+        int ready = score && machine && studio_load_score(score, image, image_size, &bank) == CHIP_OK &&
+            ops->start(machine, score, 0, 0, 65536, &seek) == CHIP_OK;
+        studio_bank_drop(bank);
+        EXPECT(ready, "independent live machine loads the embedded bank");
+        if (ready) {
+            float buf[CHIP_MAX_TICK_FRAMES * 2];
+            uint64_t at = 0;
+            int matches = 1;
+            while (at < frames && matches) {
+                if (at == 1000) EXPECT(ops->stop_tail(machine), "live Stop retains a pending echo");
+                const int n = ops->tick(machine, buf);
+                if (n <= 0) { matches = 0; break; }
+                for (int i = 0; i < n && at + (uint64_t)i < frames; ++i) {
+                    const uint64_t frame = at + (uint64_t)i;
+                    const float gain = frame < 1000 ? 1.f : (float)(1.0 - (double)(frame - 1000) / RATE);
+                    for (int ch = 0; ch < 2; ++ch) {
+                        const int16_t actual = (int16_t)u16(file + CHIP_WAV_HEADER + frame * 4 + ch * 2);
+                        if (actual != chip_wav_pcm16(buf[2 * i + ch] * gain)) matches = 0;
+                    }
+                }
+                at += (uint64_t)n;
+            }
+            EXPECT(matches, "offline stereo output equals live DSP followed by Stop, with the selected fade");
+        }
+        if (machine) ops->destroy(machine);
+        free(score);
+        free(file);
+    }
+    ChipWav* cancelled = chip_wav_open("studio-mono", image, image_size, 0, 1000, 0, spool, &problem);
+    EXPECT(cancelled != NULL, "sample export can begin before cancellation");
+    if (cancelled) {
+        chip_wav_run(cancelled, 1);
+        chip_wav_close(cancelled);
+        EXPECT(!exists(spool), "cancelled sampled export removes its incomplete spool");
+    }
+    ChipWav* truncated = chip_wav_open("studio-mono", image, image_size - 1, 0, 1000, 0, spool, &problem);
+    EXPECT(!truncated && problem && !strcmp(problem, "image"), "truncated PCM trailer is refused");
+    if (truncated) chip_wav_close(truncated);
+    free(image);
+}
+
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : ".";
     const char* samples = argc > 2 ? argv[2] : "app/build/samples";
@@ -666,6 +740,7 @@ int main(int argc, char** argv) {
     test_shortest_ay(1, "ay-msx");
     test_shortest_ay(2, "ay-atari-st");
     test_shortest_ay(3, "ay-cpc");
+    test_studio_tail(samples);
     printf("WAV export: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

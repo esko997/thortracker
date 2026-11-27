@@ -18,6 +18,7 @@
 #include <mutex>
 
 #include "chip_engine.h"
+#include "studio/studio_runtime.h"
 
 namespace thortracker {
 
@@ -44,6 +45,7 @@ private:
 // A loaded image (ops->image_storage bytes) and the song version it came from.
 struct ImageSlot {
     ChipImage* data = nullptr;
+    StudioLive* studio = nullptr;
     uint32_t version = 0;
 };
 
@@ -67,6 +69,7 @@ public:
     int set_image(const uint8_t* bytes, size_t size, uint32_t version);  // CHIP_OK / CHIP_ERR_IMAGE
     int play(int order, int row, int max_ticks);  // >= 0 seek mode, < 0 error
     void stop();
+    void panic();
     int audition(int channel, int note, int instrument, int fine);
     void release_audition();
     int ensure_stream();  // AAUDIO_OK or an AAudio error code
@@ -98,6 +101,7 @@ private:
 
     // Control-thread state.
     ImageSlot control_image_;
+    StudioBank* studio_bank_ = nullptr;
     bool has_image_ = false;
     uint32_t seq_ = 0;
     std::mutex stream_mutex_;  // guards stream_ for control/UI threads (never the callback)
@@ -112,6 +116,7 @@ private:
     MachineSlot slot_storage_[6];
     std::atomic<uint32_t> stop_seq_{0};
     std::atomic<uint32_t> release_seq_{0};
+    std::atomic<uint32_t> panic_seq_{0};
     std::atomic<uint32_t> published_play_seq_{0};
     std::atomic<uint32_t> acknowledged_play_seq_{0};
     std::atomic<bool> stream_dead_{false};
@@ -121,6 +126,8 @@ private:
     MachineSlot* play_ = nullptr;
     MachineSlot* aud_ = nullptr;
     bool aud_releasing_ = false;  // key-off sent; ticking until the machine reports the end
+    bool aud_stopped_ = false;
+    bool play_tailing_ = false;
     int borrowed_channel_ = -1;
     float play_buf_[CHIP_MAX_TICK_FRAMES * 2];
     float aud_buf_[CHIP_MAX_TICK_FRAMES * 2];
@@ -131,6 +138,7 @@ private:
     // Shared (audio thread writes, others read).
     std::atomic<bool> playing_{false};
     std::atomic<bool> auditioning_{false};
+    std::atomic<bool> tailing_{false};
     std::atomic<uint32_t> session_{0};
     static constexpr int kRing = 64;
     std::atomic<uint64_t> ring_frame_[kRing];

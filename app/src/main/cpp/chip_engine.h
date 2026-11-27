@@ -162,6 +162,10 @@ typedef struct ChipEngineOps {
 
     /* Optional: update a held audition's sound without restarting its envelope. */
     void (*apply_audition_image)(ChipMachine* m, const ChipImage* image);
+
+    /* Optional. End the song's sources and sequencer now; continue ticking only its bounded
+     * internal release/effects while it returns frames. Return 0 for immediate silence. */
+    int (*stop_tail)(ChipMachine* m);
 } ChipEngineOps;
 
 /* The implementation for a system id, or NULL if this build has none. */

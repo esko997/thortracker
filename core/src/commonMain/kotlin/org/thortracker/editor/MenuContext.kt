@@ -18,8 +18,21 @@ interface MenuContext {
      */
     fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (name: String, extension: String, bytes: ByteArray) -> Unit)
 
+    /** Like [pickFile], but frontends decode large payloads on their file worker before delivering to the editor. */
+    fun <T> pickFileDecoded(title: String, extensions: List<String>, maxBytes: Int,
+        decode: (ByteArray) -> T, picked: (name: String, extension: String, value: T) -> Unit) =
+        pickFile(title, extensions, maxBytes) { name, extension, bytes ->
+            val value = try { decode(bytes) } catch (e: Exception) {
+                return@pickFile error("Not loaded: ${e.message}")
+            }
+            picked(name, extension, value)
+        }
+
     fun status(message: String)
     fun error(message: String)
+
+    /** A visible Pattern pane wins; single-screen module editors retain their own Pattern cursor. */
+    fun patternCursor(origin: ViewState): ViewState = origin
 
     /**
      * Keeps [bytes], an already checked YM2608 rhythm ROM, as this device's firmware and installs it in the native

@@ -37,7 +37,12 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
         val engine = open(song.system) ?: return
         songError = try {
             engine.lower(song, image)
-            val result = image.usePinned { da_set_image(it.addressOf(0).reinterpret(), image.size) }
+            val studio=song.sound as? org.thortracker.system.studio.StudioSound
+            val old=imageSong?.sound as? org.thortracker.system.studio.StudioSound
+            val wire=if(studio!=null && studio.assets !== old?.assets)
+                org.thortracker.system.studio.StudioEngine.withBank(image,studio.assets) else image
+            val result = wire.usePinned { da_set_image(it.addressOf(0).reinterpret(), wire.size) }
+            require(result==0 || studio==null) { "Studio player could not prepare the sample bank or effect graph ($result)" }
             if (result == 0) { hasImage = true; imageSong = song; null }
             else "Playing the last playable version, not your latest edits: the player rejected the song data (error $result)"
         } catch (e: IllegalArgumentException) {
@@ -57,6 +62,7 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
     }
 
     override fun stop() { commandError = null; if (system != null) da_stop() }   // a failed command is over once its sound is
+    override fun silence() { commandError = null; if (system != null) da_panic() }
 
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
         auditions++

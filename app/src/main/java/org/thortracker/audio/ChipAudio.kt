@@ -133,6 +133,13 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         scheduleIdleCheck()
     }
 
+    override fun silence() = post(transport = true) {
+        commandError = null
+        val h = handle
+        if (h != 0L) nativePanic(h)
+        scheduleIdleCheck()
+    }
+
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) = post {
         retryFailedImage()
         val engine = system?.engine
@@ -272,8 +279,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         } catch (e: IllegalArgumentException) {
             if (song.system.engine === StudioEngine) {
                 hasImage = false
-                nativeStop(h)
-                nativeReleaseAudition(h)
+                nativePanic(h)
                 songError = e.message ?: "Invalid Studio project"
                 return
             }
@@ -281,11 +287,22 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
             return
         }
         imageVersion++
-        val result = if (scores == null) nativeSetImage(h, image, imageVersion) else synchronized(handleLock) {
-            scores[imageVersion] = song.system.arranged(song)
-            if (scores.size > 64) scores.remove(scores.keys.first())
-            nativeSetImage(h, image, imageVersion)
+        val studio = song.sound as? org.thortracker.system.studio.StudioSound
+        val old = imageSong?.sound as? org.thortracker.system.studio.StudioSound
+        val wire = if(studio!=null && studio.assets !== old?.assets)
+            StudioEngine.withBank(image,studio.assets) else image
+        if (scores != null) {
+            // The USB worker needs cells/routes, not PCM. Never pin 64 historical sample banks here.
+            val score = if(studio!=null && studio.assets.ids.isNotEmpty()) song.copy(sound=studio.copy(
+                assets=org.thortracker.system.studio.StudioAssets.EMPTY)) else song
+            val arranged = score.system.arranged(score)
+            synchronized(handleLock) {
+                scores[imageVersion] = arranged
+                if (scores.size > 64) scores.remove(scores.keys.first())
+            }
         }
+        // Native preparation may decode PCM and allocate delay lines; never hold up the USB row reader.
+        val result = nativeSetImage(h, wire, imageVersion)
         if (result == 0) {
             hasImage = true
             imageSong = song
@@ -293,8 +310,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         } else {
             if (song.system.engine === StudioEngine) {
                 hasImage = false
-                nativeStop(h)
-                nativeReleaseAudition(h)
+                imageSong = null // force bank retransmission if native preparation failed after replacing it
+                nativePanic(h)
                 songError = "Studio player rejected its image (layout error $result)"
                 return
             }
@@ -441,6 +458,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         @JvmStatic private external fun nativeEnsureStream(handle: Long): Int
         @JvmStatic private external fun nativePlay(handle: Long, order: Int, row: Int, maxTicks: Int): Int
         @JvmStatic private external fun nativeStop(handle: Long)
+        @JvmStatic private external fun nativePanic(handle: Long)
         @JvmStatic private external fun nativeAudition(handle: Long, channel: Int, note: Int, instrument: Int, detune: Int): Int
         @JvmStatic private external fun nativeReleaseAudition(handle: Long)
         @JvmStatic private external fun nativeSuspendIfIdle(handle: Long): Boolean

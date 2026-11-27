@@ -23,6 +23,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import org.thortracker.system.midi.MidiTrack
 import org.thortracker.system.studio.StudioSound
+import org.thortracker.system.studio.MonoPatch
 import org.thortracker.system.studio.StudioTarget
 import org.thortracker.system.studio.StudioTrack
 import org.thortracker.system.studio.studio
@@ -285,17 +286,17 @@ class AudioDeviceTest {
                 assertTrue("native row deadlines advance across loops", row[3] > previousTime)
                 previousTime = row[3]
             }
-            val edited = song.copy(sound = sound.withPatch(1, sound.patch(1)!!.copy(cutoff = 23)))
+            val edited = song.copy(sound = sound.withPatch(1, (sound.patch(1) as MonoPatch).copy(cutoff = 23)))
             audio.update(edited)
             var heard = nextRow()
-            repeat(8) { if (heard.studio.patch(1)!!.cutoff != 23) heard = nextRow() }
-            assertEquals(23, heard.studio.patch(1)!!.cutoff)
+            repeat(8) { if ((heard.studio.patch(1) as MonoPatch).cutoff != 23) heard = nextRow() }
+            assertEquals(23, (heard.studio.patch(1) as MonoPatch).cutoff)
             assertEquals(sound.tracks, heard.studio.tracks)
             audio.stop()
             await("mixed native timeline stops", audio) { audio.position().let { !it.pending && !it.playing } }
             audio.play(0, 2)
             cursor = -1
-            assertEquals(23, nextRow().studio.patch(1)!!.cutoff)
+            assertEquals(23, (nextRow().studio.patch(1) as MonoPatch).cutoff)
             assertEquals(2L, row[2])
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
             audio.stop()
@@ -320,7 +321,7 @@ class AudioDeviceTest {
             await("Studio starts and advances", audio) { audio.position().playing && audio.position().row >= 3 }
             val before = audio.position().row
             val sound = song.sound as org.thortracker.system.studio.StudioSound
-            val changed = sound.withPatch(1, sound.patch(1)!!.copy(waveform = 1, cutoff = 28, resonance = 65))
+            val changed = sound.withPatch(1, (sound.patch(1) as MonoPatch).copy(waveform = 1, cutoff = 28, resonance = 65))
             audio.update(song.copy(sound = changed))
             await("Studio keeps advancing after a live patch edit", audio) {
                 audio.position().playing && audio.position().row > before
@@ -353,6 +354,67 @@ class AudioDeviceTest {
             }
             audio.stop()
             await("Game Boy stop completes", audio) { !audio.position().playing && !audio.position().pending }
+        }
+    }
+
+    /** Opt-in capacity run against an exported fixture staged in this test app's target cache. */
+    @Test fun studioCapacityTopologyAndAuditionSoak() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        val name = args.getString("studioSoakFixture")
+        org.junit.Assume.assumeTrue(name != null)
+        require(name == "studio-capacity.thor" || name == "studio-demo.thor")
+        val file = java.io.File(instrumentation.targetContext.cacheDir, name!!)
+        val song = file.inputStream().use { source ->
+            org.thortracker.model.ProjectCodec.readDocument { bytes, offset, length ->
+                source.read(bytes, offset, length)
+            }
+        }
+        val duration = args.getString("observeMillis")?.toLongOrNull()?.coerceIn(5000, 180000) ?: 30000
+        val edits = args.getString("studioSoakEdits") != "false"
+        var peakPss = 0L
+        var peakNative = 0L
+        ChipAudio(instrumentation.targetContext).use { audio ->
+            audio.update(song)
+            audio.play()
+            await("capacity fixture starts", audio) { audio.position().playing }
+            val initialXruns = audio.diagnostics().getValue("xruns")
+            val start = SystemClock.elapsedRealtime()
+            var revision = 0
+            var iteration = 0
+            while (SystemClock.elapsedRealtime() - start < duration) {
+                if (edits) {
+                    val changed = song.studio.copy(tracks = song.studio.tracks.map { lane ->
+                        lane.copy(inserts = lane.inserts.reversed().mapIndexed { index, pedal ->
+                            if (index == 0 && revision % 2 == 0 &&
+                                lane.bindings.values.none { it.instance == pedal.id }) pedal.copy(
+                                kind = org.thortracker.system.studio.StudioKind.REVERB, values = emptyMap())
+                            else pedal
+                        })
+                    })
+                    audio.update(song.copy(sound = if (revision % 2 == 0) changed else song.studio))
+                    if (revision % 4 == 0) audio.audition(0, 48 + revision % 12, 1)
+                    if (revision % 4 == 1) audio.releaseAudition()
+                    revision++
+                }
+                SystemClock.sleep(400)
+                assertNull(audio.error())
+                assertTrue("capacity playback must stay active", audio.position().playing)
+                if (iteration++ % 5 == 0) {
+                    peakPss = maxOf(peakPss, android.os.Debug.getPss())
+                    peakNative = maxOf(peakNative, android.os.Debug.getNativeHeapAllocatedSize())
+                }
+            }
+            val measuredXruns = audio.diagnostics().getValue("xruns") - initialXruns
+            audio.stop()
+            await("capacity stop", audio) { !audio.position().playing && !audio.position().pending }
+            audio.silence()
+            assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+            instrumentation.sendStatus(0, Bundle().apply {
+                putString("stream", "STUDIO_CAPACITY fixture=$name edits=$edits revisions=$revision " +
+                    "initialXruns=$initialXruns measuredXruns=$measuredXruns " +
+                    "peakPssKiB=$peakPss peakNativeBytes=$peakNative ${audio.diagnostics()}\n")
+            })
         }
     }
 

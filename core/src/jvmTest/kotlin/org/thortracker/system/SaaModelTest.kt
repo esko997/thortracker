@@ -113,7 +113,7 @@ class SaaModelTest {
             assertEquals(listOf(BankSpec("Instruments", 64)), system.banks)
             assertEquals(4, system.effectColumns(system.channels.size - 1))
             assertEquals("012348ABCDEFGMNPSY".map { it.toString() }, system.effectsFor(0).map { it.char.toString() })
-            assertEquals(ViewKind.entries.toSet() - ViewKind.WAVE, system.views)
+            assertEquals(ViewKind.standard - ViewKind.WAVE, system.views)
             assertSame(SaaInstrumentView, system.view(ViewKind.INSTRUMENT))
             assertNull(system.view(ViewKind.WAVE))
             assertNull(system.offEffect)

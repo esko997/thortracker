@@ -87,27 +87,56 @@ See [Game Boy Advance / Maxmod](#game-boy-advance-maxmod-gba-maxmod).
 
 Studio shares the addable-track model and `musicalRow` expansion with USB MIDI, but its
 internal events are not encoded as MIDI bytes. One to eight tracks address 32 saved patches.
-`StudioEngine` lowers played patterns to the bounded `STM1` image: at most 32,768 internal
-actions, with reused patterns stored once. `studio/studio_chip.c` plays those actions at
-sample offsets inside 48 Hz tracker ticks through the ordinary `ChipEngineOps` interface.
+`StudioEngine` lowers played patterns to the bounded `STM2` image: at most 32,768
+internal actions, with reused patterns stored once. The backend ID remains `studio-mono`;
+the version-1 project reader migrates old Mono patches without changing their controls.
+`studio/studio_chip.c` plays actions at sample offsets within 48 Hz tracker ticks.
 
-Each internal lane owns a `MonoSynth`: PolyBLEP saw/square, resonant TPT low-pass,
-filter envelope, accent, glide and smoothed output/parameter changes. Its sample loop
-allocates nothing and calls no transcendental functions. Float Hz and a tuned frequency
-table retain internal tuning independently of MIDI's note and controller representation.
-The implementation is original GPL-3.0-or-later code, not circuit-exact emulation.
+Each internal lane owns its voice, automation state and four-slot serial effect rack.
+The closed instrument family comprises Mono, Sampler, two-operator FM and synthesized
+percussion. `studio/modules/` implements the latter three plus stereo delay, drive,
+crusher, reverb and chorus. Up to two post-fader return buses have their own racks;
+there are no bus-to-bus sends or cycles. Stable instance IDs preserve automation
+through reorder, independently of the screen position or saved instrument preset.
+
+Mono retains its PolyBLEP saw/square and TPT low-pass implementation. Samples are
+immutable mono/stereo Float32 at their original supported rate; playback interpolates
+them into the 48 kHz mix. Tuned float-Hz pitches remain separate from MIDI bytes.
+The DSP is original GPL-3.0-or-later code, not circuit-exact emulation.
+
+Sample-bearing `.thor` files use `ProjectDocument`'s versioned `THORBND` envelope,
+JSON manifest and checksummed deduplicated PCM records. The live native interface is
+separate: a changed bank appends a `PCM1` trailer to the fixed score prefix; ordinary
+parameter edits send only that prefix. Decoding, graph allocation and retired resource
+destruction occur on control threads. Published racks and their borrowed PCM remain
+alive until the audio consumer returns ownership. Android uses the image/machine
+triple buffers; SDL swaps under its output lock after preparation.
+
+Decoded limits are 16 MiB per asset and 32 MiB per project, not whole-process RAM
+limits. Undo/redo, the optional clipboard, JVM/native copies, active/spare machines
+and prepared/retired effect racks require additional memory. Forty maximum-length
+stereo delay lines alone use about 29.3 MiB per rack graph at 48 kHz.
 
 Android mixed projects use the native render-row ring, including image versions and
 presentation-time estimates, as their single song clock. The USB worker schedules only
 already-due events and retains the existing bounded port grouping and cancellation rules.
 Missing row history, stale document versions and failed destinations stop both outputs.
-Linux/NextUI preserve USB track settings but refuse mixed playback; pure Mono uses the
-same native synth through SDL. WAV rendering rejects USB destinations.
+Linux/NextUI preserve USB track settings but refuse mixed playback; internal-only
+projects use the same native voices and effects through SDL. WAV rendering rejects
+USB destinations and uses the same score, sample bank and DSP.
 
-Seeking reconstructs patch, tie and automation history before replaying up to 96 ticks
-of recent whole rows. Older oscillator, filter and envelope state is approximate.
-The optional `apply_audition_image` engine operation updates held Studio patches without
-restarting their voice; other engines retain their existing audition behavior.
+Seeking reconstructs instrument, slice, tie and parameter history before bounded
+recent-row replay. It starts with empty effect history; uninterrupted loops retain
+effect state. Pattern-only loops chase the preceding played orders without reporting
+those preparation orders as audible playback. Older oscillator/envelope phase is
+not promised to match continuous playback.
+
+The optional `apply_audition_image` updates held Studio patches without a new attack.
+`stop_tail` ends source events and renders a bounded eight-second tail, returning zero
+when finished. Hosts keep rendering tails while reporting the transport stopped.
+Panic cuts both song and audition paths. Offline export shortens/fades the tail to
+the selected fade duration; zero means no tail. Engines without this hook retain
+their existing Stop and looping-fade behavior.
 
 ## Chip engine interface (what a new sound system implements)
 

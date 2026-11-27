@@ -7,7 +7,8 @@ import org.thortracker.ui.PopupSpec
 
 /**
  * How long a WAV export runs (`chip_wav.h`): the song once through to its loop point, [loops] more passes of the loop,
- * then a [fadeSeconds] fade-out of the song playing on (0: end at the loop boundary without a fade).
+ * then a [fadeSeconds] fade-out (0: end at the loop boundary). Chip songs keep playing through the fade;
+ * Studio stops source notes and fades existing effects, bounded by the engine's eight-second tail limit.
  * The song part stops at [maxSeconds] if it gets that far; the export then says so ([WavExport.capped]).
  */
 data class WavOptions(val loops: Int = 0, val fadeSeconds: Int = DEFAULT_FADE_SECONDS, val maxSeconds: Int = MAX_SECONDS) {
@@ -85,8 +86,11 @@ class WavExport(song: Song, val options: WavOptions, val spool: String, renderer
         val engine = song.system.engine
         val image = ByteArray(engine.imageSize)
         engine.lower(song, image)
+        val studio=song.sound as? org.thortracker.system.studio.StudioSound
+        val wire=if(studio!=null && studio.assets.ids.isNotEmpty())
+            org.thortracker.system.studio.StudioEngine.withBank(image,studio.assets) else image
         job = try {
-            r.open(engine.id, image, options, spool)
+            r.open(engine.id, wire, options, spool)
         } catch (e: IllegalArgumentException) {
             throw IllegalArgumentException(when (e.message) {   // chip_wav_open's problems
                 "image" -> "the player refused the song data"

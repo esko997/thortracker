@@ -13,6 +13,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 import org.thortracker.system.SoundSystems
 import org.thortracker.system.SystemSound
+import org.thortracker.system.studio.StudioAssets
+import org.thortracker.system.studio.StudioSound
 
 /** A project file that is malformed, from a newer/unknown format, or structurally invalid. */
 class ProjectFormatException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
@@ -97,8 +99,66 @@ object ProjectCodec {
         @SerialName("parkedOrders") val parkedOrders: List<Int> = emptyList(),
     )
 
-    /** @throws ProjectFormatException if [song] is structurally invalid (it could not be read back). */
+    /** Text-only legacy projects; use [prepareDocument] for arbitrary projects. */
     fun encode(song: Song): String {
+        if (((song.sound as? StudioSound)?.assets?.decodedBytes ?: 0) != 0) {
+            throw ProjectFormatException("Sample-bearing Studio projects must be saved as a .thor bundle")
+        }
+        return encodeManifest(song)
+    }
+
+    /** Validates the snapshot before opening/replacing the destination. */
+    fun prepareDocument(song: Song): ProjectDocument {
+        val manifest = encodeManifest(song).encodeToByteArray()
+        if (manifest.size > StudioBundle.MAX_JSON_BYTES) throw ProjectFormatException("Project JSON exceeds the 16 MiB limit")
+        return ProjectDocument(manifest, (song.sound as? StudioSound)?.assets ?: StudioAssets.EMPTY)
+    }
+
+    /** Convenient in-memory adapter; platforms can stream via [prepareDocument] and [readDocument]. */
+    fun encodeBytes(song: Song): ByteArray {
+        val document = prepareDocument(song)
+        val bytes = ByteArray(document.size)
+        var at = 0
+        document.writeTo { chunk, count ->
+            chunk.copyInto(bytes, at, endIndex = count)
+            at += count
+        }
+        return bytes
+    }
+
+    fun decodeBytes(bytes: ByteArray, androidMidi: Boolean = false): Song {
+        var at = 0
+        return readDocument(androidMidi) { dst, offset, length ->
+            if (at == bytes.size) -1 else {
+                val count = minOf(length, bytes.size - at)
+                bytes.copyInto(dst, offset, at, at + count)
+                at += count
+                count
+            }
+        }
+    }
+
+    /** A standard bounded read: positive byte count, or -1 at EOF. */
+    fun readDocument(androidMidi: Boolean = false, read: (ByteArray, Int, Int) -> Int): Song {
+        val source = ProjectSource(read)
+        val prefix = ByteArray(StudioBundle.MAGIC_BYTES)
+        try {
+            val count = source.upTo(prefix, prefix.size)
+            if (StudioBundle.isBundle(prefix, count)) {
+                val (manifest, assets) = StudioBundle.read(prefix, source)
+                val text = try { manifest.decodeToString(throwOnInvalidSequence = true) }
+                catch (e: CharacterCodingException) { throw ProjectFormatException("Studio bundle manifest is not UTF-8", e) }
+                return decodeManifest(text, androidMidi, assets)
+            }
+            return decode(source.json(prefix, count).decodeToString(), androidMidi)
+        } catch (e: ProjectFormatException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            throw ProjectFormatException("Project data is invalid: ${e.message}", e)
+        }
+    }
+
+    private fun encodeManifest(song: Song): String {
         val system = song.system
         val problems = system.structuralErrors(song)
         if (problems.isNotEmpty()) throw ProjectFormatException("Song cannot be saved: ${problems.joinToString("; ")}")
@@ -110,7 +170,9 @@ object ProjectCodec {
     }
 
     /** @throws ProjectFormatException for anything that is not a readable, structurally valid project. */
-    fun decode(text: String, androidMidi: Boolean = false): Song {
+    fun decode(text: String, androidMidi: Boolean = false): Song = decodeManifest(text, androidMidi)
+
+    private fun decodeManifest(text: String, androidMidi: Boolean, assets: StudioAssets? = null): Song {
         val root = try {
             json.parseToJsonElement(text)
         } catch (e: SerializationException) {
@@ -172,8 +234,13 @@ object ProjectCodec {
             if (file.backend != null && file.backend != backend) {
                 throw ProjectFormatException("Song backend \"${file.backend}\" does not match the project backend \"$backend\"")
             }
+            val decoded = json.decodeFromJsonElement(system.soundSerializer, file.sound)
+            val sound = if (assets == null) decoded else {
+                if (decoded !is StudioSound) throw ProjectFormatException("A sample bundle must contain a Studio project")
+                decoded.copy(assets = assets)
+            }
             Song(file.title, file.artist, file.comment, file.ticksPerRow, file.loopOrder, file.patterns, file.orders,
-                json.decodeFromJsonElement(system.soundSerializer, file.sound), file.tuning, file.newPatternScale, file.parkedOrders)
+                sound, file.tuning, file.newPatternScale, file.parkedOrders)
         } catch (e: SerializationException) {
             throw ProjectFormatException("Project data is invalid: ${e.message}", e)
         } catch (e: ProjectFormatException) {

@@ -89,18 +89,26 @@ Engine::~Engine() {
     for (auto& slot : slot_storage_) {
         if (slot.machine) ops_->destroy(slot.machine);
     }
-    for (auto& image : image_storage_) free(image.data);
+    for (auto& image : image_storage_) { studio_live_destroy(image.studio); free(image.data); }
+    studio_bank_drop(studio_bank_);
     free(control_image_.data);
 }
 
 int Engine::set_image(const uint8_t* bytes, size_t size, uint32_t version) {
-    if (ops_->load_image(control_image_.data, bytes, size) != CHIP_OK) {
+    const bool studio = ops_ == &studio_mono_ops;
+    const int loaded = studio ? studio_load_score(control_image_.data, bytes, size, &studio_bank_) :
+        ops_->load_image(control_image_.data, bytes, size);
+    if (loaded != CHIP_OK) {
         has_image_ = false;
         return CHIP_ERR_IMAGE;
     }
     control_image_.version = version;
     ImageSlot* back = images_.back();
     std::memcpy(back->data, control_image_.data, ops_->image_storage);
+    if (studio && studio_live_prepare(&back->studio, back->data, kSampleRate) != CHIP_OK) {
+        has_image_ = false;
+        return CHIP_ERR_IMAGE;
+    }
     back->version = version;
     images_.publish();
     has_image_ = true;
@@ -128,6 +136,13 @@ int Engine::play(int order, int row, int max_ticks) {
 }
 
 void Engine::stop() { stop_seq_.store(++seq_, std::memory_order_release); }
+
+void Engine::panic() {
+    const uint32_t seq = ++seq_;
+    stop_seq_.store(seq, std::memory_order_release);
+    release_seq_.store(seq, std::memory_order_release);
+    panic_seq_.store(seq, std::memory_order_release);
+}
 
 int Engine::audition(int channel, int note, int instrument, int fine) {
     if (!has_image_) return CHIP_ERR_IMAGE;
@@ -213,7 +228,7 @@ int Engine::ensure_stream() {
 
 bool Engine::suspend_if_idle() {
     std::lock_guard<std::mutex> lock(stream_mutex_);
-    if (!stream_ || !stream_started_ || start_pending() || playing_.load() || auditioning_.load()) return false;
+    if (!stream_ || !stream_started_ || start_pending() || playing_.load() || auditioning_.load() || tailing_.load()) return false;
     AAudioStream_requestStop(stream_);
     stream_started_ = false;
     return true;
@@ -225,6 +240,7 @@ void Engine::on_error(aaudio_result_t error) {
     stream_dead_.store(true);
     playing_.store(false);
     auditioning_.store(false);
+    tailing_.store(false);
 }
 
 void Engine::record_row(uint64_t frame, int order, int row) {
@@ -244,20 +260,40 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
 
     uint32_t consumed_play_seq = 0;
     bool consumed_play = false;
+    if (images_.consume()) front_image_ = images_.front();
     if (play_slots_.consume()) {
         play_ = play_slots_.front();
         consumed_play_seq = play_->seq;
         consumed_play = true;
         play_len_ = play_pos_ = 0;
+        play_tailing_ = false;
         borrowed_channel_ = -1;
         session_.fetch_add(1, std::memory_order_relaxed);
         session_start_.store(ring_head_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
-    if (play_ && !after(play_->seq, stop_seq_.load(std::memory_order_acquire))) play_ = nullptr;
+    const uint32_t stop = stop_seq_.load(std::memory_order_acquire);
+    const uint32_t panic = panic_seq_.load(std::memory_order_acquire);
+    if (play_ && !after(play_->seq, panic)) {
+        play_ = nullptr;
+        play_tailing_ = false;
+    } else if (play_ && !play_tailing_ && !after(play_->seq, stop)) {
+        // Never sound a tail from a queued start that was cancelled before reaching this callback.
+        play_tailing_ = !consumed_play && ops_->stop_tail && ops_->stop_tail(play_->machine);
+        play_len_ = play_pos_ = 0;
+        if (!play_tailing_) play_ = nullptr;
+    }
     if (audition_slots_.consume()) {
         aud_ = audition_slots_.front();
         aud_len_ = aud_pos_ = 0;
         aud_releasing_ = false;
+        aud_stopped_ = false;
+    }
+    if (aud_ && (!after(aud_->seq, panic) ||
+        (ops_->stop_tail && consumed_play && !after(aud_->seq, consumed_play_seq)))) aud_ = nullptr;
+    if (aud_ && ops_->stop_tail && !aud_stopped_ && !after(aud_->seq, stop)) {
+        aud_stopped_ = aud_releasing_ = true;
+        aud_len_ = aud_pos_ = 0;
+        if (!ops_->stop_tail(aud_->machine)) aud_ = nullptr;
     }
     if (aud_ && !aud_releasing_ && !after(aud_->seq, release_seq_.load(std::memory_order_acquire))) {
         // Key-off: chips without a release phase stop at once; others play it out.
@@ -267,7 +303,6 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
             aud_ = nullptr;
         }
     }
-    if (images_.consume()) front_image_ = images_.front();
     const int desired_borrow = aud_ ? aud_->channel : -1;
 
     int i = 0;
@@ -287,14 +322,14 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
             }
             int order = 0, row = 0, tick = 0;
             ops_->position(m, &order, &row, &tick);
-            if (tick == 0) record_row(frames_rendered_ + static_cast<uint64_t>(i), order, row);
+            if (!play_tailing_ && tick == 0) record_row(frames_rendered_ + static_cast<uint64_t>(i), order, row);
             const int k = ops_->tick(m, play_buf_);
             if (k <= 0) {
-                faults_.fetch_add(1, std::memory_order_relaxed);
+                if (k < 0 || !play_tailing_) faults_.fetch_add(1, std::memory_order_relaxed);
                 play_ = nullptr;
                 break;
             }
-            last_position_.store(pack_position(false, order, row), std::memory_order_relaxed);
+            if (!play_tailing_) last_position_.store(pack_position(false, order, row), std::memory_order_relaxed);
             play_len_ = k;
             play_pos_ = 0;
         }
@@ -332,7 +367,8 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
 
     for (int j = 0; j < 2 * frames; ++j) out[j] = std::clamp(out[j], -1.0f, 1.0f);
 
-    playing_.store(play_ != nullptr, std::memory_order_relaxed);
+    playing_.store(play_ != nullptr && !play_tailing_, std::memory_order_relaxed);
+    tailing_.store(play_ != nullptr && play_tailing_, std::memory_order_relaxed);
     auditioning_.store(aud_ != nullptr, std::memory_order_relaxed);
     // Acknowledge only the slot actually consumed, after its playing/ended state is visible.
     // A newer published start must stay pending, including when this one ended on its first tick.

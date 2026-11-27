@@ -21,7 +21,7 @@ internal object StudioSoundView : SystemView() {
     private const val FIRST_PARAM = 2
     private const val NAME_LIMIT = 22
     private val init = MonoPatch()
-    private data class PatchClip(val patch: MonoPatch) : Clip
+    private data class PatchClip(val patch: StudioPatch, val pcm: StudioPcm?) : Clip
 
     enum class Param(val label: String, val help: String, val min: Int = 0, val max: Int = 100, val coarse: Int = 10) {
         WAVE("Wave", "Saw is bright; square is hollow.", max = 1, coarse = 0),
@@ -67,10 +67,15 @@ internal object StudioSoundView : SystemView() {
     }
 
     fun panel(st: ViewState) = st.soundPanel(StudioSystem.ID)
-    fun patch(song: Song, st: ViewState) = song.studio.patch(st.instrument) ?: init
+    fun patch(song: Song, st: ViewState): StudioPatch = song.studio.patches[st.instrument - 1]
+    fun mono(song: Song, st: ViewState): MonoPatch = patch(song, st) as MonoPatch
+    private fun lastField(v: ViewController): Int {
+        val p = patch(v.song, v.state)
+        return if (p is MonoPatch) Param.LEVEL.field else StudioModuleControls.fields(p, v.state).size + 1
+    }
     fun param(st: ViewState): Param? = Param.entries.getOrNull(st.instField - FIRST_PARAM)
     fun waveName(value: Int) = if (value == 0) "Saw" else "Square"
-    override val gestureLabel = "Edit mono patch"
+    override val gestureLabel = "Edit instrument"
 
     override fun normalise(v: ViewController) {
         val st = v.state
@@ -80,10 +85,15 @@ internal object StudioSoundView : SystemView() {
             panel(st).invalidate()
             st.listenChannel = lane
         }
+        st.samplerPage = st.samplerPage.coerceIn(0, 2)
+        st.samplerZoom = st.samplerZoom.coerceIn(1, 32)
+        val sampler = patch(v.song, st) as? SamplerPatch
+        if (sampler != null && sampler.slices.none { it.id == st.samplerSlice })
+            st.samplerSlice = sampler.defaultSlice ?: sampler.slices.firstOrNull()?.id ?: 0
         st.instField = when {
             st.instField < 0 -> MODE
             st.instField == 0 -> Param.WAVE.field
-            else -> st.instField.coerceAtMost(Param.LEVEL.field)
+            else -> st.instField.coerceAtMost(lastField(v))
         }
         st.textPos = st.textPos.coerceIn(0, NAME_LIMIT - 1)
     }
@@ -134,7 +144,7 @@ internal object StudioSoundView : SystemView() {
 
     private fun cycleField(v: ViewController, delta: Int) {
         val current = v.state.instField.coerceAtLeast(0)
-        val next = (current + delta).mod(Param.LEVEL.field + 1)
+        val next = (current + delta).mod(lastField(v) + 1)
         selectField(v, if (next == 0) MODE else next)
     }
 
@@ -160,36 +170,38 @@ internal object StudioSoundView : SystemView() {
             MODE -> if (dx != 0) selectMode(v, dx > 0, keepModeFocus = true)
             NAME -> if (dx == 0) st.textPos = (st.textPos - dy).coerceIn(0, NAME_LIMIT - 1)
                 else rename(v, NameEdit.edit(patch(v.song, st).name, st.textPos, dx, NAME_LIMIT))
-            else -> param(st)?.let { adjust(v, it, dx + dy * it.coarse, preview = true) }
+            else -> {
+                val patch = patch(v.song, st)
+                if (patch is MonoPatch) param(st)?.let { adjust(v, it, dx + dy * it.coarse, preview = true) }
+                else StudioModuleControls.field(patch, st)?.let { StudioModuleControls.adjust(v, it, dx, dy) }
+            }
         }
     }
 
     fun set(v: ViewController, param: Param, value: Int, preview: Boolean = false) {
-        val current = patch(v.song, v.state)
+        val current = mono(v.song, v.state)
         val next = param.write(current, value)
         if (next !== current && store(v, next, param.undoLabel) &&
             (v.auditionHeld || (preview && v.editHeld))) playPatch(v, reportMissingTrack = v.auditionHeld)
     }
 
     fun adjust(v: ViewController, param: Param, delta: Int, preview: Boolean = false) =
-        set(v, param, param.read(patch(v.song, v.state)) + delta, preview)
+        set(v, param, param.read(mono(v.song, v.state)) + delta, preview)
 
     private fun rename(v: ViewController, name: String) {
         val current = patch(v.song, v.state)
         val next = name.take(NAME_LIMIT)
-        if (next != current.name) store(v, current.copy(name = next), "Rename sound")
+        if (next != current.name) store(v, StudioInstruments.rename(current, next), "Rename sound")
     }
 
-    private fun store(v: ViewController, value: MonoPatch?, label: String): Boolean {
-        val slot = v.state.instrument
-        return v.session.apply(label) { s -> s.copy(sound = s.studio.withPatch(slot, value)) }
-    }
+    private fun store(v: ViewController, value: StudioPatch?, label: String): Boolean =
+        StudioInstruments.store(v.session, v.state.instrument, value, label)
 
     override fun editPress(v: ViewController) {
         val p = panel(v.state)
         if (p.cancelTouch != null) p.invalidate()
         p.editBlocked = false
-        if (param(v.state) != null && !v.auditionHeld) playPatch(v, reportMissingTrack = false)
+        if (v.state.instField >= FIRST_PARAM && !v.auditionHeld) playPatch(v, reportMissingTrack = false)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
@@ -201,6 +213,7 @@ internal object StudioSoundView : SystemView() {
         when {
             st.instField == MODE -> selectMode(v, !p.advanced, keepModeFocus = true)
             st.instField == NAME -> requestEntry(v)
+            patch(v.song, st) !is MonoPatch -> StudioModuleControls.field(patch(v.song, st), st)?.let { StudioModuleControls.activate(v, it) }
             p.advanced -> requestEntry(v)
         }
     }
@@ -209,7 +222,12 @@ internal object StudioSoundView : SystemView() {
         if (v.editHeld && panel(v.state).editBlocked) return
         panel(v.state).invalidate()
         if (v.state.instField == NAME) rename(v, ViewController.deleteChar(patch(v.song, v.state).name, v.state.textPos))
-        else param(v.state)?.let { set(v, it, it.read(init)) }
+        else when (val patch = patch(v.song, v.state)) {
+            is MonoPatch -> param(v.state)?.let { set(v, it, it.read(init)) }
+            else -> StudioModuleControls.field(patch, v.state)?.let { key ->
+                patch.kind.parameters.firstOrNull { it.id == key }?.let { StudioModuleControls.set(v, key, it.default, false) }
+            }
+        }
     }
 
     /** Menus may outlive their drawer. Reject delivery after an edit, focus/slot/mode change, swap or project load. */
@@ -229,10 +247,16 @@ internal object StudioSoundView : SystemView() {
             return v.state === st && st.kind == ViewKind.INSTRUMENT && st.instField == field && st.instrument == slot &&
                 p.revision == revision && v.session.documentVersion == version
         }
+        if (field == NAME) {
+            v.session.requestText("Sound name", current.name, NAME_LIMIT) { if (accept()) rename(v, it) }
+            return
+        }
+        if (current !is MonoPatch) {
+            StudioModuleControls.field(current, st)?.let { StudioModuleControls.activate(v, it) }
+            return
+        }
         when (val param = param(st)) {
-            null -> if (field == NAME) v.session.requestText("Sound name", current.name, NAME_LIMIT) {
-                if (accept()) rename(v, it)
-            }
+            null -> Unit
             Param.WAVE -> v.session.requestMenu { menu ->
                 menu.menu("Wave", List(2) { wave -> waveName(wave) to { if (accept()) set(v, param, wave) } }, current.waveform)
             }
@@ -257,33 +281,56 @@ internal object StudioSoundView : SystemView() {
         // Sound slots never address USB ports. Pattern/Keyboard audition still respects the track destination.
         val lane = if (tracks.getOrNull(st.listenChannel)?.target == StudioTarget.MONO) st.listenChannel
             else tracks.indexOfFirst { it.target == StudioTarget.MONO }
-        if (lane >= 0) v.startAudition(lane, v.defaultNote(), st.instrument)
-        else if (reportMissingTrack) v.session.note("Assign a Mono track to audition patches")
+        val sampler = patch(v.song, st) as? SamplerPatch
+        val slice = if (sampler != null && st.samplerPage == 1 && !panel(st).advanced)
+            StudioModuleControls.selected(sampler, st)?.id else null
+        if (lane >= 0) v.startAudition(lane, v.defaultNote(), st.instrument, slice?.plus(1) ?: 0)
+        else if (reportMissingTrack) v.session.note("Assign an internal track to audition instruments")
     }
 
     override fun command(v: ViewController, a: Action): Boolean {
         val st = v.state
+        fun clip(): PatchClip {
+            val p = patch(v.song, st)
+            return PatchClip(p, (p as? SamplerPatch)?.assetId?.let { v.song.studio.assets[it] })
+        }
         when (a) {
             Action.PREV_CHANNEL, Action.NEXT_CHANNEL -> {
                 // A shoulder navigation is also a target change while Edit is held.
                 blockHeldEdit(v)
                 cycleField(v, if (a == Action.NEXT_CHANNEL) 1 else -1)
             }
-            Action.COPY -> v.session.hold(PatchClip(patch(v.song, st)))
+            Action.COPY -> v.session.hold(clip())
             Action.CUT, Action.PASTE, Action.DUPLICATE -> {
                 panel(st).invalidate()
                 blockHeldEdit(v)
                 when (a) {
                     Action.CUT -> {
-                        v.session.hold(PatchClip(patch(v.song, st)))
+                        v.session.hold(clip())
                         store(v, null, "Cut sound")
                     }
-                    Action.PASTE -> (v.session.clipboard as? PatchClip)?.let { store(v, it.patch, "Paste sound") }
+                    Action.PASTE -> (v.session.clipboard as? PatchClip)?.let { copied ->
+                        val sampler = copied.patch as? SamplerPatch
+                        val pcm = copied.pcm
+                        if (pcm == null || sampler == null) store(v, copied.patch, "Paste sound")
+                        else {
+                            val sound = v.song.studio
+                            val before = patch(v.song, st)
+                            val problem = v.song.removedSliceProblem(st.instrument, before, sampler)
+                            if (problem != null) v.session.note(problem) else try {
+                                val withRoom = sound.withPatch(st.instrument, null)
+                                val added = withRoom.assets.add(pcm)
+                                val next = withRoom.copy(assets = added.assets).withPatch(st.instrument, sampler.copy(assetId = added.id))
+                                v.session.apply("Paste sampler") { it.copy(sound = next) }
+                            } catch (e: IllegalArgumentException) { v.session.note(e.message) }
+                              catch (e: IllegalStateException) { v.session.note(e.message) }
+                        }
+                    }
                     else -> if (st.instrument == StudioSound.SLOTS) v.session.note("Already at the last sound slot") else {
                         val source = patch(v.song, st)
                         val slot = st.instrument + 1
-                        v.session.apply("Duplicate sound") { s -> s.copy(sound = s.studio.withPatch(slot, source)) }
-                        selectSlot(v, slot)
+                        if (StudioInstruments.store(v.session, slot, source, "Duplicate sound")) selectSlot(v, slot)
+                        else if (v.song.studio.patch(slot) == source) selectSlot(v, slot)
                     }
                 }
                 if (v.auditionHeld && a != Action.DUPLICATE) audition(v)
@@ -304,5 +351,5 @@ internal object StudioSoundView : SystemView() {
         h += Hint(v.copyPaste(), "Copy/paste sound")
     }
 
-    override fun painter(pane: PaneView): Painter = StudioSoundPainter(pane)
+    override fun painter(pane: PaneView): Painter = StudioInstrumentPainter(pane)
 }

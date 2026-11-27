@@ -87,6 +87,10 @@ JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeStop(JNIEnv*, 
     engine(h)->stop();
 }
 
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativePanic(JNIEnv*, jclass, jlong h) {
+    engine(h)->panic();
+}
+
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeAudition(JNIEnv*, jclass, jlong h, jint channel,
                                                                           jint note, jint instrument, jint fine) {
     return engine(h)->audition(channel, note, instrument, fine);

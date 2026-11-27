@@ -56,7 +56,7 @@ class SmsSystem private constructor(val layout: SmsLayout) : SoundSystem {
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> = SmsRules.effects(layout)
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(
         ExportFormat("asm") { SmsExport.export(it, SmsExport.Format.WLA_DX) },
         ExportFormat("s") { SmsExport.export(it, SmsExport.Format.SDAS) },

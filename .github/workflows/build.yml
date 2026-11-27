@@ -39,7 +39,7 @@ jobs:
           ./gradlew --no-daemon --console=plain --max-workers=1
           -Pkotlin.compiler.execution.strategy=in-process
           '-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8'
-          :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleRelease exportSamples
+          :core:jvmTest :core:linuxX64Test testDebugUnitTest assembleDebug assembleDebugAndroidTest assembleRelease exportSamples
       - name: The factory song still exports byte-identically
         run: cmp app/build/samples/thor-groove.uge examples/thor-groove.uge
       - name: A new version also raises versionCode above the latest release
@@ -66,6 +66,18 @@ jobs:
         with:
           name: thor-tracker-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-android-test-apk
+          path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-studio-fixtures
+          path: |
+            app/build/samples/studio-*.thor
+            app/build/samples/studio-*.stimg
           if-no-files-found: error
       - name: Keep test reports of a failed run
         if: failure()
