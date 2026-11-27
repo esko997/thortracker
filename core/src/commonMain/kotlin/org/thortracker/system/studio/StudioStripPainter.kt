@@ -15,10 +15,36 @@ internal class StudioStripPainter(v: PaneView) : Painter(v) {
     private val drag=PanelDrag<StripDrag>()
     private class StripDrag(val st:ViewState,val addr:Int,val pedal:Int,val field:Int,val range:IntRange,val l:Float,val r:Float,var version:Long)
     private var drawnVersion=-1L; private var drawnState:ViewState?=null; private var drawnPedal=0; private var drawnAddr=0; private var drawnField=0
-    private fun box(c:Surface,r:Rect,text:String,selected:Boolean,accent:Int) {
+    private var knobPedal:StudioInsert?=null
+    private val knobBytes=IntArray(fields.size-3)
+    private val knobValues=Array(fields.size-3){""}
+    private fun bed(c:Surface,r:Rect,selected:Boolean,accent:Int) {
         val p=ink.palette; ink.round(c,r,ink.dp(3f),if(selected) Palette.mix(p.BAR,accent,.2f) else p.LANE)
         if(selected) ink.outline(c,r,p.FOCUS,ink.dp(1.7f),ink.dp(3f))
-        val size=minOf(ink.unit,r.height()*.49f); ink.label(c,ink.fit(text,r.width()-ink.dp(6f),size,selected),r.centerX(),r.top,r.height(),p.TEXT,selected,size,Align.CENTER)
+    }
+    private fun box(c:Surface,r:Rect,text:String,selected:Boolean,accent:Int) {
+        bed(c,r,selected,accent)
+        val size=minOf(ink.unit,r.height()*.49f); ink.label(c,ink.fit(text,r.width()-ink.dp(6f),size,selected),r.centerX(),r.top,r.height(),ink.palette.TEXT,selected,size,Align.CENTER)
+    }
+    private fun knob(c:Surface,r:Rect,param:StudioParameter,shown:String,byte:Int,selected:Boolean,accent:Int) {
+        if(r.height()<ink.unit*4f) { box(c,r,"${param.name} · $shown",selected,accent);return }
+        bed(c,r,selected,accent)
+        val p=ink.palette; val size=minOf(ink.unit,r.height()*.20f);val labelH=size*1.3f
+        val cx=r.centerX();val cy=r.centerY()
+        val tickR=minOf(r.width()*.30f,(r.height()-2*labelH)*.46f,ink.unit*2.5f)
+        val fraction=byte/255f
+        ink.label(c,ink.fit(param.name,r.width()-ink.dp(6f),size,selected),cx,r.top,labelH,p.TEXT,selected,size,Align.CENTER)
+        for(i in 0..10) {
+            val a=.375f+.075f*i;val x=StudioGraphics.sinCycle(a+.25f);val y=StudioGraphics.sinCycle(a)
+            c.line(cx+x*tickR*.86f,cy+y*tickR*.86f,cx+x*tickR,cy+y*tickR,if(i*.1f<=fraction) accent else p.RULE,ink.dp(1.3f))
+        }
+        val radius=tickR*.72f
+        c.fillCircle(cx,cy+ink.dp(1.5f),radius+ink.dp(1f),p.BG)
+        c.fillCircle(cx,cy,radius,Palette.mix(p.BAR,accent,.12f))
+        c.strokeCircle(cx,cy,radius,p.RULE,ink.dp(1.3f))
+        val a=.375f+.75f*fraction;val x=StudioGraphics.sinCycle(a+.25f);val y=StudioGraphics.sinCycle(a)
+        c.line(cx+x*radius*.30f,cy+y*radius*.30f,cx+x*radius*.86f,cy+y*radius*.86f,if(selected) p.FOCUS else accent,ink.dp(2f))
+        ink.mono(c,ink.fit(shown,r.width()-ink.dp(6f),size,true),cx,r.bottom-labelH,labelH,accent,selected,size,Align.CENTER)
     }
     override fun draw(c:Surface,area:Rect) {
         drawnState=null
@@ -58,10 +84,19 @@ internal class StudioStripPainter(v: PaneView) : Painter(v) {
             val rows=(count+cols-1)/cols; val w=(right-left)/cols; val rh=(split-plot.bottom)/rows
             for(i in 0 until count) fields[i+2].set(left+(i%cols)*w+gap,plot.bottom+(i/cols)*rh+gap,left+(i%cols+1)*w-gap,plot.bottom+(i/cols+1)*rh-gap)
         }
+        if(pedal!=null && pedal!==knobPedal) {
+            for(i in pedal.kind.parameters.indices) {
+                val param=pedal.kind.parameters[i];val value=pedal.value(param.id)
+                knobBytes[i]=param.nearestByte(value);knobValues[i]=param.display(value)
+            }
+            knobPedal=pedal
+        }
         for(i in 0 until n) {
             var label=StudioStripView.label(ctl,i)
             if(pedal==null && i in 2..5 && StudioStripView.chain(s,st).getOrNull(i-2)?.bypass==true) label+=" (off)"
-            box(c,fields[i],label,active==i,accent)
+            val param=pedal?.kind?.parameters?.getOrNull(i-2)
+            if(param!=null) knob(c,fields[i],param,knobValues[i-2],knobBytes[i-2],active==i,accent)
+            else box(c,fields[i],label,active==i,accent)
         }
         val arrow=minOf(foot,(right-left)*.13f)
         prev.set(left,split+pad,left+arrow,bottom); next.set(right-arrow,split+pad,right,bottom)

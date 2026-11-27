@@ -131,7 +131,7 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
         val a=StudioModuleControls.pcm(song.studio,p);val col=ink.palette
         ink.rect(c,scope,Palette.mix(col.BG,accent,.075f));val selected=StudioModuleControls.selected(p,st)
         val shape=st.samplerPage==2
-        if(a==null) { val size=minOf(ink.unit,scope.height()*.6f);ink.label(c,ink.fit("Import WAV on Play",scope.width(),size),scope.centerX(),scope.top,scope.height(),col.TEXT,true,size,Align.CENTER);return }
+        if(a==null) { val size=minOf(ink.unit,scope.height()*.6f);ink.label(c,ink.fit("Choose recording",scope.width(),size),scope.centerX(),scope.top,scope.height(),col.TEXT,true,size,Align.CENTER);return }
         val h=caption(c,when(st.samplerPage){1->"${p.slices.size} regions  /  ${st.samplerZoom}×";2->"Amplitude envelope";else->"${a.sampleRate} Hz   ${if(a.channels==2) "Stereo" else "Mono"}"},accent)
         val pad=ink.unit*.43f;val l=scope.left+pad;val w=scope.width()-2*pad;val b=scope.bottom-pad;val height=b-h
         if(w<=0 || height<=0) return
@@ -205,6 +205,10 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
             StudioSoundView.selectField(ctl,exactFirst+i+2);StudioSoundView.requestEntry(ctl);return true
         }
         if(!panel.advanced && scope.contains(x,y)) {
+            if(p is SamplerPatch && StudioModuleControls.pcm(song.studio,p)==null) {
+                StudioModuleControls.activate(ctl,StudioModuleControls.SAMPLE)
+                return true
+            }
             fun dragArtwork(key:Int, units:Float?=null):Boolean {
                 val index=StudioModuleControls.fields(p,st).indexOf(key)
                 if(index<0) return false

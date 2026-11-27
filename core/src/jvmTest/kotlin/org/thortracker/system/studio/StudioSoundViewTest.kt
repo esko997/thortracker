@@ -266,6 +266,48 @@ class StudioSoundViewTest {
         assertSame(doc,fixture.song)
     }
 
+    @Test fun emptySamplerArtworkImportsARecordingAndUndoRestoresTheEmptySlot() {
+        val fixture = session()
+        val before = fixture.song.copy(sound = fixture.song.studio.withPatch(7, SamplerPatch()))
+        fixture.replaceSong(before)
+        val state = ViewState(kind = ViewKind.INSTRUMENT, instrument = 7, samplerPage = 1)
+        val canvas = Canvas()
+        val pane = PaneView(fixture, state, 1f, canvas, { 0L }, {})
+        var choose: (() -> Unit)? = null
+        var deliver: ((String, String, ByteArray) -> Unit)? = null
+        val menu = object : MenuContext by EntryMenu() {
+            override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) {
+                choose = entries.single().second
+            }
+            override fun pickFile(title: String, extensions: List<String>, maxBytes: Int,
+                picked: (String, String, ByteArray) -> Unit) { deliver = picked }
+        }
+        fixture.onMenuRequest = { it(menu) }
+        pane.controller.normalise()
+        pane.draw(640, 480)
+        val (x,y) = canvas.centers.getValue("Choose recording")
+        assertTrue(pane.touchDown(x,y))
+        pane.touchUp(x,y)
+        assertSame(before,fixture.song)
+        choose!!()
+        assertSame(before,fixture.song)
+        val wav = java.nio.ByteBuffer.allocate(48).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray()); putInt(40); put("WAVEfmt ".toByteArray()); putInt(16)
+            putShort(1); putShort(1); putInt(8000); putInt(8000); putShort(1); putShort(8)
+            put("data".toByteArray()); putInt(4); put(byteArrayOf(-128,-1,0,-128))
+        }.array()
+        deliver!!("Fresh", ".wav", wav)
+        val patch = fixture.song.studio.patch(7) as SamplerPatch
+        val pcm = fixture.song.studio.assets[patch.assetId!!]!!
+        assertEquals("Fresh",patch.name)
+        assertEquals(8000,pcm.sampleRate)
+        assertEquals(4,pcm.frames)
+        assertEquals(-1f,pcm.sample(2),0f)
+        assertEquals(before.studio.patch(8),fixture.song.studio.patch(8))
+        pane.press(Action.UNDO); pane.release(Action.UNDO)
+        assertSame(before,fixture.song)
+    }
+
     private class Canvas : Surface {
         val bank = ArrayList<String>()
         val text = ArrayList<String>()

@@ -261,8 +261,9 @@ an original synthesized break, bass, FM keys and hats, with track effects and a 
 
 #### Sampler: Play, Chop and Shape
 
-Import a WAV into a Sampler slot. **Play** handles ordinary pitched playback and the
-sample region. **Chop** divides that region into up to 32 slices, with waveform zoom,
+Select **Recording** on Play, or tap **Choose recording** in an empty sampler, to
+import a WAV or reuse audio already in the project. **Play** handles ordinary pitched
+playback and the sample region. **Chop** divides that region into up to 32 slices, with waveform zoom,
 marker adjustment and slice audition. **Shape** handles envelope, filtering and loop
 controls. Regions and slices are non-destructive; they never duplicate the recording
 or consume additional instrument slots.
