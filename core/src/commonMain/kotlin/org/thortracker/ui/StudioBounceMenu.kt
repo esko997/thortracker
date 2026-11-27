@@ -85,7 +85,7 @@ internal class StudioBounceMenu(private val session: EditorSession, private val 
     private fun show(run: Run) {
         val token = run.token
         val slot = fxHex(run.plan.slot)
-        val spec = if (run.pcm != null) PopupSpec("Bounce ready", "${run.plan.label}\nSampler $slot · ${duration(run.plan.frames)} stereo. Original track and rows stay unchanged.",
+        val spec = if (run.pcm != null) PopupSpec("Bounce ready", "${run.plan.label}\nSampler $slot · ${duration(run.plan.frames)} stereo",
             listOf(PopupItem("Install sampler $slot", PopupItem.Tone.PRIMARY) { install(token) },
                 PopupItem("Discard", PopupItem.Tone.DANGER) { discard(token) }, PopupItem("Hide")), selected = 2)
         else PopupSpec("Bouncing to sampler $slot", "${run.plan.label}\n" + when {
