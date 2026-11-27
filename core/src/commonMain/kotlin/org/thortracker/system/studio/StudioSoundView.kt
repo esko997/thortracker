@@ -316,7 +316,7 @@ internal object StudioSoundView : SystemView() {
                         else {
                             val sound = v.song.studio
                             val before = patch(v.song, st)
-                            val problem = v.song.removedSliceProblem(before, sampler)
+                            val problem = v.song.removedSliceProblem(st.instrument, before, sampler)
                             if (problem != null) v.session.note(problem) else try {
                                 val withRoom = sound.withPatch(st.instrument, null)
                                 val added = withRoom.assets.add(pcm)

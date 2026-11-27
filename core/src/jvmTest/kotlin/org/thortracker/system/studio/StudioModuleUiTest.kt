@@ -77,6 +77,25 @@ class StudioModuleUiTest {
         v.press(Action.UNDO);v.release(Action.UNDO);assertSame(initial,session.song)
     }
 
+    @Test fun replacingOneSamplerDoesNotTreatAnotherSlotsSlicesAsItsOwn() {
+        val bank = StudioAssets.EMPTY.add(StudioPcm.of(1, 48000, FloatArray(16) { .25f }))
+        val sampler = SamplerPatch(assetId = bank.id, slices = listOf(StudioSlice(3, 0, 16)))
+        val base = blank()
+        val pattern = base.patterns[0]
+            .withCell(0, 0, Cell(note = 48, instrument = 1, effect = 13, param = 3))
+            .withCell(0, 2, Cell(note = 48, instrument = 2))
+        val song = base.copy(sound = base.studio.copy(assets = bank.assets)
+            .withPatch(1, sampler).withPatch(2, sampler)).withPattern(0, pattern)
+        val session = EditorSession(song)
+        assertTrue(StudioInstruments.store(session, 2, FmPatch(), "Change unused slice owner"))
+        assertTrue(session.song.studio.patch(2) is FmPatch)
+        assertFalse(StudioInstruments.store(session, 1, FmPatch(), "Keep referenced slice"))
+        assertEquals(sampler, session.song.studio.patch(1))
+        // A leading D03 can inherit slot 2 from the preceding pattern or loop iteration.
+        val inherited = song.withPattern(0, pattern.withCell(0, 0, Cell(effect = 13, param = 3)))
+        assertFalse(StudioInstruments.store(EditorSession(inherited), 2, FmPatch(), "Keep inherited slice"))
+    }
+
     @Test fun cutLastSamplerAndPasteRestoresTheImmutableRecording() {
         val pcm=StudioPcm.of(2,44100,floatArrayOf(-.4f,.25f,.1f,.9f));val a=StudioAssets.EMPTY.add(pcm)
         val sample=SamplerPatch(name="Hat",assetId=a.id,end=2)

@@ -3,8 +3,8 @@ package org.thortracker.system.studio
 import org.thortracker.editor.*
 import org.thortracker.model.Song
 
-/** A command can be chased across order boundaries, even when its row has no instrument number. */
-internal fun Song.removedSliceProblem(before:StudioPatch, after:StudioPatch?):String? {
+/** Unassigned rows can inherit a slot across orders, but unrelated sampler slots own separate slice IDs. */
+internal fun Song.removedSliceProblem(slot:Int, before:StudioPatch, after:StudioPatch?):String? {
     if(before !is SamplerPatch || before.slices.isEmpty()) return null
     val kept = (after as? SamplerPatch)?.slices.orEmpty()
     if (before.slices === kept) return null
@@ -12,11 +12,19 @@ internal fun Song.removedSliceProblem(before:StudioPatch, after:StudioPatch?):St
     for (slice in before.slices) missing = missing or (1 shl slice.id)
     for (slice in kept) missing = missing and (1 shl slice.id).inv()
     if (missing == 0) return null
+    val mayInherit = BooleanArray(studio.tracks.size) { ch ->
+        slot == 1 || patterns.any { pattern -> pattern.tracks[ch].any { it.instrument == slot } }
+    }
     for ((index,pattern) in patterns.withIndex()) for ((ch,track) in pattern.tracks.withIndex()) {
-        if(studio.tracks[ch].target==StudioTarget.USB_MIDI) continue
-        for((row,cell) in track.withIndex()) for(col in 0..cell.more.size) {
-            val id=cell.effectParam(col)
-            if(cell.effectCode(col)==13 && id in 0..31 && missing and (1 shl id) != 0) return "D${fxHex(id)} is used in pattern ${fxHex(index)}, track ${ch+1}, row ${fxHex(row)}. Clear or change that command before removing the slice."
+        if(studio.tracks[ch].target==StudioTarget.USB_MIDI || !mayInherit[ch]) continue
+        var assigned = 0
+        for((row,cell) in track.withIndex()) {
+            if (cell.instrument != 0) assigned = cell.instrument
+            if (assigned != 0 && assigned != slot) continue
+            for(col in 0..cell.more.size) {
+                val id=cell.effectParam(col)
+                if(cell.effectCode(col)==13 && id in 0..31 && missing and (1 shl id) != 0) return "D${fxHex(id)} is used in pattern ${fxHex(index)}, track ${ch+1}, row ${fxHex(row)}. Clear or change that command before removing the slice."
+            }
         }
     }
     return null
@@ -29,7 +37,7 @@ internal object StudioInstruments {
     }
     fun store(session:EditorSession,slot:Int,value:StudioPatch?,label:String):Boolean {
         val song=session.song; val current=song.studio.patch(slot) ?: return false
-        song.removedSliceProblem(current,value)?.let { session.note(it); return false }
+        song.removedSliceProblem(slot,current,value)?.let { session.note(it); return false }
         return session.apply(label) { it.copy(sound=it.studio.withPatch(slot,value)) }
     }
     fun library(session:EditorSession,menu:MenuContext,slot:Int) {
@@ -193,7 +201,7 @@ internal object StudioModuleControls {
         fun put(slices:List<StudioSlice>,id:Int,label:String) {
             if(!valid()) return
             val next=p.copy(slices=slices,defaultSlice=p.defaultSlice?.takeIf { d->slices.any { it.id==d } })
-            v.song.removedSliceProblem(p,next)?.let { m.error(it); return }
+            v.song.removedSliceProblem(st.instrument,p,next)?.let { m.error(it); return }
             StudioInstruments.store(v.session,st.instrument,next,label); st.samplerSlice=id
         }
         m.menu("Slice tools",buildList {
