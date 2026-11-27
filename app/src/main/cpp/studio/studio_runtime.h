@@ -2,10 +2,16 @@
 #ifndef THOR_STUDIO_RUNTIME_H
 #define THOR_STUDIO_RUNTIME_H
 #include "../chip_engine.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 extern const ChipEngineOps studio_mono_ops;
+/* Audio thread, Studio machines only. Apply live images/borrowing at boundaries.
+ * Pull at most capacity stereo frames, stopping at the next 48 Hz tick boundary
+ * or the end of a tail. Zero capacity is a no-op; negative results are errors. */
+bool studio_tick_boundary(const ChipMachine *machine);
+int studio_render_frames(ChipMachine *machine,float *out,int capacity);
 typedef struct StudioBank StudioBank;
 typedef struct StudioWaveBank StudioWaveBank;
 typedef struct StudioGraphBank StudioGraphBank;

@@ -171,11 +171,25 @@ different patch from the visible document. Saving and editing remain available;
 offline rendering is not gated by real-time work units. Work units and reservation
 bytes are conservative capacity estimates, not a CPU percentage or measured RSS.
 
+### Android Studio callback scheduling
+
+AAudio pulls only the Studio frames needed by the current callback, stopping at
+each 48 Hz logical tick boundary. Song and audition have independent tick phases.
+The full-tick API wraps the same renderer for SDL and offline export; chip
+backends retain their existing full-tick path.
+
+Live images and lane borrowing change at logical tick boundaries. Each row emits
+one versioned USB timing stamp at its first produced output frame, including
+one-row loops. Stop and audition release cancel future attacks and begin their
+tails at the rendered cursor, not at the end of a prefetched tick. Panic cuts
+immediately.
+
 ## Chip engine interface (what a new sound system implements)
 
-Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3) are
-chip-neutral: they call one `ChipEngineOps` table (`app/src/main/cpp/chip_engine.h`), looked up
-by system id with `chip_engine_ops(id)` (`chip_engine.c`). Their Kotlin sides, `ChipAudio`
+Both audio hosts (`audio_engine.cpp` on AAudio, `deck/native/deck_audio.c` on SDL3)
+select a `ChipEngineOps` table (`app/src/main/cpp/chip_engine.h`) by system id with
+`chip_engine_ops(id)` (`chip_engine.c`). Android additionally uses Studio's bounded
+render extension described above. Their Kotlin sides, `ChipAudio`
 (Android) and `DeckAudio`, are chip-neutral too: they ask the song's system for its
 `PlaybackEngine` (`SoundSystem.engine`, core `system/SoundSystem.kt`) and create the native host
 for its `id`. When a song of another system arrives they destroy the running engine (playback

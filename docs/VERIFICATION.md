@@ -1,5 +1,44 @@
 # Thor Tracker verification — 2026-11-27
 
+## Unreleased — Studio Modular
+
+Modular adds twelve typed building blocks, one-sample feedback paths, eight named
+macros and shared Performance / Build faces. Playback admission is separate from
+the portable project format: an over-budget graph remains editable without changing
+its sound or topology.
+
+- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/46049701928)
+  passes shared and Android tests, native engine/WAV checks, AppImage smoke and the
+  ARM64 Pak build. Separate strict C and ASan/UBSan checks cover graph replacement
+  with two consumers, feedback timing, macro isolation and malformed graphs.
+  An allocator-wrapper test checks that the modular render/migration path does not
+  allocate or free memory.
+- Block-specialized effects and cached resonator decay preserve the scalar DSP
+  behavior. Regressions cover ring wraps, short delays, automation, bypass,
+  nonfinite input, audio-rate pitch modulation and live migration.
+- Studio's incremental renderer passes strict C and ASan/UBSan checks for irregular
+  pulls at 44.1/48 kHz, event order, position, seek and partial-cursor release.
+  Its full-tick output is byte-identical to the previous renderer over 672,000
+  stereo frames each of steady and live-edit/audition capacity playback.
+- The actual AppImage at 320×240 and 360×640 supports controller-only signed
+  numeric entry. Brick repeats the binding edit on its display; saved-project
+  comparison confirms that only the intended macro target changes.
+- Nova's actual Activity checks held-note macro edits, touch/Undo, cable transforms,
+  signed macro endpoints and byte-exact recovery after Activity recreation.
+  A separate native-lifecycle check retains audition capacity through the release
+  tail and admits the same edit only after the tail becomes inactive.
+- Brick's four-patch demo runs for 60 seconds with held-note macro edits:
+  zero reported late callbacks or driver faults, 5.55 ms worst callback and
+  68,752 KiB resident high-water from `/proc`.
+- Steam Deck OLED runs four maximum-format graphs for 90 seconds with held-note
+  macro edits: zero reported late callbacks or driver faults and 17.34 ms worst
+  callback. This uses real PipeWire audio with an offscreen application window,
+  not a Gaming Mode interaction test.
+
+Android's combined graph/effect budget is still under measurement. These bounded
+checks do not establish hard-real-time timing, acoustic latency or universal
+glitch-free playback.
+
 ## Unreleased — Studio track bounce
 
 Bounce records one internal track at one pattern occurrence, including its inserts,

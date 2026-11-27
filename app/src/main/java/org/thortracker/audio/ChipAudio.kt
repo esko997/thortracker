@@ -222,9 +222,12 @@ class ChipAudio(
      * (0 from song start, 1 from order start), exclusive stream, low-latency stream, last live
      * image apply inside the callback (ns), output latency used for the playhead and the raw
      * timestamp measurement (frames at 48 kHz; negative measurements fall back to the buffer size).
-     * Timing groups are actual tick refills (none/song/audition/both), not sounding voices.
+     * Timing groups indicate actual driver renders (none/song/audition/both), including Studio
+     * continuation pulls. They do not count sounding voices or cached chip samples.
      * P99 is a histogram upper bound in ns: 0 for no samples, -1 above timingCeilingNs.
      * CpuMask samples the exit CPU (ids 0..63); CpuCount excludes failed thread-clock reads.
+     * CpuTotalNs sums valid CPU samples; FrameTotal sums newly rendered song and audition frames.
+     * OutputFrameTotal counts callback output once, including cached or silent frames.
      * Live counters may advance while diagnostics are read; all restart at engine replacement.
      */
     fun diagnostics(): Map<String, Long> = synchronized(handleLock) {
@@ -444,8 +447,12 @@ class ChipAudio(
         private val TIMING_NAMES = buildList {
             addAll(listOf("timingEnabled", "timingBinNs", "timingCeilingNs"))
             val fields = listOf("Count", "WallMaxNs", "CpuMaxNs", "WallP99Ns", "CpuP99Ns", "MaxFrames", "CpuMask", "CpuCount")
-            for (group in listOf("None", "Song", "Audition", "Both")) {
-                for (field in fields) add("timing$group$field")
+            val groups = listOf("None", "Song", "Audition", "Both")
+            for (group in groups) for (field in fields) add("timing$group$field")
+            for (group in groups) {
+                add("timing${group}CpuTotalNs")
+                add("timing${group}FrameTotal")
+                add("timing${group}OutputFrameTotal")
             }
         }
 

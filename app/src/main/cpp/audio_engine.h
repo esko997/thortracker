@@ -60,8 +60,8 @@ class Engine {
 public:
     static constexpr int32_t kSampleRate = 48000;
     static constexpr int kStatCount = 14;
-    // timing_stats(): enabled, bin width, histogram ceiling, then 8 fields per refill mask.
-    static constexpr int kTimingStatCount = 3 + 4 * 8;
+    // Header, 8 histogram fields per mask, then CPU, rendered-frame and output-frame totals per mask.
+    static constexpr int kTimingStatCount = 3 + 4 * 8 + 4 * 3;
 
     // nullptr if ops is null or allocation fails.
     static Engine* create(const ChipEngineOps* ops);
@@ -140,6 +140,7 @@ private:
     int borrowed_channel_ = -1;
     float play_buf_[CHIP_MAX_TICK_FRAMES * 2];
     float aud_buf_[CHIP_MAX_TICK_FRAMES * 2];
+    // Queue cursors are for whole-tick chip drivers; Studio only uses aud_buf_ as mix scratch.
     int play_len_ = 0, play_pos_ = 0, aud_len_ = 0, aud_pos_ = 0;
     uint64_t frames_rendered_ = 0;
     int32_t previous_xruns_ = 0;  // callback-owned; reset before starting a newly opened stream
@@ -158,6 +159,7 @@ private:
         TimingHistogram wall, cpu;
         std::atomic<int32_t> max_frames{0};
         std::atomic<uint64_t> cpu_mask{0};
+        std::atomic<int64_t> cpu_total_ns{0}, frame_total{0}, output_frame_total{0};
     };
     std::atomic<bool> timing_enabled_{false};
     CallbackTiming timing_[4];

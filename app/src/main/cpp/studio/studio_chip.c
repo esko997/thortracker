@@ -30,6 +30,7 @@ struct ChipMachine {
     float cutoff100[101],cutoff127[128],decay[101],transpose[49];
     int tail_frames;
     int rate, order, row, tick, fraction, elapsed, row_frames, speed, cursor, end, audition;
+    int tick_left; /* zero before tick entry; elapsed counts rendered frames in this row */
     bool releasing;
 };
 
@@ -303,22 +304,30 @@ static void render_span(ChipMachine *m,float *out,int frames) {
         frames-=n;out+=2*n;
     }
 }
-static int tick(ChipMachine *m,float *out) {
-    if (!m->releasing && m->audition<0 && !m->tick) enter_row(m);
-    int frames=(m->fraction+m->rate)/HZ;
-    m->fraction=(m->fraction+m->rate)%HZ;
-    if (m->releasing){
-        if(!m->tail_frames)return 0;
+bool studio_tick_boundary(const ChipMachine *m) { return m && !m->tick_left; }
+
+int studio_render_frames(ChipMachine *m,float *out,int capacity) {
+    if(!m || capacity<0 || (!out && capacity))return CHIP_ERR_IMAGE;
+    if(!capacity || (m->releasing && !m->tail_frames))return 0;
+    if(!m->tick_left){
+        if(!m->releasing && m->audition<0 && !m->tick)enter_row(m);
+        m->tick_left=(m->fraction+m->rate)/HZ;
+        m->fraction=(m->fraction+m->rate)%HZ;
+    }
+    int frames=capacity<m->tick_left?capacity:m->tick_left;
+    if(m->releasing){
         int n=frames<m->tail_frames?frames:m->tail_frames;
         render_span(m,out,n);
         const int fade=m->rate/50;
         for(int i=0;i<n;i++)if(m->tail_frames-i<=fade){
             float g=(m->tail_frames-i-1)/(float)fade;out[2*i]*=g;out[2*i+1]*=g;
         }
-        m->tail_frames-=n;return n;
+        m->tail_frames-=n;
+        m->tick_left=m->tail_frames?m->tick_left-n:0;
+        return n;
     }
     if (m->audition>=0) {
-        render_span(m,out,frames); return frames;
+        render_span(m,out,frames); m->tick_left-=frames; return frames;
     }
     int i=0;
     while (i<frames) {
@@ -331,15 +340,19 @@ static int tick(ChipMachine *m,float *out) {
         render_span(m,out+2*i,n); i+=n;
     }
     m->elapsed+=frames;
-    if (++m->tick>=m->speed) next_row(m);
+    m->tick_left-=frames;
+    if(!m->tick_left && ++m->tick>=m->speed)next_row(m);
     return frames;
+}
+static int tick(ChipMachine *m,float *out) {
+    return studio_render_frames(m,out,CHIP_MAX_TICK_FRAMES);
 }
 static int reset(ChipMachine *m,const ChipImage *s) {
     /* Both notes in a spare machine must stop borrowing PCM/tables before replacing rack owners. */
     for(int i=0;i<TRACKS;i++)studio_voice_clear(m->lanes[i].voice);
     for(int i=0;i<TRACKS;i++)detach_mod(m,&m->lanes[i],false);
     if(studio_rack_prepare(&m->rack,s,m->rate,&m->tables)!=CHIP_OK)return CHIP_ERR_IMAGE;
-    copy_image(m,s); m->order=m->row=m->tick=m->fraction=m->elapsed=0; m->audition=-1; m->releasing=false;
+    copy_image(m,s); m->order=m->row=m->tick=m->fraction=m->elapsed=m->tick_left=0; m->audition=-1; m->releasing=false;
     for (int i=0;i<TRACKS;i++) reset_lane(m,i,false);
     faders(m,true);m->tail_frames=0;return CHIP_OK;
 }
@@ -460,6 +473,7 @@ static int stop_tail(ChipMachine *m){
         if(studio_voice_active(v->voice) && n<m->rate/200)n=m->rate/200;
         if((v->mod_fade || (v->bound && sm_active(m->rack.mod[i]))) && n<m->rate/200)n=m->rate/200;
     }
+    if(!n)m->tick_left=0;
     m->releasing=true;m->tail_frames=n;return n>0;
 }
 static int release(ChipMachine *m) {
@@ -467,6 +481,7 @@ static int release(ChipMachine *m) {
     Lane *v=&m->lanes[m->audition];off(m,v,false);
     int n=tail_budget(m);
     if(!n)n=v->bound?(m->rate*32+999)/1000:record(&m->image,v->slot)[0]==MONO?v->tail:m->rate*4;
+    if(!n)m->tick_left=0;
     m->tail_frames=n;m->releasing=true;return n>0;
 }
 static int mute(ChipMachine *m,int ch,int muted) {

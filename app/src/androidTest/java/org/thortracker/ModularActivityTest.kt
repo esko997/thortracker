@@ -32,6 +32,7 @@ import org.thortracker.editor.ViewState
 import org.thortracker.editor.Workspace
 import org.thortracker.input.Keymap
 import org.thortracker.model.Cell
+import org.thortracker.model.Pattern
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.system.studio.*
@@ -114,6 +115,100 @@ class ModularActivityTest {
         }
     }
 
+    @Test fun modularRowsRetainTheirNativeClockAndLiveImageVersion() {
+        assumeTrue(args.getString("modularActivity") == "true")
+        assumeTrue("The native row-clock scenario uses Patchwork Bass", fixtureName() == DEMO)
+        val fixture = loadFixture(DEMO)
+        fun pattern(length: Int): Pattern {
+            val blank = Pattern.blank(fixture.studio.tracks.size)
+            return blank.copy(length = length, tracks = blank.tracks.mapIndexed { lane, cells ->
+                if (lane != 0) cells else cells.mapIndexed { row, cell ->
+                    if (row < length) Cell(note = 36 + row, instrument = 1) else cell
+                }
+            })
+        }
+        val song = fixture.copy(ticksPerRow = 4, loopOrder = 1, orders = listOf(0, 1),
+            patterns = listOf(pattern(3), pattern(4)))
+        val original = song.studio.patch(1) as ModularPatch
+        val edited = original.withValue(0, (original.value(0) + 1) % 128)
+        runCase("row-clock") {
+            // Use the production mixed Studio row/version reader without opening a physical MIDI port.
+            ChipAudio(instrumentation.targetContext, mixedStudio = true).use { audio ->
+                val stamp = LongArray(5)
+                var cursor = -1L
+                var deadline = Long.MIN_VALUE
+                fun nextRow(order: Int, row: Int): StudioPatch {
+                    var heard: Song? = null
+                    await("native Studio row $order:$row") {
+                        assertNull(audio.error())
+                        heard = audio.studioRow(cursor, stamp)
+                        heard != null
+                    }
+                    if (cursor >= 0) assertEquals("Row cursor advances once", cursor + 1, stamp[0])
+                    assertEquals(order.toLong(), stamp[1])
+                    assertEquals(row.toLong(), stamp[2])
+                    assertTrue("Presentation deadline must advance at $order:$row", stamp[3] > deadline)
+                    cursor = stamp[0]
+                    deadline = stamp[3]
+                    return checkNotNull(heard).studio.patch(1)
+                }
+                fun awaitPlaying() = await("native Studio transport") {
+                    assertNull(audio.error())
+                    audio.position().playing
+                }
+                audio.update(song)
+                audio.play(0, 1)
+                awaitPlaying()
+                assertEquals(original, nextRow(0, 1))
+                val originalVersion = stamp[4]
+                for ((order, row) in listOf(0 to 2, 1 to 0, 1 to 1, 1 to 2, 1 to 3, 1 to 0)) {
+                    assertEquals(original, nextRow(order, row))
+                    assertEquals(originalVersion, stamp[4])
+                }
+                await("presentation playhead reaches the loop order") {
+                    val pos = audio.position()
+                    pos.playing && pos.order == 1 && pos.row in 0..3
+                }
+                audio.update(song.copy(sound = song.studio.withPatch(1, edited)))
+                var row = 1
+                var changed = false
+                repeat(8) {
+                    if (!changed) {
+                        val heard = nextRow(1, row)
+                        row = (row + 1) % 4
+                        changed = heard == edited
+                        if (!changed) {
+                            assertEquals(original, heard)
+                            assertEquals(originalVersion, stamp[4])
+                        }
+                    }
+                }
+                assertTrue("Live edit reached a later native row", changed && stamp[4] > originalVersion)
+                val editedVersion = stamp[4]
+                assertEquals(edited, nextRow(1, row))
+                assertEquals(editedVersion, stamp[4])
+                audio.stop()
+                await("Studio transport stops") { audio.position().let { !it.playing && !it.pending } }
+                audio.play(0, 2)
+                awaitPlaying()
+                cursor = -1L
+                assertEquals(edited, nextRow(0, 2))
+                assertEquals(editedVersion, stamp[4])
+                assertEquals(edited, nextRow(1, 0))
+                audio.stop()
+                await("Studio transport stops before one-row loop") { audio.position().let { !it.playing && !it.pending } }
+                audio.update(song.copy(sound = song.studio.withPatch(1, edited), orders = listOf(0),
+                    patterns = listOf(pattern(1)), loopOrder = 0))
+                audio.play(0, 0)
+                awaitPlaying()
+                cursor = -1L
+                repeat(8) { assertEquals(edited, nextRow(0, 0)) }
+                assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+                report.appendLine("nativeRows=seek,order,loop,live,stop,restart,one-row-loop imageVersion=$originalVersion→$editedVersion")
+            }
+        }
+    }
+
     @Test fun foregroundPlaybackSoak() {
         assumeTrue(args.getString("modularActivity") == "true")
         assumeTrue(args.getString("modularSoak") == "true")
@@ -124,11 +219,14 @@ class ModularActivityTest {
         val tracks = args.getString("modularActiveTracks")?.toInt() ?: when { rack -> 3; name==CAPACITY -> 4; else -> fixture.studio.tracks.size }
         require(tracks in 1..fixture.studio.tracks.size)
         val duration = args.getString("observeMillis")?.toLong()?.coerceIn(5000,180000) ?: 30000L
+        val audition = args.getString("modularAudition") == "true"
+        val edits = args.getString("modularEdits") == "true"
+        require(!edits || audition)
         val staged = soakSong(fixture,tracks,rack)
         runCase("soak") {
             seed(staged)
             val audio = engine()
-            report.appendLine("fixture=$name activeTracks=$tracks maxRack=$rack requestedMs=$duration")
+            report.appendLine("fixture=$name activeTracks=$tracks maxRack=$rack audition=$audition edits=$edits requestedMs=$duration")
             // All measurements come from the backend selected by MainActivity, never a second ChipAudio.
             // ChipAudio queues song changes; wait for its probe command behind the fixture update
             // before recording a baseline (the previous song may have used another native engine).
@@ -138,6 +236,11 @@ class ModularActivityTest {
                     check(audio.error()==null) { "Audio refused: ${audio.error()}" }
                     audio.diagnostics()["timingEnabled"]==1L
                 }
+                if (audition) {
+                    chord(KeyEvent.KEYCODE_BUTTON_R2,KeyEvent.KEYCODE_BUTTON_B)
+                    assertEquals(ViewKind.INSTRUMENT,ui { tracker.state.kind })
+                    focusField(2)
+                }
                 val initial = audio.diagnostics()
                 report.appendLine("beforePlay=$initial")
                 tap(KeyEvent.KEYCODE_BUTTON_START)
@@ -146,30 +249,71 @@ class ModularActivityTest {
                     audio.position().playing && ui { tracker.playback.playing } && audio.diagnostics()["timingEnabled"]==1L
                 }
                 await("A real song refill is timed") { audio.diagnostics().getValue("timingSongCount")>0L }
+                val startup = audio.diagnostics()
+                report.appendLine("startupXruns=${startup.getValue("xruns")}")
                 screenshot("playing")
                 val startPss = Debug.getPss()
                 val begin = audio.diagnostics()
                 val start = SystemClock.elapsedRealtime()
                 val first = audio.position()
                 var advanced = false
+                var editsPerformed = 0
+                var nextEdit = 2000L
+                var nextCheckpoint = 2000L
                 lateinit var end: Map<String,Long>
                 try {
-                    while (SystemClock.elapsedRealtime()-start < duration) {
-                        SystemClock.sleep(minOf(500L,(duration-(SystemClock.elapsedRealtime()-start)).coerceAtLeast(1L)))
+                    while (true) {
+                        val elapsed = SystemClock.elapsedRealtime() - start
+                        if (elapsed >= duration) break
+                        if (audition) {
+                            // Three seconds held, then nine seconds released: exercise the full
+                            // eight-second effect tail before the next real controller attack.
+                            if (elapsed % 12000L < 3000L) {
+                                if (KeyEvent.KEYCODE_BUTTON_X !in held) {
+                                    down(KeyEvent.KEYCODE_BUTTON_X)
+                                    await("Foreground held audition") { audio.diagnostics()["auditionActive"] == 1L }
+                                }
+                            } else up(KeyEvent.KEYCODE_BUTTON_X)
+                        }
+                        if (edits && elapsed >= nextEdit) {
+                            val before = patch().value(0)
+                            val delta = if (editsPerformed % 2 == 0) 1 else -1
+                            chord(A,if (delta > 0) RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
+                            assertEquals(before + delta,patch().value(0))
+                            editsPerformed++
+                            nextEdit += 2000L
+                        }
+                        SystemClock.sleep((minOf(duration, nextCheckpoint, elapsed + 500L) - elapsed).coerceAtLeast(1L))
                         check(ui { activity.hasWindowFocus() && !activity.isInMultiWindowMode && tracker.isShown }) { "Activity lost full-screen focus" }
                         val pos = audio.position()
                         assertNull("Foreground audio error",audio.error()); assertTrue("Unexpected transport stop: $pos",pos.playing)
                         advanced = advanced || pos.row!=first.row || pos.order!=first.order
+                        val observed = SystemClock.elapsedRealtime() - start
+                        if (nextCheckpoint <= duration && observed >= nextCheckpoint) {
+                            val xruns = audio.diagnostics().getValue("xruns")
+                            report.appendLine("checkpointMs=$nextCheckpoint observedMs=$observed xruns=$xruns")
+                            nextCheckpoint = if (nextCheckpoint == 2000L) 10000L else Long.MAX_VALUE
+                        }
                     }
                 } finally {
                     end = audio.diagnostics()
+                    report.appendLine("endXruns=${end.getValue("xruns")}")
                     report.appendLine("measuredMs=${SystemClock.elapsedRealtime()-start} advanced=$advanced pssKiB=$startPss→${Debug.getPss()}")
+                    report.appendLine("controllerMacroEdits=$editsPerformed")
                     report.appendLine("measurementStart=$begin\nmeasurementEnd=$end")
                     for (key in listOf("xruns","driverFaults","timingNoneCount","timingSongCount","timingAuditionCount","timingBothCount")) {
                         report.appendLine("${key}Delta=${end.getValue(key)-begin.getValue(key)}")
                     }
+                    for (group in listOf("None", "Song", "Audition", "Both")) {
+                        val fields = listOf("CpuTotalNs", "FrameTotal", "OutputFrameTotal").joinToString(" ") { field ->
+                            val key = "timing$group$field"
+                            "${key}Delta=${end.getValue(key)-begin.getValue(key)}"
+                        }
+                        report.appendLine(fields)
+                    }
                 }
                 assertTrue("No change in native play position",advanced)
+                if (audition) up(KeyEvent.KEYCODE_BUTTON_X)
                 tap(KeyEvent.KEYCODE_BUTTON_START)
                 await("Activity transport stops") { !audio.position().playing && !audio.position().pending && ui { !tracker.playback.playing } }
                 val stopped = audio.diagnostics(); report.appendLine("afterStop=$stopped")
