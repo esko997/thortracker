@@ -26,9 +26,21 @@ class ModularDeviceTest {
         val source = file.inputStream().use { input -> ProjectCodec.readDocument { bytes, offset, length ->
             input.read(bytes, offset, length)
         } }
+        val maxRack = args.getString("modularMaxRack") == "true"
+        require(!maxRack || name == "studio-modular-capacity.thor")
+        val staged = if (maxRack) {
+            var instance = 1
+            val tracks = source.studio.tracks.map { track -> track.copy(
+                inserts = List(4) { StudioInsert(instance++, StudioKind.DELAY) },
+                sends = listOf(25, 25),
+                bindings = track.bindings.filterValues { it.instance == 0 },
+            ) }
+            val buses = List(2) { StudioBus(List(4) { StudioInsert(instance++, StudioKind.DELAY) }) }
+            source.copy(sound = source.studio.copy(tracks = tracks, buses = buses, nextInstance = instance))
+        } else source
         val activeTracks = (args.getString("modularActiveTracks")?.toIntOrNull()
-            ?: if (name == "studio-modular-capacity.thor") 4 else source.studio.tracks.size).coerceIn(1, 8)
-        val song = source.copy(patterns = source.patterns.map { pattern ->
+            ?: if (maxRack) 3 else if (name == "studio-modular-capacity.thor") 4 else source.studio.tracks.size).coerceIn(1, 8)
+        val song = staged.copy(patterns = staged.patterns.map { pattern ->
             pattern.copy(tracks = pattern.tracks.mapIndexed { lane, cells ->
                 if (lane < activeTracks) cells else List(cells.size) { org.thortracker.model.Cell.BLANK }
             })
@@ -69,7 +81,7 @@ class ModularDeviceTest {
             audio.silence()
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
             instrumentation.sendStatus(0, Bundle().apply {
-                putString("stream", "MODULAR_SOAK fixture=$name activeTracks=$activeTracks edits=$edits revisions=$revisions " +
+                putString("stream", "MODULAR_SOAK fixture=$name maxRack=$maxRack activeTracks=$activeTracks edits=$edits revisions=$revisions " +
                     "initialXruns=$initialXruns measuredXruns=$xruns peakPssKiB=$peakPss " +
                     "peakNativeBytes=$peakNative ${audio.diagnostics()}\n")
             })

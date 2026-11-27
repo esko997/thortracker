@@ -108,6 +108,7 @@ class StudioModularAdmissionTest {
         val project = base.copy(sound = base.studio.withPatch(1, heavy()))
         val encoded = ProjectCodec.encodeBytes(project)
         assertNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("AYN", "AYN Thor", "QCS8550")))
+        assertNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("Retroid", "Retroid Pocket Nova", "QCS8550")))
         assertNull(StudioModularAdmission.problem(project, StudioModularProfiles.linux(false, "Galileo")))
         assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.linux(true, null)))
         assertNotNull(StudioModularAdmission.problem(project, StudioModularProfiles.android("AYN", "AYN Thor", null)))
