@@ -158,12 +158,17 @@ internal object ModularControls {
                     }
                 })
             }
-            menu.menu(label,listOf(
-                item("Use $initial") { set(initial) },
-                item("Choose digits · ${range.first} to ${range.last}") { digits("",false) },
-                item("Type a number…") { studioExact(menu,label,initial,range) { if (capture.valid(v)) set(it) } }
-            ))
-        }
+                menu.menu(label, buildList {
+                    add(item("Use $initial") { set(initial) })
+                    if (0 in range && initial != 0) add(item("Zero (0)") { set(0) })
+                    if (range.first >= -9999 && range.last <= 9999) {
+                        if (initial != range.first) add(item("Minimum (${range.first})") { set(range.first) })
+                        if (initial != range.last) add(item("Maximum (${range.last})") { set(range.last) })
+                    }
+                    add(item("Choose digits · ${range.first} to ${range.last}") { digits("",false) })
+                    add(item("Type a number…") { studioExact(menu,label,initial,range) { if (capture.valid(v)) set(it) } })
+                })
+            }
         fun rename(i: Int, macro: ModularMacro) {
             val label="Macro ${i+1} name"
             fun apply(name: String) {
@@ -207,25 +212,53 @@ internal object ModularControls {
                 LIBRARY -> StudioInstruments.library(v.session,menu,st.instrument) { capture.valid(v) }
             }
         }
-        fun pickNode(title: String, selected: Int, picked: (ModularNode) -> Unit) = menu.menu(title,
-            g.nodes.map { n -> item(n.caption) { picked(n) } },g.nodes.indexOfFirst { it.id == selected }.coerceAtLeast(0))
-        fun parameters() {
-            val params = from.kind.parameters
-            if (params.isEmpty()) return menu.error("${from.caption} has no adjustable parameters. Choose another module under Send from.")
-            menu.menu("${from.caption} controls",params.map { p ->
-                val owner = g.macros.indexOfFirst { m -> m.targets.any { it.node == from.id && it.parameter == p.id } }
-                item(if (owner >= 0) "${p.name} ← ${g.macros[owner].name}" else "${p.name}  ${p.display(from.value(p.id))}") {
-                    st.modularParameter = p.id
-                    capture = ModularCapture(v)
-                    if (owner >= 0) open(owner) else
-                        studioExact(menu,"${from.kind.label} · ${p.name}${if (p.unit.isEmpty()) "" else " (${p.unit})"}",from.value(p.id),p.min..p.max,p.labels) {
-                            if (capture.valid(v)) set(v,PARAMETER,it)
-                        }
+        fun pickNode(title: String, selected: Int, picked: (ModularNode) -> Unit) {
+            val destNode = g.nodes.firstOrNull { it.id == st.modularDestination }
+            menu.menu(title, buildList {
+                if (selected == st.modularSource && destNode != null && destNode.id != from.id) {
+                    val nextDownstream = g.connections.firstOrNull { it.source == destNode.id }?.let { c -> g.nodes.firstOrNull { it.id == c.destination } }
+                    add(item("Follow chain › ${destNode.caption}" + (if (nextDownstream != null) " → ${nextDownstream.caption}" else "")) {
+                        selectNode(v, true, destNode)
+                        if (nextDownstream != null) selectNode(v, false, nextDownstream)
+                    })
                 }
-            },params.indexOfFirst { it.id == st.modularParameter }.coerceAtLeast(0))
+                for (n in g.nodes) add(item(n.caption) { picked(n) })
+            }, g.nodes.indexOfFirst { it.id == selected }.coerceAtLeast(0) +
+                if (selected == st.modularSource && destNode != null && destNode.id != from.id) 1 else 0)
+        }
+        fun parameters() {
+            val to = node(st.modularDestination)
+            val targetNode = if (from.kind.parameters.isEmpty() && to.kind.parameters.isNotEmpty()) to else from
+            val params = targetNode.kind.parameters
+            if (params.isEmpty()) return menu.error("Neither ${from.caption} nor ${to.caption} has adjustable parameters.")
+            menu.menu("${targetNode.caption} controls", buildList {
+                if (targetNode.id != from.id) {
+                    add(item("Switch Send from to ${targetNode.caption}") { selectNode(v, true, targetNode) })
+                } else if (to.id != from.id && to.kind.parameters.isNotEmpty()) {
+                    add(item("Switch to ${to.caption} controls…") {
+                        selectNode(v, true, to)
+                        capture = ModularCapture(v)
+                        Inspector(v, menu, patch, capture).parameters()
+                    })
+                }
+                for (p in params) {
+                    val owner = g.macros.indexOfFirst { m -> m.targets.any { it.node == targetNode.id && it.parameter == p.id } }
+                    add(item(if (owner >= 0) "${p.name} ← ${g.macros[owner].name}" else "${p.name}  ${p.display(targetNode.value(p.id))}") {
+                        if (targetNode.id != from.id) selectNode(v, true, targetNode)
+                        st.modularParameter = p.id
+                        capture = ModularCapture(v)
+                        if (owner >= 0) open(owner) else
+                            studioExact(menu,"${targetNode.kind.label} · ${p.name}${if (p.unit.isEmpty()) "" else " (${p.unit})"}",targetNode.value(p.id),p.min..p.max,p.labels) {
+                                if (capture.valid(v)) set(v,PARAMETER,it)
+                            }
+                    })
+                }
+            }, (params.indexOfFirst { it.id == st.modularParameter }.coerceAtLeast(0) +
+                if (targetNode.id != from.id || (to.id != from.id && to.kind.parameters.isNotEmpty())) 1 else 0))
         }
         fun overview() {
-            menu.menu("Patch map · ${g.nodes.size} modules, ${g.connections.size} cables",buildList {
+            val work = g.resources.workUnits
+            menu.menu("Patch map · ${g.nodes.size} modules, ${g.connections.size} cables · $work work",buildList {
                 add(item("Add module…") {
                     menu.menu("Add module",ModularKind.entries.filter { it != ModularKind.OUT }.map { kind -> item(kind.label) {
                         var added: ModularNode? = null
@@ -300,14 +333,15 @@ internal object ModularControls {
                 add(item("Show this pair in patch bay") { selectNode(v,true,n); selectNode(v,false,d) })
                 fun transform(scale: Boolean) {
                     val name = if (scale) "Amount" else "Offset"
-                    number("$name (1000 = 1)",if (scale) c.scale else c.offset,-ModularGraph.MAX_TRANSFORM..ModularGraph.MAX_TRANSFORM) { value ->
+                    number("$name (1000 = 100%)",if (scale) c.scale else c.offset,-ModularGraph.MAX_TRANSFORM..ModularGraph.MAX_TRANSFORM) { value ->
                         edit("Set cable ${name.lowercase()}") { graph -> graph.copy(connections=graph.connections.map {
                             if (it.id != c.id) it else if (scale) it.copy(scale=value) else it.copy(offset=value)
                         }) }
                     }
                 }
                 if (type != ModularPortType.GATE && type != ModularPortType.EVENT) {
-                    add(item("Amount  ${c.scale} / 1000") { transform(true) }); add(item("Offset  ${c.offset} / 1000") { transform(false) })
+                    add(item("Amount  ${formatPermillePercent(c.scale)}") { transform(true) })
+                    add(item("Offset  ${formatPermillePercent(c.offset, signed = true)}") { transform(false) })
                 }
                 add(item("Disconnect") { edit("Disconnect cable") { it.copy(connections=it.connections.filterNot { cable -> cable.id == c.id }) } })
             })
@@ -363,5 +397,17 @@ internal object ModularControls {
             return if (ids.isEmpty()) "–" else ids.joinToString(",",limit=3,truncated="…") { fxHex(it) }
         }
         return "${side(true)} › ${fxHex(id)} › ${side(false)}"
+    }
+
+    fun formatPermillePercent(permille: Int, signed: Boolean = false): String {
+        val sign = when {
+            permille < 0 -> "−"
+            signed && permille > 0 -> "+"
+            else -> ""
+        }
+        val a = kotlin.math.abs(permille)
+        val whole = a / 10
+        val tenth = a % 10
+        return if (tenth == 0) "$sign$whole%" else "$sign$whole.$tenth%"
     }
 }

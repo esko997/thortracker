@@ -165,8 +165,13 @@ internal object StudioStripView : SystemView() {
             m.menu("Track or shared return",buildList {
                 for ((i,t) in s.tracks.withIndex()) add("Track ${t.midi.id}" + (if(t.target==StudioTarget.USB_MIDI) " · USB" else "") to { if(valid()) route(v,i,-1) })
                 for(i in s.buses.indices) add("Return ${'A'+i}" to { if(valid()) route(v,st.channel,i) })
+                if(s.tracks.size<StudioSound.MAX_TRACKS && s.nextId<Int.MAX_VALUE) add("Add track" to { if(valid()) {
+                    val nextChannel = s.tracks.size
+                    if (v.session.apply("Add track") { it.addStudioTrack() }) route(v, nextChannel, -1)
+                } })
                 if(s.buses.size<2) add("Add return ${'A'+s.buses.size}" to { if(valid()) {
-                    v.session.apply("Add shared return") { it.copy(sound=s.copy(buses=s.buses+StudioBus())) }; route(v,st.channel,s.buses.size)
+                    val nextBus = s.buses.size
+                    if (v.session.apply("Add shared return") { it.copy(sound=s.copy(buses=s.buses+StudioBus())) }) route(v,st.channel,nextBus)
                 } })
                 if(st.stripBus<0) add("Clone track and pattern rows" to { if(valid()) clone(v) })
             }) }; return }

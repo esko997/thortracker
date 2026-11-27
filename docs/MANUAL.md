@@ -237,7 +237,8 @@ maps. See [Instrument workflow](#instrument-workflow) and the [instrument guide]
 ### Studio: internal instruments
 
 Choose **Files → New Studio song** for internal instruments. **Studio tracks and
-destinations…** adds or removes tracks, up to eight. Instrument numbers select from
+destinations…** (in **Menu**, **Files**, or **Track strip**) and Pattern's **+ Track**
+header button add or manage tracks, up to eight. Instrument numbers select from
 32 shared slots; each track plays its own voice. A blank instrument cell keeps the
 previous patch. Changing an instrument's type uses that same slot, not a new bank.
 
@@ -245,9 +246,11 @@ Open **Instrument / presets** to choose **Mono**, **Sampler**, **FM**, **Drums**
 **Wavetable**, **Pluck** or **Modular**, load a starting sound, or copy/paste a patch.
 The instrument list stays on the left.
 **Sound** and **Advanced** edit the same saved values; changing faces does not
-regenerate the patch. Up/Down selects slots, Left/Right selects a control, and
-hold A + Left/Right adjusts it. Hold X to audition. Touch controls offer the same
-edits and Undo.
+regenerate the patch. Standard and larger views show the live scope alongside a
+full dial bank, while compact `320×240` views step through one parameter at a time.
+Up/Down selects slots, Left/Right selects a control, and hold A + Left/Right adjusts it.
+Hold X to audition. Touch controls offer the same edits and Undo, and controls bound to
+`Exx`–`Zxx` display their command letter badge.
 
 | Instrument | Main controls |
 | --- | --- |
@@ -356,11 +359,12 @@ can contain parallel sound sources and stereo routing. An initiating note or hel
 audition starts the voice. Ties preserve it; OFF and Stop still terminate it even
 when internal envelopes or trigger connections loop.
 
-In Build, select **Send from** and **Receive at** to inspect two modules. Drag
-between compatible sockets, or tap a socket and choose a destination using the
-controller-friendly menus. **Patch map** lists the whole patch, adds modules and
-jumps between connected neighbors. **Cables** edits connection amount and offset
-or disconnects a route. Removing a module also removes its cables and macro
+In Build, select **Send from** and **Receive at** to inspect two modules; sockets
+connected elsewhere show their remote module index, and **Send from** can follow
+outgoing chains directly. Drag between compatible sockets, or tap a socket and choose
+a destination using the controller-friendly menus. **Patch map** lists the whole patch,
+adds modules and jumps between connected neighbors. **Cables** edits connection amount
+and offset or disconnects a route. Removing a module also removes its cables and macro
 targets; Undo restores them together.
 Numeric editors offer D-pad digit entry as well as keyboard input; macro names
 also have a controller spelling option.
@@ -380,9 +384,9 @@ also have a controller spelling option.
 Sockets distinguish audio, modulation, pitch, gates and events. Audio and gates
 can feed modulation inputs explicitly; other connections require matching types.
 Pitch is measured in semitones, oscillator FM in semitone offsets and filter/rate
-modulation in octaves. Connection amounts and offsets use thousandths:
-`1000` means 1, `-500` means −0.5. Multiple continuous inputs sum; gates and events
-combine without accumulating a queue.
+modulation in octaves. Connection amounts and offsets are displayed as percentages
+and stored as thousandths (`1000` means 100% / 1, `-500` means −50% / −0.5). Multiple
+continuous inputs sum; gates and events combine without accumulating a queue.
 
 Audio-rate modulation runs at the full render rate. Instantaneous cycles are
 refused: route audio feedback through **Unit delay**. Event cables also delay their
@@ -411,8 +415,10 @@ devices use a conservative playback profile.
 
 #### Track strip and pedals
 
-Open **Track strip** for the selected track's instrument shortcut, four serial insert
-slots, gain, pan and two post-fader sends. Available pedals are **Delay**, **Drive**,
+Open **Track strip** (from **Menu**, **R2+Down**, or Pattern's **Strip** header button)
+for the selected track's instrument shortcut, four serial insert slots, gain, pan and
+two post-fader sends. Drag output faders and pedal knobs directly on touch screens,
+or adjust them with **A + Left/Right**. Available pedals are **Delay**, **Drive**,
 **Crusher**, **Reverb** and **Chorus**. Select a pedal for its controls and presets;
 **Pedal options** provides bypass, reorder and removal.
 

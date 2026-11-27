@@ -15,6 +15,8 @@ import org.thortracker.model.Songs
 import org.thortracker.model.Scale
 import org.thortracker.system.EffectSpec
 import org.thortracker.system.SoundSystem
+import org.thortracker.system.studio.StudioSound
+import org.thortracker.system.studio.addStudioTrack
 
 /**
  * Pattern grid: hex row ruler, one lane per channel with note / sound / effect columns, sustain rails
@@ -554,14 +556,18 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
         return problemCache[ch].getOrPut(cell) { s.system.cellProblem(s, ch, cell) != null }
     }
 
-    /** Rightmost first: the pattern scale, then follow playback, entry step, octave. */
-    private fun chips(): List<Pair<String, Int>> = listOf(
-        (song.tuning?.let { "Tuning ${if (it.name.length > 18) it.name.take(17) + "…" else it.name}" } ?: "Scale ${ctl.patternScale.label}") +
-            (if (ctl.patternLength < Songs.ROWS) " · ${ctl.patternLength} rows" else "") to 3,
-        (if (st.followPlayback) "Follows playback" else "Stays put during playback") to 0,
-        "Step ${session.step}" to 1,
-        "Octave ${st.octave}" to 2,
-    )
+    /** Rightmost first: the pattern scale, then follow playback, entry step, octave, plus Studio quick actions. */
+    private fun chips(): List<Pair<String, Int>> = buildList {
+        add((song.tuning?.let { "Tuning ${if (it.name.length > 18) it.name.take(17) + "…" else it.name}" } ?: "Scale ${ctl.patternScale.label}") +
+            (if (ctl.patternLength < Songs.ROWS) " · ${ctl.patternLength} rows" else "") to 3)
+        add((if (st.followPlayback) "Follows playback" else "Stays put during playback") to 0)
+        add("Step ${session.step}" to 1)
+        add("Octave ${st.octave}" to 2)
+        if (song.sound is org.thortracker.system.studio.StudioSound) {
+            add("Strip" to 5)
+            if (song.channelCount() < org.thortracker.system.studio.StudioSound.MAX_TRACKS) add("+ Track" to 4)
+        }
+    }
 
     private fun chipsWidth(): Float =
         chips().sumOf { (ink.labelWidth(it.first, ink.unit * 0.8f) + ink.unit * 1.4f).toDouble() }.toFloat()
@@ -1022,7 +1028,15 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             }
             2 -> {
                 val ch = if (variableLanes) laneAt(x) ?: -1 else ((x - gridLeft) / laneW).toInt()
-                if (ch in 0 until s.channelCount()) { st.channel = ch; ctl.publishPattern() }
+                if (ch in 0 until s.channelCount()) {
+                    if (ch == st.channel && s.sound is org.thortracker.system.studio.StudioSound) {
+                        st.switchKind(org.thortracker.editor.ViewKind.STUDIO_STRIP)
+                        st.pinned = true
+                    } else {
+                        st.channel = ch
+                        ctl.publishPattern()
+                    }
+                }
             }
             4, 5 -> {
                 st.channel = (if (touchTarget == 4) firstLane - 1 else lastLane + 1).coerceIn(0, s.channelCount() - 1)
@@ -1037,6 +1051,17 @@ internal class PatternPainter(v: PaneView) : Painter(v) {
             11 -> session.step = if (session.step >= 4) 0 else session.step + 1
             12 -> st.octave = if (st.octave >= 7) 3 else st.octave + 1
             13 -> if (st.scalePanel) ctl.closeScalePanel() else ctl.openScalePanel()
+            14 -> if (s.sound is org.thortracker.system.studio.StudioSound && s.channelCount() < org.thortracker.system.studio.StudioSound.MAX_TRACKS) {
+                if (session.apply("Add track") { it.addStudioTrack() }) {
+                    st.channel = session.song.channelCount() - 1
+                    ctl.normalise()
+                    ctl.publishPattern()
+                }
+            }
+            15 -> if (s.sound is org.thortracker.system.studio.StudioSound) {
+                st.switchKind(org.thortracker.editor.ViewKind.STUDIO_STRIP)
+                st.pinned = true
+            }
             20 -> {
                 val key = rootKeys.indexOfFirst { it.contains(x, y) }
                 when {
