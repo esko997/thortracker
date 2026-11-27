@@ -23,6 +23,7 @@ static ChipMachine* audition_spare;  /* likewise for auditions */
 static ChipImage* image;   /* the image the machines play */
 static ChipImage* spare;   /* loaded and validated outside the lock, then swapped with image */
 static StudioBank *studio_bank;
+static StudioWaveBank *studio_waves;
 static StudioLive *studio_live; /* apply runs synchronously under ao_lock; prepare/retire outside */
 static int has_image;
 static int playing;
@@ -119,6 +120,7 @@ int da_set_image(const unsigned char* bytes, int size) {
     if(size<0) return -1;
     if(ops==&studio_mono_ops) {
         if(studio_load_score(spare,bytes,(size_t)size,&studio_bank)!=CHIP_OK ||
+           studio_prepare_waves(spare,&studio_waves,song_spare)!=CHIP_OK ||
            studio_live_prepare(&studio_live,spare,RATE)!=CHIP_OK) { has_image=0; return -2; }
     } else if((size_t)size!=ops->image_size || ops->load_image(spare,bytes,(size_t)size)!=CHIP_OK) return -2;
     ao_lock();
@@ -217,6 +219,7 @@ void da_close(void) {
     song_machine = audition_machine = song_spare = audition_spare = NULL;
     studio_live_destroy(studio_live); studio_live=NULL;
     studio_bank_drop(studio_bank); studio_bank=NULL;
+    studio_wave_bank_drop(studio_waves); studio_waves=NULL;
     free(image);
     free(spare);
     image = spare = NULL;

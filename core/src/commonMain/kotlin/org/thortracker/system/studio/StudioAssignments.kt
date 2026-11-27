@@ -9,6 +9,8 @@ internal val StudioKind.faceName: String get() = when (this) {
     StudioKind.SAMPLER -> "Sampler"
     StudioKind.FM -> "FM"
     StudioKind.PERCUSSION -> "Drums"
+    StudioKind.WAVETABLE -> "Wavetable"
+    StudioKind.PLUCK -> "Pluck"
     StudioKind.DELAY -> "Delay"
     StudioKind.DRIVE -> "Drive"
     StudioKind.CRUSHER -> "Bitcrusher"

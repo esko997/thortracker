@@ -64,6 +64,7 @@ object StudioEngine : PlaybackEngine {
                 int(at+40,p.start); int(at+44,p.end); int(at+48,p.loopStart); int(at+52,p.loopEnd)
                 for(slice in p.slices) { int(at+56+8*slice.id,slice.start); int(at+60+8*slice.id,slice.end) }
             }
+            if (p is WavetablePatch) p.waves.writeTo(out, at + 40)
         }
         fun strip(index:Int,gain:Int,pan:Int,a:Int,b:Int,inserts:List<StudioInsert>) {
             val at=GRAPH_BASE+index*STRIP_BYTES

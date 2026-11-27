@@ -3,6 +3,7 @@
 #include "studio/mono_synth.h"
 #include "studio/studio_runtime.h"
 #include <assert.h>
+#include <stdbool.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -201,7 +202,91 @@ static void sampler_root_is_a_recording_reference_not_a_song_tuning(void) {
     ops->destroy(machine);free(image);free(wire);
 }
 
+/* Two consumers share one publication. Left is the editable wave (with an outgoing
+ * retrigger at the first boundary); right is independent held, looping PCM. Reclaim
+ * retired generations before ticking again so ASan catches either stale oscillator. */
+static void wave_generations_while_sampling(void){
+    const ChipEngineOps *ops=&studio_mono_ops;
+    const size_t size=ops->image_size+24+64*4;
+    uint8_t *wire=calloc(1,size),*base=fixture(2);assert(wire);
+    memcpy(wire,base,ops->image_size);free(base);
+    uint8_t *wave=wire+PATCHES,*sampler=wave+SLOT_BYTES,*events=wire+ROWS_AT+130;
+    wave[0]=9;dword(wave+4+5*4,100);
+    for(int i=0;i<64;i++)wave[40+i]=(uint8_t)(4*i-128);
+    memset(sampler,0,SLOT_BYTES);sampler[0]=1;sampler[1]=1;
+    dword(sampler+4,57);dword(sampler+4+3*4,1);dword(sampler+4+6*4,20000);dword(sampler+4+7*4,100);
+    uint8_t *pcm=wire+ops->image_size;memcpy(pcm,"PCM1",4);
+    dword(pcm+4,1);dword(pcm+8,1);dword(pcm+12,1);dword(pcm+16,48000);dword(pcm+20,64);
+    for(int i=0;i<64;i++)sample(pcm+24+4*i,.5f);
+    wire[5]=16;wire[1072]=1;wire[STRIPS+1]=0;wire[STRIPS+STRIP_BYTES+1]=200;
+    put_event(events,0,1,0,2,0,0,0);
+    put_event(events+8,0,1,1,57,255,0,0);
+    put_event(events+16,0,0,1,45,255,0,0);
+    put_event(events+24,4055,0,1,57,255,0,0); /* ~990 frames into the first tick */
+    for(int row=1;row<=64;row++)word(wire+ROWS_AT+2*row,4);
+    word(wire+12,4);
+    ChipMachine *song=ops->create(48000),*key=ops->create(48000);
+    ChipImage *image=calloc(1,ops->image_storage);
+    StudioBank *bank=NULL;StudioWaveBank *waves=NULL;StudioLive *live=NULL;
+    int mode;float a[2*CHIP_MAX_TICK_FRAMES],b[2*CHIP_MAX_TICK_FRAMES];
+    assert(song && key && image && studio_load_score(image,wire,size,&bank)==CHIP_OK);
+    assert(studio_prepare_waves(image,&waves,song)==CHIP_OK && waves);
+    assert(ops->start(song,image,0,0,96,&mode)==CHIP_OK);
+    assert(ops->audition(key,image,0,45,1,0)==CHIP_OK);
+    assert(ops->tick(song,a)==1000 && ops->tick(key,b)==1000);
+    assert(a[1999]>.15f);
+    for(int edit=0;edit<13;edit++){
+        StudioWaveBank *before=waves;
+        bool scalar=edit==1;
+        if(scalar)dword(wave+4+4*4,750);
+        else for(int i=0;i<64;i++)wave[40+i]=(edit&1)?(uint8_t)(4*i-128):0;
+        assert(studio_load_score(image,wire,ops->image_size,&bank)==CHIP_OK);
+        assert(studio_prepare_waves(image,&waves,song)==CHIP_OK);
+        if(scalar)assert(waves==before);
+        assert(studio_live_prepare(&live,image,48000)==CHIP_OK);
+        ops->apply_image(song,image);ops->apply_audition_image(key,image);
+        studio_live_destroy(live);live=NULL;
+        const float previous=b[1998];
+        assert(ops->tick(song,a)==1000 && ops->tick(key,b)==1000);
+        if(!scalar)assert(fabsf(previous-b[0])<.0001f);
+        double left=0,key_left=0;
+        for(int i=256;i<1000;i++){assert(a[2*i+1]>.15f);left+=fabs(a[2*i]);key_left+=fabs(b[2*i]);}
+        if((edit&1) && !scalar){assert(left>5 && key_left>5);}
+        else {assert(left<.001 && key_left<.001);}
+    }
+    /* Replace the patch and reclaim the final wave generation before rendering residuals. */
+    memset(wave,0,SLOT_BYTES);wave[0]=10;dword(wave+4+3*4,750);dword(wave+4+5*4,100);
+    assert(studio_load_score(image,wire,ops->image_size,&bank)==CHIP_OK);
+    assert(studio_prepare_waves(image,&waves,song)==CHIP_OK && !waves);
+    assert(studio_live_prepare(&live,image,48000)==CHIP_OK);
+    ops->apply_image(song,image);ops->apply_audition_image(key,image);studio_live_destroy(live);
+    assert(ops->tick(song,a)==1000 && a[1999]>.15f && ops->tick(key,b)>0);
+    assert(ops->audition(key,image,0,57,1,0)==CHIP_OK && ops->tick(key,b)==1000);
+    double pluck=0;for(int i=0;i<1000;i++)pluck+=fabs(b[2*i]);assert(pluck>1);
+    studio_bank_drop(bank);ops->destroy(song);ops->destroy(key);free(wire);free(image);
+}
+
+static void extension_wire_refusals(void){
+    const ChipEngineOps *ops=&studio_mono_ops;uint8_t *wire=fixture(1);
+    ChipImage *image=calloc(1,ops->image_storage);assert(image);
+    uint8_t *patch=wire+PATCHES+SLOT_BYTES,*ev=wire+ROWS_AT+130;
+    memset(patch,0,SLOT_BYTES);patch[0]=9;
+    put_event(ev,0,0,10,0,0x90,44,1); /* native morph=300 */
+    assert(ops->load_image(image,wire,ops->image_size)==CHIP_OK);
+    ev[6]=45;assert(ops->load_image(image,wire,ops->image_size)==CHIP_ERR_IMAGE);ev[6]=44;
+    ev[5]=0x96;assert(ops->load_image(image,wire,ops->image_size)==CHIP_ERR_IMAGE);ev[5]=0x90;
+    wire[STRIPS+4]=1;pedal(wire+STRIPS+8,100,9,0,0,0,0);
+    assert(ops->load_image(image,wire,ops->image_size)==CHIP_ERR_IMAGE);
+    wire[STRIPS+4]=0;patch[296]=1;assert(ops->load_image(image,wire,ops->image_size)==CHIP_ERR_IMAGE);patch[296]=0;
+    patch[0]=11;assert(ops->load_image(image,wire,ops->image_size)==CHIP_ERR_IMAGE);
+    patch[0]=10;dword(patch+4+3*4,750);patch[40]=1;
+    assert(ops->load_image(image,wire,ops->image_size)==CHIP_ERR_IMAGE);
+    free(wire);free(image);
+}
+
 int main(void) {
+    extension_wire_refusals();
+    wave_generations_while_sampling();
     sampler_root_is_a_recording_reference_not_a_song_tuning();
     sampler_seek_and_bank_lifetime();
     reorder_and_post_fader_send();

@@ -8,6 +8,57 @@ import org.thortracker.editor.withCell
 import org.thortracker.model.*
 
 class StudioModulesTest {
+    @Test fun arbitraryCyclesSurviveStrokeDuplicationAndPortableRoundTrip() {
+        val source=MutableList(4) { w -> MutableList(64) { p -> ((w*37+p*11) % 256)-128 } }
+        val family=StudioWaves.of(source)
+        source[3][63]=105
+        assertNotEquals(105,family.point(3,63))
+        val reverse=family.withStroke(3,15,63,3,-66)
+        assertEquals(reverse,family.withStroke(3,3,-66,15,63))
+        assertEquals(-66,reverse.point(3,3));assertEquals(-34,reverse.point(3,6))
+        assertEquals(-1,reverse.point(3,9));assertEquals(63,reverse.point(3,15))
+        assertSame(reverse,reverse.withStroke(3,15,63,3,-66))
+        val end=reverse.withStroke(2,63,-128,63,127)
+        assertEquals(127,end.point(2,63));assertEquals(family.point(2,0),end.point(2,0))
+        val copy=WavetablePatch("Copy",mapOf(0 to 171),family)
+        val song=StudioSound().system.blank().let { blank ->
+            blank.copy(sound=blank.studio.withPatch(1,copy).withPatch(2,copy.copy(waves=end))
+                .withPatch(32,PluckPatch("Wire",mapOf(1 to 97,3 to 1639))))
+        }
+        val saved=ProjectCodec.decodeBytes(ProjectCodec.encodeBytes(song))
+        assertEquals(song,saved);assertEquals(family,(saved.studio.patch(1) as WavetablePatch).waves)
+        val wire=ByteArray(StudioEngine.imageSize);StudioEngine.lower(saved,wire)
+        for((slot,cycles) in listOf(family,end).withIndex()){
+            val at=StudioEngine.PATCH_BASE+StudioEngine.PATCH_BYTES*slot
+            assertEquals(9,wire[at].toInt())
+            for(w in 0..3)for(p in 0..63)assertEquals(cycles.point(w,p),wire[at+40+64*w+p].toInt())
+            assertTrue((296..311).all { wire[at+it].toInt()==0 })
+        }
+        val last=StudioEngine.PATCH_BASE+31*StudioEngine.PATCH_BYTES
+        assertEquals(10,wire[last].toInt());assertTrue((40..311).all { wire[last+it].toInt()==0 })
+    }
+
+    @Test fun malformedCyclesEffectsAndVoiceBindingsRefuseRatherThanCoercing() {
+        fun encoded(rows: List<List<Int>>) = rows.joinToString(prefix="[",postfix="]") { it.toString() }
+        val cycle=List(64){0}
+        for(rows in listOf(List(3){cycle},listOf(cycle,cycle,cycle,cycle.drop(1)),
+            listOf(cycle,cycle,cycle,cycle.drop(1)+128))){
+            assertThrows(IllegalArgumentException::class.java){Json.decodeFromString(StudioWavesSerializer,encoded(rows))}
+        }
+        for(kind in listOf(StudioKind.WAVETABLE,StudioKind.PLUCK)){
+            assertThrows(IllegalArgumentException::class.java){StudioInsert(1,kind)}
+            assertThrows(IllegalArgumentException::class.java){StudioBinding(1,kind,0)}
+        }
+        val morph=StudioKind.WAVETABLE.parameters[0]
+        assertEquals(listOf(0,100,200,300),listOf(0,85,170,255).map(morph::fromHex))
+        val blank=StudioSound().system.blank()
+        val lane=blank.studio.tracks.single().copy(bindings=mapOf(35 to StudioBinding(0,StudioKind.WAVETABLE,0)))
+        val state=blank.studio.withPatch(1,WavetablePatch()).withPatch(2,PluckPatch()).copy(tracks=listOf(lane))
+        val pattern=Pattern.blank(1).withCell(0,0,Cell(48,2,35,255))
+        val song=blank.copy(sound=state,patterns=listOf(pattern))
+        assertTrue(song.system.errors(song).single().contains("Z requires WAVETABLE, not PLUCK"))
+    }
+
     @Test fun v1MonoBankUpgradesWithoutChangingAControlOrRoute() {
         val base=StudioSound().system.blank().addStudioTrack()
         val patch=MonoPatch("Custom",1,99,74,23,31,67,47,-19,13)

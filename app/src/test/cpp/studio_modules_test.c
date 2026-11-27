@@ -423,6 +423,259 @@ static void test_finite_extremes(void) {
     for (unsigned i = 0; i < STUDIO_FX_CHORUS; ++i) studio_fx_destroy(fx[i]);
 }
 
+#define TEST_TAU 6.283185307179586
+
+static StudioWavetable *prepare_test_wave(int dc, const int amplitude[4], int harmonic) {
+    int8_t points[4 * 64];
+    for (unsigned wave = 0; wave < 4; ++wave) {
+        for (unsigned i = 0; i < 64; ++i) {
+            double phase = TEST_TAU * i / 64.;
+            long value = dc + lround(amplitude[wave] * sin(phase) + harmonic * sin(8. * phase));
+            assert(value >= -128 && value <= 127);
+            points[wave * 64 + i] = (int8_t)value;
+        }
+    }
+    StudioWavetable *table = studio_wavetable_prepare(&tables, points);
+    assert(table);
+    return table;
+}
+
+static void test_wavetable_morph_scan(void) {
+    const int amplitude[4] = {32, 64, -32, -64};
+    StudioWavetable *table = prepare_test_wave(17, amplitude, 0);
+    StudioVoice *v = new_voice();
+    StudioWavetablePatch p = {.level = 1.f};
+    for (unsigned source = 0; source < 4; ++source) {
+        studio_voice_clear(v);
+        p.morph = (float)(100 * source) / 300.f;
+        assert(studio_voice_start_wavetable(v, &p, table, 4, 125.f, 1.f, false));
+        for (unsigned i = 0; i < 192; ++i) {
+            Stereo x = voice_frame(v);
+            assert(x.l == x.r);
+            if (i >= 8) {
+                double expected = amplitude[source] * sin(TEST_TAU * i / 64.) / 128.;
+                assert(fabs((double)x.l - expected) < .006);
+            }
+        }
+    }
+
+    studio_voice_clear(v);
+    p.morph = .5f;
+    p.scan_depth = .75f;
+    p.scan_hz = 2.f;
+    assert(studio_voice_start_wavetable(v, &p, table, 4, 125.f, 1.f, false));
+    for (unsigned i = 0; i < 9000; ++i) {
+        if (i == 461) assert(studio_voice_start_wavetable(v, &p, table, 4, 125.f, 1.f, true));
+        Stereo x = voice_frame(v);
+        if (i >= 8) {
+            /* Triangle advances one 4000-frame cycle, starting at zero on the upstroke. */
+            double t = (i % 4000u) / 4000.;
+            double lfo = t <= .25 ? 4. * t : t <= .75 ? 2. - 4. * t : 4. * t - 4.;
+            double position = 3. * fmin(1., fmax(0., .5 + .75 * lfo));
+            int a = (int)position;
+            double amp = amplitude[a];
+            if (a < 3) amp += (position - a) * (amplitude[a + 1] - amplitude[a]);
+            double expected = amp * sin(TEST_TAU * i / 64.) / 128.;
+            assert(fabs((double)x.l - expected) < .012);
+        }
+    }
+    p.scan_hz = 0.f; /* nonzero depth alone must not leave the sweep stuck on an offset */
+    p.morph = 1.f;
+    studio_voice_update_wavetable(v, &p);
+    for (unsigned i = 9000; i < 9700; ++i) {
+        Stereo x = voice_frame(v);
+        if (i >= 9600) assert(fabs(x.l + .5 * sin(TEST_TAU * i / 64.)) < .006);
+    }
+    studio_voice_clear(v);
+    studio_wavetable_destroy(table);
+
+    const int silent[4] = {0};
+    table = prepare_test_wave(93, silent, 0);
+    assert(studio_voice_start_wavetable(v, &p, table, 4, 125.f, 1.f, false));
+    for (unsigned i = 0; i < 100; ++i) assert(voice_frame(v).l == 0.f);
+    studio_voice_destroy(v);
+    studio_wavetable_destroy(table);
+}
+
+typedef struct Spectrum {
+    double re, im;
+} Spectrum;
+
+static void project_bin(Spectrum *bin, float sample, double hz, unsigned n) {
+    double phase = (TEST_TAU / RATE) * hz * n;
+    bin->re += sample * cos(phase);
+    bin->im += sample * sin(phase);
+}
+
+static double bin_amplitude(Spectrum bin, unsigned frames) {
+    return 2. * hypot(bin.re, bin.im) / frames;
+}
+
+static void test_wavetable_mip(void) {
+    const int amplitude[4] = {32, 32, 32, 32};
+    StudioWavetable *table = prepare_test_wave(0, amplitude, 64);
+    StudioVoice *v = new_voice();
+    const StudioWavetablePatch p = {.level = 1.f};
+    const double notes[] = {312.5, 375., 437.5, 562.5};
+    const double upper_peak[] = {.5, .4167, .0694, 0.};
+    enum { FFT_FRAMES = 2048 };
+    for (unsigned test = 0; test < 4; ++test) {
+        double hz = notes[test];
+        /* The last step is a held-note retune across the mip boundary, not a restart. */
+        if (test == 3) studio_voice_pitch(v, (float)hz);
+        else {
+            studio_voice_clear(v);
+            assert(studio_voice_start_wavetable(v, &p, table, 0, (float)hz, 1.f, false));
+        }
+        for (unsigned i = 0; i < 768; ++i) voice_frame(v);
+        double upper = test == 3 ? RATE - 8. * hz : 8. * hz;
+        Spectrum fundamental = {0}, harmonic = {0};
+        for (unsigned i = 0; i < FFT_FRAMES; ++i) {
+            float x = voice_frame(v).l;
+            project_bin(&fundamental, x, hz, i);
+            project_bin(&harmonic, x, upper, i);
+        }
+        assert(fabs(bin_amplitude(fundamental, FFT_FRAMES) - .25) < .01);
+        assert(fabs(bin_amplitude(harmonic, FFT_FRAMES) - upper_peak[test]) < .015);
+    }
+    studio_voice_clear(v);
+    studio_wavetable_destroy(table);
+
+    int8_t points[4 * 64];
+    for (unsigned i = 0; i < sizeof(points); ++i) points[i] = i % 2 ? -64 : 64;
+    table = studio_wavetable_prepare(&tables, points);
+    assert(table && studio_voice_start_wavetable(v, &p, table, 0, 62.5f, 1.f, false));
+    /* Authored Nyquist cosine is one bin, not doubled or dropped. */
+    for (unsigned i = 0; i < 64; ++i) {
+        float x = voice_frame(v).l;
+        if (i >= 8) near(x, i % 2 ? 0.f : i % 4 ? -.5f : .5f);
+    }
+    studio_voice_destroy(v);
+    studio_wavetable_destroy(table);
+}
+
+static void test_wavetable_rebind(void) {
+    const int sine[4] = {64, 64, 64, 64}, inverted[4] = {-64, -64, -64, -64};
+    const int dc[4] = {0};
+    StudioWavetable *old = prepare_test_wave(0, sine, 0);
+    StudioWavetable *final = prepare_test_wave(0, inverted, 0);
+    StudioWavetable *silent = prepare_test_wave(83, dc, 0);
+    StudioVoice *v = new_voice(), *ref = new_voice();
+    const StudioWavetablePatch p = {.morph = .38f, .scan_hz = 3.f, .scan_depth = .5f, .level = 1.f};
+    assert(studio_voice_start_wavetable(v, &p, old, 7, 125.f, 1.f, false));
+    assert(studio_voice_start_wavetable(ref, &p, final, 7, 125.f, 1.f, false));
+    Stereo before = {0};
+    for (unsigned i = 0; i < 81; ++i) { before = voice_frame(v); voice_frame(ref); }
+    StudioWavetableSet next = {0};
+    for (unsigned edit = 0; edit < 7; ++edit) {
+        /* Alternate unrelated allocations before each earlier correction could finish. */
+        StudioWavetable *replacement = edit == 6 ? final : prepare_test_wave(0, edit % 2 ? sine : inverted, 0);
+        next.slot[7] = replacement;
+        studio_voice_rebind_wavetables(v, &next);
+        studio_wavetable_destroy(old); /* next render under ASan must not touch it */
+        old = replacement;
+        for (unsigned frame = 0; frame < 5; ++frame) {
+            Stereo x = voice_frame(v);
+            voice_frame(ref);
+            if (frame == 0) assert(x.l == before.l && x.r == before.r);
+            before = x;
+        }
+    }
+    for (unsigned i = 0; i < 80; ++i) {
+        Stereo x = voice_frame(v), y = voice_frame(ref);
+        if (i >= 32) near(x.l, y.l); /* no phase/envelope restart or accumulated corrections */
+    }
+    studio_voice_destroy(ref);
+    studio_voice_clear(v);
+
+    /* An outgoing slot differs from the current one. Remove it while it contributes. */
+    assert(studio_voice_start_wavetable(v, &p, final, 7, 125.f, 1.f, false));
+    for (unsigned i = 0; i < 80; ++i) voice_frame(v);
+    assert(studio_voice_start_wavetable(v, &p, silent, 3, 125.f, 1.f, false));
+    before = voice_frame(v);
+    assert(fabsf(before.l) > .45f);
+    next.slot[3] = silent;
+    next.slot[7] = NULL;
+    studio_voice_rebind_wavetables(v, &next);
+    studio_wavetable_destroy(final);
+    for (unsigned i = 0; i < 35; ++i) {
+        Stereo x = voice_frame(v);
+        near(x.l, before.l * fmaxf(0.f, (31.f - i) / 32.f));
+    }
+    studio_voice_rebind_wavetables(v, NULL);
+    studio_wavetable_destroy(silent);
+    for (unsigned i = 0; i < 34; ++i) assert(voice_frame(v).l == 0.f);
+    assert(!studio_voice_active(v));
+    studio_voice_destroy(v);
+}
+
+static void test_pluck_resonator(void) {
+    StudioVoice *v = new_voice(), *ref = new_voice();
+    StudioPluckPatch p = {.inharmonicity = 1, .strike = 1, .damping = .5f,
+                         .decay_seconds = .75f, .release_seconds = .05f, .level = 1};
+    assert(studio_voice_start_pluck(v, &p, 125.f, 1.f, false));
+    assert(studio_voice_start_pluck(ref, &p, 125.f, 1.f, false));
+    const double ratios[] = {1., 2.76, 5.37}, weights[] = {1., .78, .74};
+    const double rt60[] = {.75, .75 * .575, .75 * .435};
+    for (unsigned i = 0; i < 640; ++i) {
+        if (i == 123) {
+            p.strike = 0;
+            studio_voice_update_pluck(v, &p);
+            assert(studio_voice_start_pluck(v, &p, 125.f, 1.f, true));
+        }
+        Stereo a = voice_frame(v), b = voice_frame(ref);
+        assert(a.l == a.r && a.l == b.l);
+        if (i >= 8) {
+            double expected = 0.;
+            for (unsigned mode = 0; mode < 3; ++mode) {
+                double time = (double)i / RATE;
+                expected += weights[mode] * pow(.001, time / rt60[mode]) *
+                            sin(TEST_TAU * 125. * ratios[mode] * time);
+            }
+            assert(fabs(a.l - expected * (.9 / 2.52)) < .0003);
+        }
+    }
+    assert(studio_voice_start_pluck(v, &p, 1700.f, 1.f, true));
+    near(voice_frame(v).l, voice_frame(ref).l); /* tied retune starts without a phase reset */
+    for (unsigned i = 0; i < 540; ++i) voice_frame(v);
+    unsigned high = crossings(v, RATE / 10);
+    assert(high >= 168 && high <= 172); /* upper resonators are muted rather than folded */
+    studio_voice_release(v);
+    for (unsigned i = 0; i < 420; ++i) voice_frame(v);
+    assert(!studio_voice_active(v));
+    studio_voice_clear(v);
+    studio_voice_clear(ref);
+
+    /* At 2 kHz the upper modes are outside the passband; directly check the root RT60. */
+    p.decay_seconds = .2f;
+    assert(studio_voice_start_pluck(v, &p, 2000.f, 1.f, false));
+    float earlier = 0.f;
+    for (unsigned i = 0; i <= 1609; ++i) {
+        Stereo x = voice_frame(v);
+        if (i == 9) earlier = x.l;
+        if (i == 1609) near(x.l, earlier * .001f);
+    }
+    assert(earlier > .5f && studio_voice_active(v));
+    for (unsigned i = 0; i < 560; ++i) voice_frame(v);
+    assert(!studio_voice_active(v));
+
+    assert(studio_voice_start_pluck(v, &p, 125.f, 1.f, false));
+    for (unsigned i = 0; i < 51; ++i) voice_frame(v);
+    studio_voice_cut(v);
+    assert(studio_voice_active(v)); /* only a retiring note, not a valid tie target */
+    assert(studio_voice_start_pluck(v, &p, 200.f, 1.f, true));
+    assert(studio_voice_start_pluck(ref, &p, 200.f, 1.f, false));
+    for (unsigned i = 0; i < 75; ++i) {
+        Stereo a = voice_frame(v), b = voice_frame(ref);
+        if (i >= 32) near(a.l, b.l);
+    }
+    studio_voice_cut(v);
+    for (unsigned i = 0; i < 32; ++i) voice_frame(v);
+    assert(!studio_voice_active(v));
+    studio_voice_destroy(v);
+    studio_voice_destroy(ref);
+}
+
 int main(void) {
     studio_dsp_prepare_tables(&tables);
     test_delay();
@@ -434,7 +687,12 @@ int main(void) {
     test_fm();
     test_drums();
     test_finite_extremes();
+    test_wavetable_morph_scan();
+    test_wavetable_mip();
+    test_wavetable_rebind();
+    test_pluck_resonator();
     puts("Studio DSP: echo timing/automation/clear, drive/order, quantize/hold, stereo tails/chorus,"
-         " pitched/reverse/looping PCM, FM legato, deterministic drums and finite extremes OK");
+         " pitched/reverse/looping PCM, FM legato, deterministic drums, wavetable morph/scan/mips/rebind,"
+         " modal pluck pitch/RT60/ties and finite extremes OK");
     return 0;
 }

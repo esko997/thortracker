@@ -363,7 +363,9 @@ class AudioDeviceTest {
         val args = InstrumentationRegistry.getArguments()
         val name = args.getString("studioSoakFixture")
         org.junit.Assume.assumeTrue(name != null)
-        require(name == "studio-capacity.thor" || name == "studio-demo.thor")
+        require(name == "studio-capacity.thor" || name == "studio-demo.thor" ||
+            name == "studio-wave-pluck-capacity.thor")
+        val waveSoak = name == "studio-wave-pluck-capacity.thor"
         val file = java.io.File(instrumentation.targetContext.cacheDir, name!!)
         val song = file.inputStream().use { source ->
             org.thortracker.model.ProjectCodec.readDocument { bytes, offset, length ->
@@ -392,9 +394,25 @@ class AudioDeviceTest {
                             else pedal
                         })
                     })
-                    audio.update(song.copy(sound = if (revision % 2 == 0) changed else song.studio))
-                    if (revision % 4 == 0) audio.audition(0, 48 + revision % 12, 1)
-                    if (revision % 4 == 1) audio.releaseAudition()
+                    var updated = if (revision % 2 == 0) changed else song.studio
+                    if (waveSoak) {
+                        val patch = updated.patch(2) as org.thortracker.system.studio.WavetablePatch
+                        val point = revision * 11 % 64
+                        val height = if (revision % 2 == 0) -96 else 96
+                        updated = updated.withPatch(2, patch.copy(waves = patch.waves.withStroke(
+                            revision % 4, point, height, (point + 9).coerceAtMost(63), -height)))
+                    }
+                    audio.update(song.copy(sound = updated))
+                    if (waveSoak) {
+                        if (revision % 8 == 0) {
+                            val pluck = revision / 8 % 2 == 1
+                            audio.audition(if (pluck) 1 else 0, 48 + revision % 12, if (pluck) 3 else 2)
+                        }
+                        if (revision % 8 == 4) audio.releaseAudition()
+                    } else {
+                        if (revision % 4 == 0) audio.audition(0, 48 + revision % 12, 1)
+                        if (revision % 4 == 1) audio.releaseAudition()
+                    }
                     revision++
                 }
                 SystemClock.sleep(400)

@@ -102,6 +102,7 @@ private:
     // Control-thread state.
     ImageSlot control_image_;
     StudioBank* studio_bank_ = nullptr;
+    StudioWaveBank* studio_waves_ = nullptr;
     bool has_image_ = false;
     uint32_t seq_ = 0;
     std::mutex stream_mutex_;  // guards stream_ for control/UI threads (never the callback)

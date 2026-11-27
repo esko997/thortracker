@@ -90,7 +90,18 @@ object SampleExportTool {
         val studioDemo = StudioSound().system.demo()
         studioImage("studio-demo.stimg", studioDemo)
         File(directory, "studio-demo.thor").writeBytes(ProjectCodec.encodeBytes(studioDemo))
-        File(directory, "studio-capacity.thor").writeBytes(ProjectCodec.encodeBytes(studioCapacity(studioDemo)))
+        val capacity = studioCapacity(studioDemo)
+        File(directory, "studio-capacity.thor").writeBytes(ProjectCodec.encodeBytes(capacity))
+        File(directory, "studio-wave-pluck-capacity.thor").writeBytes(ProjectCodec.encodeBytes(wavePluckCapacity(capacity)))
+        for (patch in listOf(WavetablePatch(), PluckPatch())) {
+            val document = StudioSound().system.blank()
+            val lane = document.studio.tracks.single().copy(bindings=mapOf(14 to StudioBinding(0,patch.kind,0)))
+            val pattern = Pattern.blank(1).copy(length=8, tracks=listOf(List(Songs.ROWS) { row ->
+                if (row < 8) Cell(48 + row, 1, 14, 85 * (row % 4)) else Cell.BLANK
+            }))
+            studioImage("studio-${patch.kind.name.lowercase()}.stimg", document.copy(ticksPerRow=2,
+                sound=document.studio.withPatch(1,patch).copy(tracks=listOf(lane)), patterns=listOf(pattern)))
+        }
         // One tick of song (1000 frames): source ends in 5 ms, first delay return is
         // deliberately beyond the song endpoint at 80 ms. Channels have opposite signs.
         val impulse=StudioPcm.of(2,48000,FloatArray(480) { if(it%2==0) .5f else -.25f })
@@ -585,7 +596,8 @@ object SampleExportTool {
         fun pedals(chain: List<StudioInsert>) = chain.map {
             it.copy(values = mapOf(0 to 0, 1 to 2000, 2 to 35, 4 to 30))
         }
-        val patches = demo.studio.patches.toMutableList()
+        // Keep the pre-extension capacity fixture independent of additions to the factory bank.
+        val patches = MutableList<StudioPatch>(StudioSound.SLOTS) { if (it < 4) demo.studio.patches[it] else MonoPatch() }
         patches[0] = SamplerPatch(name = "Capacity A", assetId = first.id, end = 1024,
             loopEnd = 1024, values = mapOf(3 to 1))
         patches[4] = SamplerPatch(name = "Capacity B", assetId = second.id, end = 1024,
@@ -599,5 +611,37 @@ object SampleExportTool {
                     if (row % 4 == 0) Cell(48 + row / 4 % 12, if (ch == 4) 5 else ch % 4 + 1) else Cell.BLANK
                 }
             })))
+    }
+
+    /** Two full-size PCM assets coexist with 29 editable wave families and the maximum
+     * 40 delays. Every lane reattacks on every tick, with four aligned automation writes. */
+    private fun wavePluckCapacity(capacity: Song): Song {
+        val patches = capacity.studio.patches.mapIndexed { i, p -> when (i) {
+            0, 4 -> p // sampler slots 1/5 retain the full 32 MiB bank
+            2 -> PluckPatch(values = mapOf(0 to 84, 1 to 92, 3 to 4200, 4 to 500))
+            else -> WavetablePatch("Cycle ${i + 1}", mapOf(0 to 131, 1 to 250, 2 to 80, 3 to 0, 4 to 500),
+                StudioWaves.initial().withPoint(i % 4, i * 7 % 64, i * 7 - 110))
+        } }
+        val slots = listOf(2, 3, 4, 3, 6, 3, 1, 5)
+        val tracks = capacity.studio.tracks.mapIndexed { ch, lane ->
+            val kind = patches[slots[ch] - 1].kind
+            val ids = when (kind) {
+                StudioKind.WAVETABLE -> listOf(0, 1, 2, 4)
+                StudioKind.PLUCK -> listOf(0, 1, 2, 3)
+                else -> listOf(1, 5, 6, 7)
+            }
+            lane.copy(midi = lane.midi.copy(gate = 100), bindings =
+                ids.mapIndexed { i, id -> 14 + i to StudioBinding(0, kind, id) }.toMap())
+        }
+        val pattern = Pattern.blank(8).copy(tracks = List(8) { ch ->
+            List(Songs.ROWS) { row ->
+                // Step across the 16-harmonic mip crossfade near 1.1–1.35 kHz at 48 kHz.
+                var c = Cell(if (ch < 6) 70 + (row + ch) % 13 else 48, slots[ch])
+                for (col in 0..3) c = c.withEffect(col, 14 + col, (19 * row + 43 * col + 7 * ch) % 256)
+                c
+            }
+        })
+        return capacity.copy(title = "Wave Pluck capacity", ticksPerRow = 1,
+            sound = capacity.studio.copy(patches = patches, tracks = tracks), patterns = listOf(pattern))
     }
 }

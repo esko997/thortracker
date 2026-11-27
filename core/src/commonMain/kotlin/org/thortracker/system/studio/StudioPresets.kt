@@ -26,8 +26,55 @@ internal fun studioInstrumentPresets(kind: StudioKind): List<StudioPatch> = when
         PercussionPatch("Closed Foil", mapOf(0 to 2, 1 to 15, 2 to 75, 3 to 85, 4 to 55, 5 to 50)),
         PercussionPatch("Open Foil", mapOf(0 to 2, 1 to 20, 2 to 65, 3 to 70, 4 to 250, 5 to 40))
     )
+    StudioKind.WAVETABLE -> wavetablePresets
+    StudioKind.PLUCK -> pluckPresets
     // Sampler patches retain their own imported asset, region and slices rather than borrowing an unrelated file.
     else -> emptyList()
+}
+
+private val wavetablePresets by lazy {
+    // Original phase-aligned cycles, stored directly rather than regenerated when opening the library.
+    val waves = StudioWaves.of(listOf(
+        listOf(
+            0, 12, 25, 37, 49, 60, 71, 81, 90, 98, 106, 112, 117, 122, 125, 126,
+            127, 126, 125, 122, 117, 112, 106, 98, 90, 81, 71, 60, 49, 37, 25, 12,
+            0, -12, -25, -37, -49, -60, -71, -81, -90, -98, -106, -112, -117, -122, -125, -126,
+            -127, -126, -125, -122, -117, -112, -106, -98, -90, -81, -71, -60, -49, -37, -25, -12
+        ),
+        listOf(
+            0, 21, 42, 62, 79, 94, 107, 116, 123, 126, 127, 126, 122, 118, 112, 105,
+            99, 92, 86, 80, 75, 70, 65, 60, 55, 50, 44, 38, 32, 24, 16, 8,
+            0, -8, -16, -24, -32, -38, -44, -50, -55, -60, -65, -70, -75, -80, -86, -92,
+            -99, -105, -112, -118, -122, -126, -127, -126, -123, -116, -107, -94, -79, -62, -42, -21
+        ),
+        listOf(
+            0, 40, 75, 102, 120, 127, 125, 116, 103, 90, 79, 72, 69, 69, 71, 73,
+            73, 73, 71, 69, 69, 72, 79, 90, 103, 116, 125, 127, 120, 102, 75, 40,
+            0, -40, -75, -102, -120, -127, -125, -116, -103, -90, -79, -72, -69, -69, -71, -73,
+            -73, -73, -71, -69, -69, -72, -79, -90, -103, -116, -125, -127, -120, -102, -75, -40
+        ),
+        listOf(
+            0, 21, 38, 49, 54, 57, 61, 70, 83, 100, 116, 125, 127, 120, 107, 93,
+            81, 72, 67, 61, 52, 38, 18, -4, -22, -34, -37, -31, -21, -10, -3, 0,
+            0, 0, 3, 10, 21, 31, 37, 34, 22, 4, -18, -38, -52, -61, -67, -72,
+            -81, -93, -107, -120, -127, -125, -116, -100, -83, -70, -61, -57, -54, -49, -38, -21
+        )
+    ))
+    listOf(
+        WavetablePatch("Round Lantern", mapOf(0 to 0, 1 to 0, 2 to 0, 3 to 10, 4 to 180, 5 to 68), waves),
+        WavetablePatch("Reed Drift", mapOf(0 to 150, 1 to 35, 2 to 18, 3 to 35, 4 to 450, 5 to 60), waves),
+        WavetablePatch("Folded Ribbon", mapOf(0 to 240, 1 to 120, 2 to 20, 3 to 8, 4 to 250, 5 to 55), waves),
+        WavetablePatch("Edge Runner", mapOf(0 to 220, 1 to 0, 2 to 0, 3 to 2, 4 to 65, 5 to 55))
+    )
+}
+
+private val pluckPresets by lazy {
+    listOf(
+        PluckPatch("Felt Tine", mapOf(0 to 0, 1 to 15, 2 to 80, 3 to 650, 4 to 100, 5 to 75)),
+        PluckPatch("Copper Wire", mapOf(0 to 35, 1 to 75, 2 to 35, 3 to 1700, 4 to 400, 5 to 65)),
+        PluckPatch("Glass Pin", mapOf(0 to 90, 1 to 90, 2 to 20, 3 to 2400, 4 to 700, 5 to 55)),
+        PluckPatch("Dry Reed", mapOf(0 to 0, 1 to 65, 2 to 90, 3 to 180, 4 to 30, 5 to 75))
+    )
 }
 
 internal fun studioPedalPresets(kind: StudioKind): List<Pair<String, Map<Int, Int>>> = when (kind) {

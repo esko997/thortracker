@@ -1,6 +1,36 @@
 # Thor Tracker verification — 2026-11-27
 
-## Unreleased — Studio instruments and effects
+## Unreleased — Wavetable and Pluck
+
+Wavetable adds four editable 64-point sources with morph/scan controls; Pluck adds
+a three-mode struck resonator. Both use the existing Studio instrument bank,
+automation, tuning, Sound/Advanced editing and portable native renderer.
+
+- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/45951988312)
+  passes JVM/native checks, Android packaging, AppImage smoke and the ARM64 Pak build.
+  Separate strict C and ASan/UBSan runs cover wave-bank replacement with two live
+  consumers, immediate old-bank reclamation, morph/scan, pitch and pluck articulation.
+- Brick checks combine 29 wavetable slots, eight active tracks, 32 MiB of PCM and
+  40 delay instances. Two 60-second runs, including held-note waveform edits, maintain
+  59 fps with no reported underruns, late callbacks or driver faults. Peak `/proc`
+  resident high-water is 291,256 KiB; the slowest callback is 18.78 ms against a
+  21.33 ms buffer. A separate controller pass exercises Pluck's trigger-time Strike.
+- Nova's 120-second capacity run performs 294 topology/wave revisions and alternates
+  held Wavetable/Pluck auditions. It reports one initial plus four subsequent xruns,
+  no driver faults, 361,564 KiB peak PSS and a 26.14 ms worst callback.
+  The six-instrument demo's separate 60-second run reports one xrun, no driver faults,
+  and an 8.01 ms worst callback; its adaptive buffer reaches 576 frames (12 ms).
+  These measurements do not establish glitch-free playback.
+- Actual Nova touch editing changes 58 points of source D in one reverse stroke.
+  One Undo restores that stroke; sources A/B/C, Morph, unrelated project fields and
+  embedded PCM remain unchanged. Sound/Advanced and Brick controller point editing
+  are inspected on their real displays.
+- Android's actual WAV export renders the six-instrument demo to exactly 384,000
+  stereo PCM16 frames at 48 kHz: eight seconds with tails cut. Native UI and CI
+  checks complement this export; no acoustic latency or listening-quality claim
+  follows from digital output measurements.
+
+## Unreleased — Initial Studio module baseline
 
 Studio combines Mono, Sampler, two-operator FM and synthesized Drums in one project.
 Each track has four serial inserts, gain/pan and two post-fader sends. Delay, Drive,

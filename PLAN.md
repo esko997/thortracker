@@ -7,7 +7,7 @@ See [USB MIDI setup and limitations](docs/USB_MIDI.md).
 
 **Next: Studio instruments and effects.** A portable workspace on Android, Linux and
 NextUI, with one to eight tracks, 32 instrument slots and Sound/Advanced editing.
-Mono, Sampler, FM and Drums share the same track strips and automation. Android Studio
+Mono, Sampler, FM, Drums, Wavetable and Pluck share the same track strips and automation. Android Studio
 projects can combine internal voices and USB MIDI destinations; USB output remains
 Android-only. Studio instruments are original designs, not circuit-exact emulations.
 
@@ -25,9 +25,11 @@ projects or their hardware exports. Modules are built in, not VST/AU plugins.
 7. Algorithmic reverb, two post-fader send/return buses and chorus.
 8. Original presets and the Pocket Circuit demonstration, with cross-platform workflow
    and resource checks recorded in [Verification](docs/VERIFICATION.md).
+9. Editable four-wave families with morph/scan, controller point editing and touch drawing.
+10. A three-mode plucked resonator with material, strike, damping and ring controls.
 
-Follow-on candidates: track resampling/freeze and stems, wavetable and resonator instruments,
-bounded polyphony, modulation macros, additional filtering/dynamics, assisted slicing and
+Follow-on candidates: track resampling/freeze and stems, bounded polyphony,
+modulation macros, additional filtering/dynamics, assisted slicing and
 time-stretching. These remain roadmap entries until their complete playback, editing,
 persistence and export paths are verified.
 

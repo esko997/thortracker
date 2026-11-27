@@ -15,6 +15,10 @@ internal class StudioInstrumentPainter(v:PaneView):Painter(v) {
     private val module by lazy { StudioModulePainter(v) }
     private var drawn:Painter?=null; private var active:Painter?=null
     override fun draw(c:Surface,area:Rect) {
+        if (st.studioPaneWidth != area.width() || st.studioPaneHeight != area.height()) {
+            if (st.studioPaneWidth >= 0f) StudioSoundView.panel(st).invalidate()
+            st.studioPaneWidth = area.width(); st.studioPaneHeight = area.height()
+        }
         val face=if(StudioSoundView.patch(song,st) is MonoPatch) mono else module
         face.draw(c,area); drawn=face
     }
@@ -32,9 +36,13 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
     private val scope=Rect(); private val prev=Rect(); private val next=Rect(); private val field=Rect(); private val guide=Rect()
     private val previousSlot=Rect(); private val nextSlot=Rect()
     private val drag=PanelDrag<Pointer>(); private val cancelPointer:()->Unit={ cancel() }; private var heldPad=false
+    private val waveCanvas = StudioWaveCanvas()
     private class Pointer(val st:ViewState,val revision:Int,val slot:Int,val lane:Int,val page:Int,val key:Int,
-        val x:Float,val initial:Int,val unitsPerPixel:Float,val preview:Boolean,val tapEntry:Boolean,var version:Long)
+        val x:Float,val initial:Int,val unitsPerPixel:Float,val preview:Boolean,val tapEntry:Boolean,var version:Long,
+        val source:Int,val point:Int)
     private var version=-1L; private var state:ViewState?=null; private var revision=0; private var slot=0; private var lane=0; private var selected=0; private var page=0; private var slice=0
+    private var drawnSource=0; private var drawnPoint=0
+    private fun facePage(p:StudioPatch) = if (p is WavetablePatch) st.wavetablePage else st.samplerPage
     private var windowStart=0; private var windowEnd=1
     private var waveAsset:StudioPcm?=null; private var waveFirst=-1; private var waveLast=-1; private var waveCount=0
     private val lows=FloatArray(256); private val highs=FloatArray(256)
@@ -47,7 +55,7 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
         state=null
         val patch=StudioSoundView.patch(song,st); if(patch is MonoPatch) return
         val s=song.studio; val panel=StudioSoundView.panel(st); val advanced=panel.advanced; val p=ink.palette
-        val kind=patch.kind; val accent=StudioGraphics.color(kind,p); val u=ink.unit; val pad=u*.44f
+        val kind=patch.kind; val accent=StudioGraphics.color(if(patch is WavetablePatch) StudioKind.SAMPLER else kind,p); val u=ink.unit; val pad=u*.44f
         val top=header(c,area,"Sound",kind.faceName)
         val bank=drawBank(c,area,top,StudioSound.SLOTS,p.channel(st.listenChannel),false){ id->s.patch(id)?.name?.ifEmpty { "(unnamed)" } }
         val left=bank.right+pad;val right=area.right-pad;val width=right-left;val bottom=area.bottom-pad;val h=bottom-top-pad
@@ -68,9 +76,11 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
         button(c,previousSlot,"‹",accent);button(c,nextSlot,"›",accent)
         y+=bar+pad*.48f
         for(r in pages) r.set(0f,0f,0f,0f)
-        if(patch is SamplerPatch && !advanced) {
-            val w=width/3f
-            for(i in pages.indices) { pages[i].set(left+i*w,y,left+(i+1)*w-pad*.26f,y+bar);button(c,pages[i],StudioModuleControls.pageNames[i],accent,st.instField==2 && st.samplerPage==i,st.samplerPage==i) }; y+=bar+pad*.52f
+        val tabs=when(patch){is WavetablePatch->StudioModuleControls.wavePages;is SamplerPatch->StudioModuleControls.pageNames;else->null}
+        if(tabs!=null && !advanced) {
+            val w=width/tabs.size
+            val current=facePage(patch)
+            for(i in tabs.indices) { pages[i].set(left+i*w,y,left+(i+1)*w-pad*.26f,y+bar);button(c,pages[i],tabs[i],accent,st.instField==2 && current==i,current==i) }; y+=bar+pad*.52f
         }
         val guideH=minOf(u*1.8f,h*.085f);guide.set(left,bottom-guideH,right,bottom)
         val paramH=minOf(u*5.6f,h*.23f);val fy=guide.top-pad*.5f-paramH
@@ -81,6 +91,8 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
                 patch is SamplerPatch -> sampleScope(c,patch,accent)
                 patch is FmPatch -> fmScope(c,patch,accent)
                 patch is PercussionPatch -> drumScope(c,patch,accent)
+                patch is WavetablePatch -> waveCanvas.draw(ink,c,scope,patch,st.waveSource,st.wavePoint,st.wavetablePage==1,accent)
+                patch is PluckPatch -> pluckScope(c,patch,accent)
             }
         }
         val arrow=minOf(paramH,width*.14f);prev.set(left,fy,left+arrow,fy+paramH);next.set(right-arrow,fy,right,fy+paramH)
@@ -104,7 +116,8 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
         }
         val help=if(key==null) "Choose a sound slot with Up / Down." else StudioModuleControls.help(patch,key)
         val gs=minOf(u*.88f,guideH*.8f);ink.label(c,ink.fit(help,width,gs),left,guide.top,guideH,p.DIM,size=gs)
-        version=session.documentVersion;state=st;revision=panel.revision;slot=st.instrument;lane=st.listenChannel;page=st.samplerPage;slice=st.samplerSlice;selected=st.instField
+        version=session.documentVersion;state=st;revision=panel.revision;slot=st.instrument;lane=st.listenChannel;page=facePage(patch);slice=st.samplerSlice;selected=st.instField
+        drawnSource=st.waveSource;drawnPoint=st.wavePoint
     }
     private var exactFirst=0; private var exactCount=0
     private fun drawExact(c:Surface,patch:StudioPatch,accent:Int) {
@@ -185,10 +198,48 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
         for(i in 1..80) {val t=i/80f;val env=(1-t/tail).coerceAtLeast(0f);val body=StudioGraphics.sinCycle(t*(4f+model*10f+p.value(3)*.05f));val snap=(((i*73+i*i*13)%53)/26f-1f)*(1f-t).let { it*it*it }*p.value(2)/100f
             val ny=cy-rad*.85f*env*(body*p.value(1)/100f+snap).coerceIn(-1f,1f); c.line(lx+len*(i-1)/80f,py,lx+len*t,ny,accent,ink.dp(1.7f));py=ny }
     }
+    /** Three tines describe modal tuning and initial strike weights. The chart is attenuation in dB, not live audio. */
+    private fun pluckScope(c:Surface,p:PluckPatch,accent:Int) {
+        val palette=ink.palette
+        ink.rect(c,scope,Palette.mix(palette.BG,accent,.07f))
+        val top=caption(c,"Tap to strike",accent)
+        val pad=ink.unit*.6f
+        val left=scope.left+pad; val right=scope.right-pad
+        val bottom=scope.bottom-pad
+        val w=right-left; val h=bottom-top
+        if(w<4 || h<4) return
+        val textH=minOf(ink.unit*1.55f,h*.25f)
+        val base=bottom-textH
+        val tineColor=if(heldPad || ctl.auditionHeld) palette.FOCUS else accent
+        val material=p.value(0)/100f; val strike=p.value(1)/100f; val damping=p.value(2)/100f
+        val ring=p.value(3)
+        val horizon=when { ring<=250->250;ring<=1000->1000;ring<=4000->4000;else->8000 }
+        val gx=left+w*.46f
+        val chartWidth=right-gx
+        c.line(left,base,left+w*.34f,base,tineColor,ink.dp(3f))
+        c.line(gx,base,right,base,palette.RULE,ink.dp(1f))
+        for(i in 2 downTo 0) {
+            val ratio=when(i){0->1f;1->2f+.76f*material;else->3f+2.37f*material}
+            val excitation=when(i){0->1f;1->.12f+.66f*strike;else->.06f+.68f*strike}
+            val x=left+w*(.05f+i*.12f)
+            val tip=base-(base-top)*.88f/ratio
+            val thickness=ink.dp(2f+4f*excitation)
+            c.line(x,base,x,tip,tineColor,thickness)
+            c.fillCircle(x,tip,thickness*.5f,tineColor)
+            val duration=ring*when(i){0->1f;1->.90f-.65f*damping;else->.75f-.63f*damping}
+            val end=gx+chartWidth*duration/horizon
+            c.line(gx,top+(base-top)*.10f,end,base,if(i==0) tineColor else palette.DIM,ink.dp(if(i==0) 2f else 1f))
+        }
+        val size=minOf(ink.unit*.85f,textH*.75f)
+        val span=if(horizon==250) "250 ms" else "${horizon/1000} s"
+        ink.mono(c,"−60 dB",gx,base,textH,palette.DIM,size=size)
+        ink.mono(c,span,right,base,textH,palette.DIM,size=size,align=Align.RIGHT)
+    }
     override fun down(x:Float,y:Float):Boolean {
         val panel=StudioSoundView.panel(st)
-        if(st!==state || st.kind!=ViewKind.INSTRUMENT || version!=session.documentVersion || slot!=st.instrument || lane!=st.listenChannel || page!=st.samplerPage || slice!=st.samplerSlice || revision!=panel.revision || selected!=st.instField) return false
-        val p=StudioSoundView.patch(song,st);if(p is MonoPatch) return false
+        if(st!==state || st.kind!=ViewKind.INSTRUMENT || version!=session.documentVersion || slot!=st.instrument || lane!=st.listenChannel || slice!=st.samplerSlice || revision!=panel.revision || selected!=st.instField) return false
+        val p=StudioSoundView.patch(song,st);if(p is MonoPatch || page!=facePage(p) ||
+            (p is WavetablePatch && (drawnPoint!=st.wavePoint || drawnSource!=st.waveSource))) return false
         val preview=ctl.editHeld && !panel.editBlocked;StudioSoundView.blockHeldEdit(ctl)
         for(i in 0..1) if(mode[i].contains(x,y)){StudioSoundView.selectMode(ctl,i==1);return true}
         if(slotRect.contains(x,y)) {StudioSoundView.selectSlot(ctl,slotScroll+((y-slotTop)/slotH).toInt()+1);return true}
@@ -216,6 +267,22 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
                 return begin(p,key,x,scope.width()*.5f,preview,tapEntry=false,units=units)
             }
             when(p) {
+                is WavetablePatch -> {
+                    if(st.wavetablePage==1) {
+                        if(!waveCanvas.begin(ctl,p,x,y)) return false
+                        panel.cancelTouch=cancelPointer
+                    } else {
+                        val n=waveCanvas.morphAt(x,y)
+                        if(n==null) listenDown() else {
+                            StudioSoundView.selectField(ctl,StudioModuleControls.fields(p,st).indexOf(0)+2)
+                            begin(p,0,x,scope.width(),false,tapEntry=false,units=waveCanvas.morphUnitsPerPixel,initial=n)
+                            StudioModuleControls.set(ctl,0,n,false)
+                            drag.target?.version=session.documentVersion
+                        }
+                    }
+                    return true
+                }
+                is PluckPatch -> { listenDown();return true }
                 is FmPatch -> return dragArtwork(if(x<scope.centerX()) 1 else 2)
                 is PercussionPatch -> {
                     if(x<scope.left+scope.width()*.42f) { listenDown(); return true }
@@ -255,24 +322,29 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
         if(panel.advanced || !begin(p,key,x,field.width()*.72f,preview,tapEntry=true)) StudioModuleControls.activate(ctl,key)
         return true
     }
-    private fun begin(p:StudioPatch,key:Int,x:Float,width:Float,preview:Boolean,tapEntry:Boolean,units:Float?=null):Boolean {
+    private fun begin(p:StudioPatch,key:Int,x:Float,width:Float,preview:Boolean,tapEntry:Boolean,units:Float?=null,initial:Int?=null):Boolean {
         val r=StudioModuleControls.range(p,st,song.studio,key) ?: return false
         val n=StudioModuleControls.value(p,st,song.studio,key) ?: return false
         val panel=StudioSoundView.panel(st)
         drag.begin(session,"Set ${StudioModuleControls.title(p,key,false)}",Pointer(st,panel.revision,st.instrument,
-            st.listenChannel,st.samplerPage,key,x,n,units ?: ((r.last-r.first)/maxOf(width,1f)),preview,tapEntry,session.documentVersion))
+            st.listenChannel,facePage(p),key,x,initial ?: n,units ?: ((r.last-r.first)/maxOf(width,1f)),preview,tapEntry,session.documentVersion,st.waveSource,st.wavePoint))
         panel.cancelTouch=cancelPointer
         return true
     }
     private fun listenDown() { if(!ctl.auditionHeld) {StudioSoundView.audition(ctl);heldPad=true;StudioSoundView.panel(st).cancelTouch=cancelPointer} }
     override fun move(x:Float,y:Float) {
+        if(waveCanvas.captured) {waveCanvas.move(ctl,x,y,ink.dp(4f));return}
         val d=drag.live(session) ?: return
-        val panel=StudioSoundView.panel(st);val p=StudioSoundView.patch(song,st)
-        if(st!==d.st || st.kind!=ViewKind.INSTRUMENT || st.instrument!=d.slot || st.listenChannel!=d.lane || st.samplerPage!=d.page || panel.revision!=d.revision || d.version!=session.documentVersion || p is MonoPatch || StudioModuleControls.field(p,st)!=d.key) {cancel();return}
+        val panel=StudioSoundView.panel(st)
+        if(st!==d.st || st.kind!=ViewKind.INSTRUMENT || st.instrument!=d.slot || st.listenChannel!=d.lane || panel.revision!=d.revision || d.version!=session.documentVersion) {cancel();return}
+        val p=StudioSoundView.patch(song,st)
+        if(p is MonoPatch || facePage(p)!=d.page || StudioModuleControls.field(p,st)!=d.key ||
+            (d.key==StudioModuleControls.HEIGHT && (st.waveSource!=d.source || st.wavePoint!=d.point))) {cancel();return}
         val n=d.initial+((x-d.x)*d.unitsPerPixel).roundToInt()
         StudioModuleControls.set(ctl,d.key,n,d.preview);d.version=session.documentVersion
     }
     override fun up(x:Float,y:Float) {
+        if(waveCanvas.captured) {waveCanvas.move(ctl,x,y,ink.dp(4f));cancel();return}
         val d=drag.live(session)
         val tap=d!=null && d.tapEntry && abs(x-d.x)<ink.dp(4f) && session.documentVersion==d.version &&
             d.st===st && d.slot==st.instrument && d.revision==StudioSoundView.panel(st).revision &&
@@ -281,6 +353,7 @@ internal class StudioModulePainter(v:PaneView):FmInstrumentPainter(v) {
     }
     override fun cancel() {
         val panel=StudioSoundView.panel(drag.target?.st ?: st);if(panel.cancelTouch===cancelPointer)panel.cancelTouch=null
+        waveCanvas.finish(ctl)
         drag.finish(session);if(heldPad) { heldPad=false;if(!ctl.auditionHeld) session.releaseAudition() }
     }
 }

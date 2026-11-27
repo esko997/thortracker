@@ -61,6 +61,19 @@ void studio_fx_process(StudioFx *fx, float *interleaved_stereo, uint32_t frames)
 typedef struct StudioDspTables { float sine[STUDIO_DSP_SINE_SIZE + 1]; } StudioDspTables;
 void studio_dsp_prepare_tables(StudioDspTables *tables);
 
+#define STUDIO_WAVETABLE_SLOTS 32u
+#define STUDIO_WAVETABLE_WAVES 4u
+#define STUDIO_WAVETABLE_POINTS 64u
+typedef struct StudioWavetable StudioWavetable;
+typedef struct StudioWavetableSet {
+    const StudioWavetable *slot[STUDIO_WAVETABLE_SLOTS];
+} StudioWavetableSet;
+
+/* Immutable output, independent of the input points/basis lifetime. NULL on failure.
+ * Prepare/destroy off the audio thread. Points are four consecutive signed 64-point cycles. */
+StudioWavetable *studio_wavetable_prepare(const StudioDspTables *basis, const int8_t points[256]);
+void studio_wavetable_destroy(StudioWavetable *table);
+
 /* Borrowed host-endian interleaved binary32 PCM, normalized to [-1,1], 1 or 2 channels,
  * source rate 8..192 kHz. Sample data must outlive all voices/short retrigger fades
  * referencing it; resetting the lane synchronously releases every reference. */
@@ -95,6 +108,16 @@ typedef struct StudioDrumPatch {
     float decay_seconds, level; /* 0.01..4 (0.35), 0..1 (0.8) */
 } StudioDrumPatch;
 
+typedef struct StudioWavetablePatch {
+    float morph, scan_hz, scan_depth; /* fraction 0..1 (0), Hz 0..8 (0), fraction 0..1 (0) */
+    float attack_seconds, release_seconds, level; /* 0..2 (.005), 0..4 (.12), 0..1 (.70) */
+} StudioWavetablePatch;
+
+typedef struct StudioPluckPatch {
+    float inharmonicity, strike, damping; /* 0..1 (.15, .45, .45); strike is trigger-only */
+    float decay_seconds, release_seconds, level; /* .04..8 (.75) RT60, 0..4 (.10), 0..1 (.75) */
+} StudioPluckPatch;
+
 typedef struct StudioVoice StudioVoice;
 
 StudioVoice *studio_voice_create(uint32_t sample_rate, const StudioDspTables *tables);
@@ -107,12 +130,23 @@ void studio_voice_clear(StudioVoice *voice);
 bool studio_voice_start_sampler(StudioVoice *voice, const StudioSamplerPatch *patch, float hz, float velocity);
 void studio_voice_start_fm(StudioVoice *voice, const StudioFmPatch *patch, float hz, float velocity, bool legato);
 void studio_voice_start_drum(StudioVoice *voice, const StudioDrumPatch *patch, float hz, float velocity);
+/* Table is borrowed; slot is the zero-based originating patch slot. Legato preserves a
+ * matching, open current note only. Pluck's caller must also require the same patch slot. */
+bool studio_voice_start_wavetable(StudioVoice *voice, const StudioWavetablePatch *patch,
+    const StudioWavetable *table, uint8_t slot, float hz, float velocity, bool legato);
+bool studio_voice_start_pluck(StudioVoice *voice, const StudioPluckPatch *patch,
+    float hz, float velocity, bool legato);
 /* Live updates affect the matching active voice only, never a retired overlap. Sampler
  * asset/region/reverse and root/fine are trigger-time; drive those via the next attack.
  * Drum kind is trigger-time; FM legato preserves oscillator and envelope state. */
 void studio_voice_update_sampler(StudioVoice *voice, const StudioSamplerPatch *patch);
 void studio_voice_update_fm(StudioVoice *voice, const StudioFmPatch *patch);
 void studio_voice_update_drum(StudioVoice *voice, const StudioDrumPatch *patch);
+void studio_voice_update_wavetable(StudioVoice *voice, const StudioWavetablePatch *patch);
+void studio_voice_update_pluck(StudioVoice *voice, const StudioPluckPatch *patch);
+/* Resolve both note slots before retiring the old bank. The set itself is never retained;
+ * NULL is an empty set. Keep replacement tables alive until rebind/clear/destroy. */
+void studio_voice_rebind_wavetables(StudioVoice *voice, const StudioWavetableSet *next);
 /* Update held pitch without an envelope restart. Release with the voice envelope; cut fades
  * out over at most 4 ms and is independent of patch release. Clear gives immediate silence. */
 void studio_voice_pitch(StudioVoice *voice, float hz);

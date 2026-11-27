@@ -69,6 +69,10 @@ data class ViewState(
     var samplerPage: Int = 0,
     var samplerSlice: Int = 0,
     var samplerZoom: Int = 1,
+    /** Wavetable source cursor; navigation never changes the audible morph. */
+    var wavetablePage: Int = 0,
+    var waveSource: Int = 0,
+    var wavePoint: Int = 0,
     /** Independent, non-document presentation and pointer ownership for the three musical design pilots. */
     var gbPanel: MusicalPanelState = MusicalPanelState(),
     var sidPanel: MusicalPanelState = MusicalPanelState(),
@@ -134,6 +138,13 @@ data class ViewState(
     /** What "tap A" re-enters on this display; travels with the state when displays swap. Not persisted. */
     val entry: EntryMemory = EntryMemory(),
 ) {
+    /** Only live for a held Studio module edit; a pane snapshot must not inherit it. */
+    internal var studioHoldVersion: Long = -1
+    internal var studioHoldSlot: Int = -1
+    internal var studioHoldRevision: Int = -1
+    internal var studioPaneWidth: Float = -1f
+    internal var studioPaneHeight: Float = -1f
+
     /** Subject identifiers belong to their view kind; never reinterpret one in another editor. */
     fun switchKind(next: ViewKind) {
         if (kind == next) return

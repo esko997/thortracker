@@ -2,8 +2,30 @@
 #include "studio_dsp.h"
 #include <stdlib.h>
 
-enum VoiceKind { NOTE_IDLE, NOTE_SAMPLE, NOTE_FM, NOTE_DRUM };
+enum VoiceKind { NOTE_IDLE, NOTE_SAMPLE, NOTE_FM, NOTE_DRUM, NOTE_WAVETABLE, NOTE_PLUCK, NOTE_RESIDUAL };
 enum EnvelopeStage { ATTACK, HELD, RELEASE };
+
+enum { WAVE_BANDS = 6, WAVE_PERIOD = 256 };
+struct StudioWavetable {
+    float bands[WAVE_BANDS][STUDIO_WAVETABLE_WAVES][WAVE_PERIOD + 1];
+};
+
+typedef struct WaveNote {
+    const StudioWavetable *table;
+    uint8_t slot;
+    bool correcting;
+    uint32_t correction_remaining;
+    float correction;
+    float phase, step, goal_step;
+    float morph, goal_morph, scan_phase, scan_step, scan_depth, goal_scan_step, goal_scan_depth;
+} WaveNote;
+
+enum { PLUCK_MODES = 3 };
+typedef struct PluckNote {
+    float inharmonicity, damping, rt60, floor;
+    float phase[PLUCK_MODES], step[PLUCK_MODES], goal_step[PLUCK_MODES];
+    float amplitude[PLUCK_MODES], pole[PLUCK_MODES];
+} PluckNote;
 
 typedef struct SampleNote {
     const float *pcm;
@@ -36,7 +58,7 @@ typedef struct Note {
     float hz, velocity, goal_velocity, level, goal_level;
     float env, attack_step, release_seconds, release_step;
     float last_l, last_r;
-    union { SampleNote sample; FmNote fm; DrumNote drum; } synth;
+    union { SampleNote sample; FmNote fm; DrumNote drum; WaveNote wave; PluckNote pluck; } synth;
 } Note;
 
 struct StudioVoice {
@@ -55,6 +77,69 @@ void studio_dsp_prepare_tables(StudioDspTables *tables) {
     }
     tables->sine[STUDIO_DSP_SINE_SIZE] = tables->sine[0];
 }
+
+StudioWavetable *studio_wavetable_prepare(const StudioDspTables *basis, const int8_t points[256]) {
+    if (!basis || !points) return NULL;
+    StudioWavetable *table = malloc(sizeof(*table));
+    if (!table) return NULL;
+    enum { SINE_MASK = STUDIO_DSP_SINE_SIZE - 1, QUARTER = STUDIO_DSP_SINE_SIZE / 4,
+           SOURCE_STEP = STUDIO_DSP_SINE_SIZE / STUDIO_WAVETABLE_POINTS,
+           TABLE_STEP = STUDIO_DSP_SINE_SIZE / WAVE_PERIOD };
+    const float *sine = basis->sine;
+    float peak = 1.f;
+    for (unsigned w = 0; w < STUDIO_WAVETABLE_WAVES; ++w) {
+        const int8_t *wave = points + w * STUDIO_WAVETABLE_POINTS;
+        int sum = 0;
+        for (unsigned i = 0; i < STUDIO_WAVETABLE_POINTS; ++i) sum += wave[i];
+        float ac[STUDIO_WAVETABLE_POINTS];
+        for (unsigned i = 0; i < STUDIO_WAVETABLE_POINTS; ++i) {
+            ac[i] = ((int)wave[i] * (int)STUDIO_WAVETABLE_POINTS - sum)
+                    * (1.f / (128u * STUDIO_WAVETABLE_POINTS));
+        }
+        float cycle[WAVE_PERIOD] = {0};
+        for (unsigned k = 1; k <= STUDIO_WAVETABLE_POINTS / 2; ++k) {
+            float c = 0.f, s = 0.f;
+            if (k == STUDIO_WAVETABLE_POINTS / 2) {
+                /* Nyquist's positive and negative bins coincide at the authored grid. */
+                for (unsigned i = 0; i < STUDIO_WAVETABLE_POINTS; i += 2) c += ac[i] - ac[i + 1];
+                c *= 1.f / STUDIO_WAVETABLE_POINTS;
+            } else {
+                for (unsigned i = 0; i < STUDIO_WAVETABLE_POINTS; ++i) {
+                    unsigned phase = i * k * SOURCE_STEP;
+                    c += ac[i] * sine[(phase + QUARTER) & SINE_MASK];
+                    s += ac[i] * sine[phase & SINE_MASK];
+                }
+                c *= 2.f / STUDIO_WAVETABLE_POINTS;
+                s *= 2.f / STUDIO_WAVETABLE_POINTS;
+            }
+            for (unsigned i = 0; i < WAVE_PERIOD; ++i) {
+                unsigned phase = i * k * TABLE_STEP;
+                cycle[i] += c * sine[(phase + QUARTER) & SINE_MASK] + s * sine[phase & SINE_MASK];
+            }
+            if ((k & (k - 1u)) == 0) {
+                unsigned band = 0;
+                for (unsigned n = k; n > 1; n >>= 1) ++band;
+                float *dest = table->bands[band][w];
+                for (unsigned i = 0; i < WAVE_PERIOD; ++i) {
+                    dest[i] = cycle[i];
+                    peak = dsp_max(peak, fabsf(cycle[i]));
+                }
+                dest[WAVE_PERIOD] = dest[0];
+            }
+        }
+    }
+    if (peak > 1.f) {
+        float scale = 1.f / peak;
+        for (unsigned b = 0; b < WAVE_BANDS; ++b) {
+            for (unsigned w = 0; w < STUDIO_WAVETABLE_WAVES; ++w) {
+                for (unsigned i = 0; i <= WAVE_PERIOD; ++i) table->bands[b][w][i] *= scale;
+            }
+        }
+    }
+    return table;
+}
+
+void studio_wavetable_destroy(StudioWavetable *table) { free(table); }
 
 static inline float sinusoid(const StudioDspTables *tables, float cycles) {
     float u = cycles - (float)(int)cycles;
@@ -278,6 +363,138 @@ void studio_voice_update_drum(StudioVoice *voice, const StudioDrumPatch *patch) 
     if (note->kind == NOTE_DRUM) set_drum_controls(voice, note, patch);
 }
 
+static void set_wave_pitch(const StudioVoice *voice, Note *note) {
+    note->synth.wave.goal_step = dsp_min(.45f, note->hz * voice->inverse_rate);
+}
+
+static void set_wave_controls(const StudioVoice *voice, Note *note, const StudioWavetablePatch *patch) {
+    WaveNote *w = &note->synth.wave;
+    note->attack_step = attack_step(voice, patch->attack_seconds, .005f);
+    set_release(voice, note, dsp_max(.004f, dsp_param(patch->release_seconds, 0.f, 4.f, .12f)));
+    note->goal_level = dsp_param(patch->level, 0.f, 1.f, .70f);
+    w->goal_morph = dsp_param(patch->morph, 0.f, 1.f, 0.f);
+    w->goal_scan_step = dsp_param(patch->scan_hz, 0.f, 8.f, 0.f) * voice->inverse_rate;
+    w->goal_scan_depth = w->goal_scan_step > 0.f ? dsp_param(patch->scan_depth, 0.f, 1.f, 0.f) : 0.f;
+}
+
+bool studio_voice_start_wavetable(StudioVoice *voice, const StudioWavetablePatch *patch,
+    const StudioWavetable *table, uint8_t slot, float hz, float velocity, bool legato) {
+    if (!table || slot >= STUDIO_WAVETABLE_SLOTS || !valid_frequency(hz)) return false;
+    hz = bounded_hz(hz);
+    Note *note = current(voice);
+    WaveNote *w = &note->synth.wave;
+    if (legato && note->kind == NOTE_WAVETABLE && note->stage != RELEASE &&
+        w->slot == slot && w->table == table) {
+        note->hz = hz;
+        note->goal_velocity = dsp_param(velocity, 0.f, 1.f, 0.f);
+        set_wave_pitch(voice, note);
+        set_wave_controls(voice, note, patch);
+        return true;
+    }
+    note = begin(voice, NOTE_WAVETABLE, hz, velocity);
+    w = &note->synth.wave;
+    *w = (WaveNote){.table = table, .slot = slot, .scan_phase = .25f};
+    set_wave_pitch(voice, note);
+    set_wave_controls(voice, note, patch);
+    w->step = w->goal_step;
+    w->morph = w->goal_morph;
+    w->scan_step = w->goal_scan_step;
+    w->scan_depth = w->goal_scan_depth;
+    note->level = note->goal_level;
+    return true;
+}
+
+void studio_voice_update_wavetable(StudioVoice *voice, const StudioWavetablePatch *patch) {
+    Note *note = current(voice);
+    if (note->kind == NOTE_WAVETABLE) set_wave_controls(voice, note, patch);
+}
+
+static void wave_residual(Note *note) {
+    note->synth.wave.table = NULL;
+    note->kind = NOTE_RESIDUAL;
+}
+
+void studio_voice_rebind_wavetables(StudioVoice *voice, const StudioWavetableSet *next) {
+    Note *old = &voice->notes[voice->front ^ 1u];
+    if (old->kind == NOTE_WAVETABLE) {
+        const WaveNote *w = &old->synth.wave;
+        if (!next || next->slot[w->slot] != w->table) wave_residual(old);
+    }
+    Note *note = current(voice);
+    if (note->kind != NOTE_WAVETABLE) return;
+    WaveNote *w = &note->synth.wave;
+    const StudioWavetable *table = next ? next->slot[w->slot] : NULL;
+    if (table == w->table) return;
+    if (!table) {
+        retire(voice);
+        wave_residual(note);
+        *current(voice) = (Note){0};
+    } else {
+        w->table = table;
+        w->correcting = true;
+    }
+}
+
+static void set_pluck_pitch(const StudioVoice *voice, Note *note) {
+    PluckNote *p = &note->synth.pluck;
+    float root = dsp_min(.45f, note->hz * voice->inverse_rate);
+    p->goal_step[0] = root;
+    /* Keep unwrapped steps for the upper-mode taper, clamp only when advancing phase. */
+    p->goal_step[1] = root * (2.f + .76f * p->inharmonicity);
+    p->goal_step[2] = root * (3.f + 2.37f * p->inharmonicity);
+}
+
+static void set_pluck_controls(const StudioVoice *voice, Note *note, const StudioPluckPatch *patch) {
+    PluckNote *p = &note->synth.pluck;
+    p->inharmonicity = dsp_param(patch->inharmonicity, 0.f, 1.f, .15f);
+    note->goal_level = dsp_param(patch->level, 0.f, 1.f, .75f);
+    set_release(voice, note, dsp_max(.004f, dsp_param(patch->release_seconds, 0.f, 4.f, .10f)));
+    float rt60 = dsp_param(patch->decay_seconds, .04f, 8.f, .75f);
+    float damping = dsp_param(patch->damping, 0.f, 1.f, .45f);
+    if (rt60 != p->rt60 || damping != p->damping) {
+        p->rt60 = rt60;
+        p->damping = damping;
+        float exponent = -6.907755279f * voice->inverse_rate / rt60;
+        /* Update the decay rate, not the energy already in the resonator. */
+        p->pole[0] = expf(exponent);
+        p->pole[1] = expf(exponent / dsp_lerp(.9f, .25f, damping));
+        p->pole[2] = expf(exponent / dsp_lerp(.75f, .12f, damping));
+    }
+    set_pluck_pitch(voice, note);
+}
+
+bool studio_voice_start_pluck(StudioVoice *voice, const StudioPluckPatch *patch,
+    float hz, float velocity, bool legato) {
+    if (!valid_frequency(hz)) return false;
+    hz = bounded_hz(hz);
+    Note *note = current(voice);
+    if (legato && note->kind == NOTE_PLUCK && note->stage != RELEASE) {
+        note->hz = hz;
+        note->goal_velocity = dsp_param(velocity, 0.f, 1.f, 0.f);
+        set_pluck_controls(voice, note, patch);
+        return true;
+    }
+    note = begin(voice, NOTE_PLUCK, hz, velocity);
+    note->attack_step = voice->inverse_rate / .001f;
+    set_pluck_controls(voice, note, patch);
+    note->level = note->goal_level;
+    PluckNote *p = &note->synth.pluck;
+    float strike = dsp_param(patch->strike, 0.f, 1.f, .45f);
+    float upper1 = .12f + .66f * strike, upper2 = .06f + .68f * strike;
+    float root = .9f / (1.f + upper1 + upper2);
+    p->amplitude[0] = root;
+    p->amplitude[1] = root * upper1;
+    p->amplitude[2] = root * upper2;
+    p->floor = root * .0001f;
+    for (unsigned i = 0; i < PLUCK_MODES; ++i) p->step[i] = p->goal_step[i];
+    return true;
+}
+
+void studio_voice_update_pluck(StudioVoice *voice, const StudioPluckPatch *patch) {
+    Note *note = current(voice);
+    if (note->kind == NOTE_PLUCK) set_pluck_controls(voice, note, patch);
+}
+
 void studio_voice_pitch(StudioVoice *voice, float hz) {
     if (!valid_frequency(hz)) return;
     Note *note = current(voice);
@@ -287,6 +504,9 @@ void studio_voice_pitch(StudioVoice *voice, float hz) {
     case NOTE_SAMPLE: set_sample_pitch(note); break;
     case NOTE_FM: set_fm_pitch(voice, note); break;
     case NOTE_DRUM: set_drum_pitch(voice, note); break;
+    case NOTE_WAVETABLE: set_wave_pitch(voice, note); break;
+    case NOTE_PLUCK: set_pluck_pitch(voice, note); break;
+    case NOTE_RESIDUAL: break; /* only an outgoing slot can contain a residual */
     }
 }
 
@@ -308,6 +528,7 @@ bool studio_voice_active(const StudioVoice *voice) {
 
 static inline void finish(Note *note) {
     if (note->kind == NOTE_SAMPLE) note->synth.sample.pcm = NULL;
+    if (note->kind == NOTE_WAVETABLE) note->synth.wave.table = NULL;
     note->kind = NOTE_IDLE;
 }
 
@@ -433,9 +654,88 @@ static float drum_frame(const StudioVoice *voice, Note *note) {
     return result;
 }
 
+static inline float wave_lookup(const StudioWavetable *table, unsigned band,
+    unsigned wave, float morph, unsigned index, float fraction) {
+    const float *a = table->bands[band][wave];
+    float x = dsp_lerp(a[index], a[index + 1], fraction);
+    if (morph == 0.f) return x; /* also excludes reading beyond wave D */
+    const float *b = table->bands[band][wave + 1];
+    return dsp_lerp(x, dsp_lerp(b[index], b[index + 1], fraction), morph);
+}
+
+static float wavetable_frame(const StudioVoice *voice, Note *note, float gain) {
+    WaveNote *w = &note->synth.wave;
+    float slew = voice->slew;
+    w->morph = dsp_slew(w->morph, w->goal_morph, slew);
+    float position = w->morph;
+    if (w->scan_step != 0.f || w->goal_scan_step != 0.f || w->scan_depth != 0.f) {
+        w->scan_step = dsp_slew(w->scan_step, w->goal_scan_step, slew);
+        w->scan_depth = dsp_slew(w->scan_depth, w->goal_scan_depth, slew);
+        float lfo = 1.f - 4.f * fabsf(w->scan_phase - .5f);
+        position = dsp_unit(position + w->scan_depth * lfo);
+        w->scan_phase = advance_phase(w->scan_phase, w->scan_step);
+    }
+    float morph = 3.f * position;
+    unsigned wave = (unsigned)morph;
+    morph -= (float)wave;
+
+    /* Select using the step that entered this frame, including pitch glide. */
+    float step = w->step;
+    unsigned band = step <= .45f / 32.f ? 5 : step <= .45f / 16.f ? 4 :
+                    step <= .45f / 8.f ? 3 : step <= .45f / 4.f ? 2 :
+                    step <= .45f / 2.f ? 1 : 0;
+    float phase = w->phase * WAVE_PERIOD;
+    unsigned index = (unsigned)phase;
+    float fraction = phase - (float)index;
+    float x = wave_lookup(w->table, band, wave, morph, index, fraction);
+    float top = (float)(1u << band) * step;
+    if (band && top > .36f) {
+        float lighter = wave_lookup(w->table, band - 1u, wave, morph, index, fraction);
+        float mix = dsp_unit((top - .36f) * (1.f / (.45f - .36f)));
+        x = dsp_lerp(x, lighter, mix);
+    }
+    w->step = dsp_slew(step, w->goal_step, slew);
+    w->phase = advance_phase(w->phase, step);
+    x *= gain;
+    if (w->correcting) {
+        /* New edit supersedes the last correction, never stacks one on top. */
+        w->correcting = false;
+        w->correction = note->last_l - x;
+        w->correction_remaining = voice->fade_frames - 1u;
+        return note->last_l;
+    }
+    if (w->correction_remaining) {
+        float fade = (float)w->correction_remaining-- * voice->inverse_fade;
+        return dsp_clamp(x + w->correction * fade, -1.f, 1.f);
+    }
+    return x;
+}
+
+static float pluck_frame(const StudioVoice *voice, Note *note) {
+    PluckNote *p = &note->synth.pluck;
+    float wave = 0.f;
+    for (unsigned i = 0; i < PLUCK_MODES; ++i) {
+        float step = p->step[i], phase = p->phase[i], amp = p->amplitude[i];
+        if (i == 0 || (step < .45f && amp != 0.f)) {
+            float taper = i == 0 ? 1.f : dsp_unit((.45f - step) * (1.f / (.45f - .38f)));
+            wave += amp * taper * sinusoid(voice->tables, phase);
+        }
+        p->phase[i] = advance_phase(phase, dsp_min(.45f, step));
+        p->step[i] = dsp_slew(step, p->goal_step[i], voice->slew);
+        p->amplitude[i] = dsp_zap_tiny(amp * p->pole[i]);
+    }
+    if (p->amplitude[0] <= p->floor) finish(note);
+    return wave;
+}
+
 static void render_note(const StudioVoice *voice, Note *note, float *l, float *r) {
     *l = *r = 0.f;
     if (note->kind == NOTE_IDLE) return;
+    if (note->kind == NOTE_RESIDUAL) {
+        *l = note->last_l;
+        *r = note->last_r;
+        return;
+    }
     if (note->stage == ATTACK) {
         note->env = dsp_min(1.f, note->env + note->attack_step);
         if (note->env == 1.f) note->stage = HELD;
@@ -454,6 +754,9 @@ static void render_note(const StudioVoice *voice, Note *note, float *l, float *r
     case NOTE_SAMPLE: sample_frame(voice, note, gain, l, r); break;
     case NOTE_FM: *l = *r = gain * fm_frame(voice, note); break;
     case NOTE_DRUM: *l = *r = gain * drum_frame(voice, note); break;
+    case NOTE_WAVETABLE: *l = *r = wavetable_frame(voice, note, gain); break;
+    case NOTE_PLUCK: *l = *r = gain * pluck_frame(voice, note); break;
+    case NOTE_RESIDUAL: break; /* handled above, without ticking the envelope */
     }
 }
 
