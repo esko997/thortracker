@@ -275,7 +275,7 @@ class StudioSoundViewTest {
         val pane = PaneView(fixture, state, 1f, canvas, { 0L }, {})
         var choose: (() -> Unit)? = null
         var deliver: ((String, String, ByteArray) -> Unit)? = null
-        val menu = object : MenuContext by EntryMenu() {
+        val menu = object : EntryMenu() {
             override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) {
                 choose = entries.single().second
             }
@@ -330,7 +330,7 @@ class StudioSoundViewTest {
         override fun textWidth(s: String, face: Face, bold: Boolean, size: Float) = s.length * size / 2f
     }
 
-    private class EntryMenu : MenuContext {
+    private open class EntryMenu : MenuContext {
         var input: ((String) -> Unit)? = null
         override fun menu(title: String, entries: List<Pair<String, () -> Unit>>, selected: Int) = error("Unexpected choice menu: $title")
         override fun text(title: String, initial: String, maxLength: Int, accepted: (String) -> Unit) { input = accepted }

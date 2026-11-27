@@ -127,6 +127,52 @@ static void reorder_and_post_fader_send(void){
     }
     assert(energy>1.);
 }
+static void audition_ignores_other_tracks_but_keeps_shared_tails(void) {
+    const ChipEngineOps *ops=&studio_mono_ops;
+    ChipMachine *machines[2]; ChipImage *images[2];
+    uint8_t *wire[2]; float pcm[2][CHIP_MAX_TICK_FRAMES*2];
+    for(int variant=0;variant<2;variant++) {
+        wire[variant]=fixture(8); uint8_t *p=wire[variant];
+        p[7]=1; p[STRIPS+2*STRIP_BYTES+2]=50;
+        uint8_t *bus=p+STRIPS+8*STRIP_BYTES;
+        bus[0]=bus[1]=100; bus[4]=1;
+        pedal(bus+8,900,4,0,80,50,6000); dword(bus+8+24,100);
+        if(variant) for(int lane=0;lane<8;lane++) if(lane!=2) {
+            uint8_t *strip=p+STRIPS+lane*STRIP_BYTES;
+            strip[4]=1;
+            switch(lane%5) {
+                case 0: pedal(strip+8,lane+1,4,0,2000,50,6000); dword(strip+32,100); break;
+                case 1: pedal(strip+8,lane+1,5,24,5000,0,0); break;
+                case 2: pedal(strip+8,lane+1,6,8,8000,100,0); break;
+                case 3: pedal(strip+8,lane+1,7,60,2000,6000,20); dword(strip+32,100); break;
+                case 4: pedal(strip+8,lane+1,8,100,5000,100,0); break;
+            }
+        }
+        images[variant]=calloc(1,ops->image_storage); machines[variant]=ops->create(48000);
+        assert(images[variant] && machines[variant]);
+        assert(ops->load_image(images[variant],p,ops->image_size)==CHIP_OK);
+        /* Reusing a machine must clear the previous audition's insert histories. */
+        assert(ops->audition(machines[variant],images[variant],5,45,2,0)==CHIP_OK);
+        for(int tick=0;tick<10;tick++) assert(ops->tick(machines[variant],pcm[variant])==1000);
+        assert(ops->audition(machines[variant],images[variant],2,57,2,0)==CHIP_OK);
+    }
+    double sounding=0,tail=0;
+    for(int tick=0;tick<480;tick++) {
+        if(tick==96) for(int i=0;i<2;i++) assert(ops->release(machines[i])==1);
+        for(int i=0;i<2;i++) assert(ops->tick(machines[i],pcm[i])==1000);
+        assert(memcmp(pcm[0],pcm[1],2000*sizeof(float))==0);
+        for(int sample=0;sample<2000;sample++) {
+            if(tick<96) sounding+=fabsf(pcm[0][sample]);
+            else tail+=fabsf(pcm[0][sample]);
+        }
+    }
+    assert(sounding>100 && tail>1);
+    for(int i=0;i<2;i++) {
+        assert(ops->tick(machines[i],pcm[i])==0);
+        ops->destroy(machines[i]); free(images[i]); free(wire[i]);
+    }
+}
+
 static void sampler_root_is_a_recording_reference_not_a_song_tuning(void) {
     const ChipEngineOps *ops=&studio_mono_ops;
     enum { FRAMES=1024 };
@@ -159,6 +205,7 @@ int main(void) {
     sampler_root_is_a_recording_reference_not_a_song_tuning();
     sampler_seek_and_bank_lifetime();
     reorder_and_post_fader_send();
+    audition_ignores_other_tracks_but_keeps_shared_tails();
     const ChipEngineOps *ops=&studio_mono_ops;
     uint8_t *wire=fixture(1); ChipImage *image=calloc(1,ops->image_storage);
     ChipMachine *m=ops->create(48000); int mode;

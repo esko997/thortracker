@@ -210,6 +210,8 @@ static void render_span(ChipMachine *m,float *out,int frames) {
         memset(out,0,2*n*sizeof(float));
         for(int i=0;i<m->image.data[4];i++){
             if(!m->image.data[21+6*i])continue;
+            /* A fresh audition owns exactly one lane; the other insert histories are empty. */
+            if(m->audition>=0 && i!=m->audition)continue;
             Lane *v=&m->lanes[i];int mono=v->synth.gate?n:(v->tail<n?v->tail:n);
             if(!v->synth.gate)v->tail-=mono;
             bool active=studio_voice_active(v->voice);
