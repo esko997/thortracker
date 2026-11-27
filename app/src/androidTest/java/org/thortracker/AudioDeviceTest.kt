@@ -371,7 +371,7 @@ class AudioDeviceTest {
             }
         }
         val duration = args.getString("observeMillis")?.toLongOrNull()?.coerceIn(5000, 180000) ?: 30000
-        var peakPss = 0
+        var peakPss = 0L
         var peakNative = 0L
         ChipAudio(instrumentation.targetContext).use { audio ->
             audio.update(song)

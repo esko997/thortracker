@@ -365,7 +365,7 @@ class DeckShell(
         if (fileJob != null) return error("A file operation is already running")
         val worker = fileWorker()
         val progress = title?.let { PopupSpec(it, "Reading file…", listOf(PopupItem.dismiss())) }
-        val task = worker.execute(TransferMode.SAFE, { work }) { operation -> runCatching { operation() } }
+        val task = worker.execute(TransferMode.SAFE, { work }) { operation -> kotlin.runCatching { operation() } }
         fileJob = FileJob(task, progress, onFailure)
         if (progress != null) popups.show(progress, 0)
     }
