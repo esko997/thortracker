@@ -60,12 +60,12 @@ class ControllerWorkflowTest {
             instrumentation.runOnMainSync {
                 val view = findTracker(activity.window.decorView)
                 if (view != null) tracker = view
-                ready = view != null && findEnabledPlay(activity.window.decorView)
+                ready = view != null && activity.hasWindowFocus() && findEnabledPlay(activity.window.decorView)
             }
             if (ready) break
             SystemClock.sleep(40)
         }
-        assertTrue("Actual audio initialization must complete", ready)
+        assertTrue("Activity focus and actual audio initialization must complete", ready)
     }
 
     @Before fun setUp() {

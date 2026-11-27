@@ -5,12 +5,13 @@ four effect columns, CC automation and outbound Clock/Start/Stop. MIDI playback
 remains Android-only; Linux/NextUI retain their existing chip backends.
 See [USB MIDI setup and limitations](docs/USB_MIDI.md).
 
-**Next: Studio internal instruments.** A portable mono synth on Android, Linux and NextUI,
-with one to eight tracks, 32 patch slots and Sound/Advanced editing. Android Studio projects
-can combine internal voices and USB MIDI destinations; USB output remains Android-only.
-The synth is an original subtractive instrument, not a circuit model of a particular device.
+**Next: Studio instruments and effects.** A portable workspace on Android, Linux and
+NextUI, with one to eight tracks, 32 instrument slots and Sound/Advanced editing.
+Mono, Sampler, FM and Drums share the same track strips and automation. Android Studio
+projects can combine internal voices and USB MIDI destinations; USB output remains
+Android-only. Studio instruments are original designs, not circuit-exact emulations.
 
-### Studio module roadmap
+### Studio modules (unreleased)
 
 Studio is the portable software-instrument workspace; these additions do not alter chip
 projects or their hardware exports. Modules are built in, not VST/AU plugins.
@@ -22,7 +23,8 @@ projects or their hardware exports. Modules are built in, not VST/AU plugins.
 5. An approachable two-operator FM instrument with exact editing.
 6. Synthesized kick, snare/noise and metallic percussion.
 7. Algorithmic reverb, two post-fader send/return buses and chorus.
-8. Module presets, demonstration material, cross-platform workflow and resource hardening.
+8. Original presets and the Pocket Circuit demonstration, with cross-platform workflow
+   and resource checks recorded in [Verification](docs/VERIFICATION.md).
 
 Follow-on candidates: track resampling/freeze and stems, wavetable and resonator instruments,
 bounded polyphony, modulation macros, additional filtering/dynamics, assisted slicing and
