@@ -15,7 +15,7 @@ internal class StudioStripPainter(v: PaneView) : Painter(v) {
     private val prev = Rect(); private val next = Rect(); private val action = Rect(); private val rail = Rect(); private val plot = Rect()
     private val badge = Rect()
     private val drag = PanelDrag<StripDrag>()
-    private enum class Mode { RAIL, DIAL }
+    private enum class Mode { RAIL, FADER, DIAL }
     private class StripDrag(
         val st: ViewState, val addr: Int, val pedal: Int, val field: Int, val range: IntRange,
         val mode: Mode, val l: Float, val r: Float, val startX: Float, val startY: Float, val startVal: Int,
@@ -304,7 +304,7 @@ internal class StudioStripPainter(v: PaneView) : Painter(v) {
         }
         val card = fields[i]
         val isPedalKnob = st.stripPedal != 0 && i >= 2
-        val mode = if (isPedalKnob) Mode.DIAL else Mode.RAIL
+        val mode = if (isPedalKnob) Mode.DIAL else Mode.FADER
         val tilePad = minOf(ink.unit * .55f, card.width() * .06f)
         drag.begin(session, "Edit ${StudioStripView.label(ctl, i)}",
             StripDrag(st, drawnAddr, drawnPedal, i, currentRange, mode, card.left + tilePad, card.right - tilePad,
@@ -324,6 +324,7 @@ internal class StudioStripPainter(v: PaneView) : Painter(v) {
         }
         val next = when (d.mode) {
             Mode.RAIL -> PanelWidgets.railValue(x, d.l, d.r, d.range.first, d.range.last)
+            Mode.FADER -> d.startVal + ((x - d.startX) * (d.range.last - d.range.first) / maxOf(1f, d.r - d.l)).roundToInt()
             Mode.DIAL -> d.startVal + ((x - d.startX + d.startY - y) * (d.range.last - d.range.first) / ink.dp(120f)).roundToInt()
         }
         StudioStripView.set(ctl, next)
