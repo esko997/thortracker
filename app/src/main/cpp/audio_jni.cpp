@@ -112,6 +112,10 @@ JNIEXPORT jboolean JNICALL Java_org_thortracker_audio_ChipAudio_nativeClockAlive
     return engine(h)->clock_alive() ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_org_thortracker_audio_ChipAudio_nativeAuditionActive(JNIEnv*, jclass, jlong h) {
+    return engine(h)->audition_active() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeNextRow(JNIEnv* env, jclass, jlong h, jlong cursor,
                                                                          jlongArray row) {
     int64_t out[5];
@@ -132,6 +136,20 @@ JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeStats(JNIEnv* 
     jlong tmp[Engine::kStatCount];
     for (int i = 0; i < Engine::kStatCount; ++i) tmp[i] = static_cast<jlong>(values[i]);
     env->SetLongArrayRegion(out, 0, n, tmp);
+}
+
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeSetTimingProbe(JNIEnv*, jclass, jlong h,
+                                                                                jboolean enabled) {
+    engine(h)->set_timing_probe(enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeTimingStats(JNIEnv* env, jclass, jlong h,
+                                                                             jlongArray out) {
+    jlong values[Engine::kTimingStatCount];
+    engine(h)->timing_stats(values);
+    const jsize length = env->GetArrayLength(out);
+    const jsize n = length < Engine::kTimingStatCount ? length : Engine::kTimingStatCount;
+    env->SetLongArrayRegion(out, 0, n, values);
 }
 
 // The OPL3 VGM export (any thread; allocates, renders the whole song: not the audio thread). Returns the file, or

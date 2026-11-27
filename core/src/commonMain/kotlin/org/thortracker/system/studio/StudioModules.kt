@@ -8,9 +8,9 @@ import kotlin.math.roundToInt
 /** IDs in a kind's catalogue are persisted. Never reuse one for a different meaning. */
 @Serializable enum class StudioKind(val wire: Int) {
     MONO(0), SAMPLER(1), FM(2), PERCUSSION(3), DELAY(4), DRIVE(5), CRUSHER(6), REVERB(7), CHORUS(8),
-    WAVETABLE(9), PLUCK(10);
+    WAVETABLE(9), PLUCK(10), MODULAR(11);
     val instrument get() = when (this) {
-        MONO, SAMPLER, FM, PERCUSSION, WAVETABLE, PLUCK -> true
+        MONO, SAMPLER, FM, PERCUSSION, WAVETABLE, PLUCK, MODULAR -> true
         DELAY, DRIVE, CRUSHER, REVERB, CHORUS -> false
     }
 }
@@ -35,6 +35,7 @@ private fun p(id:Int, name:String, unit:String, min:Int, max:Int, default:Int, l
 private fun choice(id:Int,name:String,default:Int,vararg names:String,trigger:Boolean=false) =
     StudioParameter(id,name,"",0,names.lastIndex,default,discrete=true,trigger=trigger,labels=names.toList())
 private val catalog = mapOf(
+    StudioKind.MODULAR to List(8) { i -> p(i,"Macro ${i+1}","",0,127,0) },
     StudioKind.MONO to listOf(choice(0,"Waveform",0,"Saw","Square"),p(1,"Cutoff","%",0,100,60),p(2,"Resonance","%",0,100,15),p(3,"Envelope","%",0,100,45),p(4,"Decay","%",0,100,40),p(5,"Accent","%",0,100,50),p(6,"Glide","%",0,100,15),p(7,"Tune","st",-24,24,0),p(8,"Level","%",0,100,75)),
     StudioKind.SAMPLER to listOf(p(0,"Root","note",0,115,48,trigger=true),p(1,"Fine","cent",-1200,1200,0,trigger=true),choice(2,"Direction",0,"Forward","Reverse",trigger=true),choice(3,"Loop",0,"Off","Forward loop",trigger=true),p(4,"Attack","ms",0,2000,2),p(5,"Release","ms",0,4000,80),p(6,"Cutoff","Hz",30,20000,20000,true),p(7,"Level","%",0,100,80)),
     StudioKind.FM to listOf(p(0,"Carrier","% ratio",25,1600,100),p(1,"Modulator","% ratio",25,1600,200),p(2,"Brightness","centirad",0,1200,200),p(3,"Feedback","%",0,100,0),p(4,"Attack","ms",0,2000,5),p(5,"Decay","ms",10,8000,450,true),p(6,"Sustain","%",0,100,50),p(7,"Release","ms",0,4000,120),p(8,"Level","%",0,100,75)),
@@ -87,11 +88,13 @@ fun StudioPatch.value(id:Int):Int = when(this) {
     is MonoPatch -> when(id){0->waveform;1->cutoff;2->resonance;3->envelope;4->decay;5->accent;6->glide;7->tune;8->level;else->error("Unknown Mono parameter $id")}
     is SamplerPatch -> kind.read(values,id); is FmPatch -> kind.read(values,id); is PercussionPatch -> kind.read(values,id)
     is WavetablePatch -> kind.read(values,id); is PluckPatch -> kind.read(values,id)
+    is ModularPatch -> macro(id)
 }
 fun StudioPatch.withValue(id:Int,value:Int):StudioPatch = when(this){
     is MonoPatch -> when(id){0->copy(waveform=value);1->copy(cutoff=value);2->copy(resonance=value);3->copy(envelope=value);4->copy(decay=value);5->copy(accent=value);6->copy(glide=value);7->copy(tune=value);8->copy(level=value);else->error("Unknown Mono parameter $id")}
     is SamplerPatch->copy(values=values+(id to value)); is FmPatch->copy(values=values+(id to value)); is PercussionPatch->copy(values=values+(id to value))
     is WavetablePatch -> copy(values=values+(id to value)); is PluckPatch -> copy(values=values+(id to value))
+    is ModularPatch -> copy(values=values+(id to value))
 }
 @Serializable data class StudioInsert(val id:Int,val kind:StudioKind,val bypass:Boolean=false,val values:Map<Int,Int> = emptyMap()) {
     init { require(id>0 && !kind.instrument); kind.checkValues(values) }

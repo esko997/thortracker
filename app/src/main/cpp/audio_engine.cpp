@@ -9,6 +9,7 @@
 #include <new>
 
 #include <dlfcn.h>
+#include <sched.h>
 
 #define LOG_TAG "ThorTrackerAudio"
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
@@ -19,6 +20,12 @@ namespace {
 int64_t now_ns() {
     timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
+int64_t thread_cpu_ns() {
+    timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return -1;
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
@@ -92,12 +99,13 @@ Engine::~Engine() {
     for (auto& image : image_storage_) { studio_live_destroy(image.studio); free(image.data); }
     studio_bank_drop(studio_bank_);
     studio_wave_bank_drop(studio_waves_);
+    studio_graph_bank_drop(studio_graphs_);
     free(control_image_.data);
 }
 
 int Engine::set_image(const uint8_t* bytes, size_t size, uint32_t version) {
     const bool studio = ops_ == &studio_mono_ops;
-    const int loaded = studio ? studio_load_score(control_image_.data, bytes, size, &studio_bank_) :
+    const int loaded = studio ? studio_load_score(control_image_.data, bytes, size, &studio_bank_, &studio_graphs_) :
         ops_->load_image(control_image_.data, bytes, size);
     if (loaded != CHIP_OK || (studio && studio_prepare_waves(control_image_.data, &studio_waves_,
                                                             slot_storage_[0].machine) != CHIP_OK)) {
@@ -155,6 +163,7 @@ int Engine::audition(int channel, int note, int instrument, int fine) {
     slot->seq = ++seq_;
     slot->channel = channel;
     slot->image_version = control_image_.version;
+    published_audition_seq_.store(slot->seq, std::memory_order_release);
     audition_slots_.publish();
     last_audition_ns_.store(now_ns() - t0);
     return CHIP_OK;
@@ -258,10 +267,17 @@ void Engine::record_row(uint64_t frame, int order, int row) {
 
 aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, int32_t frames) {
     const int64_t t0 = now_ns();
-    std::memset(out, 0, sizeof(float) * 2 * static_cast<size_t>(frames));
+    const bool probe = timing_enabled_.load(std::memory_order_relaxed);
+    const int64_t cpu_start = probe ? thread_cpu_ns() : -1;
+    int refill_mask = 0;
+    int64_t rendered_frames = 0;
+    const bool studio = ops_ == &studio_mono_ops;
+    if (!studio) std::memset(out, 0, sizeof(float) * 2 * static_cast<size_t>(frames));
 
     uint32_t consumed_play_seq = 0;
     bool consumed_play = false;
+    uint32_t consumed_audition_seq = 0;
+    bool consumed_audition = false;
     if (images_.consume()) front_image_ = images_.front();
     if (play_slots_.consume()) {
         play_ = play_slots_.front();
@@ -286,6 +302,8 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     }
     if (audition_slots_.consume()) {
         aud_ = audition_slots_.front();
+        consumed_audition_seq = aud_->seq;
+        consumed_audition = true;
         aud_len_ = aud_pos_ = 0;
         aud_releasing_ = false;
         aud_stopped_ = false;
@@ -309,29 +327,43 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
 
     int i = 0;
     while (play_ && i < frames) {
-        if (play_pos_ >= play_len_) {
+        if (studio || play_pos_ >= play_len_) {
+            if (probe) refill_mask |= 1;
             ChipMachine* m = play_->machine;
-            if (front_image_ && after(front_image_->version, play_->image_version)) {
-                const int64_t a0 = now_ns();
-                ops_->apply_image(m, front_image_->data);
-                play_->image_version = front_image_->version;
-                last_apply_ns_.store(now_ns() - a0, std::memory_order_relaxed);
-            }
-            if (desired_borrow != borrowed_channel_) {
-                if (borrowed_channel_ >= 0) ops_->mute(m, borrowed_channel_, 0);
-                if (desired_borrow >= 0) ops_->mute(m, desired_borrow, 1);
-                borrowed_channel_ = desired_borrow;
-            }
+            const bool boundary = !studio || studio_tick_boundary(m);
             int order = 0, row = 0, tick = 0;
-            ops_->position(m, &order, &row, &tick);
-            if (!play_tailing_ && tick == 0) record_row(frames_rendered_ + static_cast<uint64_t>(i), order, row);
-            const int k = ops_->tick(m, play_buf_);
+            if (boundary) {
+                if (front_image_ && after(front_image_->version, play_->image_version)) {
+                    const int64_t a0 = now_ns();
+                    ops_->apply_image(m, front_image_->data);
+                    play_->image_version = front_image_->version;
+                    last_apply_ns_.store(now_ns() - a0, std::memory_order_relaxed);
+                }
+                if (desired_borrow != borrowed_channel_) {
+                    if (borrowed_channel_ >= 0) ops_->mute(m, borrowed_channel_, 0);
+                    if (desired_borrow >= 0) ops_->mute(m, desired_borrow, 1);
+                    borrowed_channel_ = desired_borrow;
+                }
+                ops_->position(m, &order, &row, &tick);
+                if (!studio && !play_tailing_ && tick == 0)
+                    record_row(frames_rendered_ + static_cast<uint64_t>(i), order, row);
+            }
+            const int k = studio ? studio_render_frames(m, out + 2 * i, frames - i) : ops_->tick(m, play_buf_);
             if (k <= 0) {
                 if (k < 0 || !play_tailing_) faults_.fetch_add(1, std::memory_order_relaxed);
                 play_ = nullptr;
                 break;
             }
-            if (!play_tailing_) last_position_.store(pack_position(false, order, row), std::memory_order_relaxed);
+            if (probe) rendered_frames += k;
+            if (boundary && !play_tailing_) {
+                // A Studio row starts at its first produced sample, not at each continuation pull.
+                if (studio && tick == 0) record_row(frames_rendered_ + static_cast<uint64_t>(i), order, row);
+                last_position_.store(pack_position(false, order, row), std::memory_order_relaxed);
+            }
+            if (studio) {
+                i += k;
+                continue;
+            }
             play_len_ = k;
             play_pos_ = 0;
         }
@@ -343,28 +375,40 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
         play_pos_ += n;
     }
 
+    if (studio && i < frames) std::memset(out + 2 * i, 0, sizeof(float) * 2 * static_cast<size_t>(frames - i));
+
     i = 0;
     while (aud_ && i < frames) {
-        if (aud_pos_ >= aud_len_) {
-            if (ops_->apply_audition_image && front_image_ && after(front_image_->version, aud_->image_version)) {
-                ops_->apply_audition_image(aud_->machine, front_image_->data);
+        int produced = 0;
+        if (studio || aud_pos_ >= aud_len_) {
+            if (probe) refill_mask |= 2;
+            ChipMachine* m = aud_->machine;
+            if (ops_->apply_audition_image && front_image_ && after(front_image_->version, aud_->image_version) &&
+                (!studio || studio_tick_boundary(m))) {
+                ops_->apply_audition_image(m, front_image_->data);
                 aud_->image_version = front_image_->version;
             }
-            const int k = ops_->tick(aud_->machine, aud_buf_);
+            // A Studio pull cannot exceed one logical tick, which fits aud_buf_.
+            const int k = studio ? studio_render_frames(m, aud_buf_, frames - i) : ops_->tick(m, aud_buf_);
             if (k <= 0) {
                 if (k < 0) faults_.fetch_add(1, std::memory_order_relaxed);
                 aud_ = nullptr;  // fault, or a released note has ended
                 break;
             }
-            aud_len_ = k;
-            aud_pos_ = 0;
+            if (probe) rendered_frames += k;
+            if (studio) {
+                produced = k;
+            } else {
+                aud_len_ = k;
+                aud_pos_ = 0;
+            }
         }
-        const int n = std::min(frames - i, aud_len_ - aud_pos_);
-        const float* src = aud_buf_ + 2 * aud_pos_;
+        const int n = studio ? produced : std::min(frames - i, aud_len_ - aud_pos_);
+        const float* src = studio ? aud_buf_ : aud_buf_ + 2 * aud_pos_;
         float* dst = out + 2 * i;
         for (int j = 0; j < 2 * n; ++j) dst[j] += src[j];
         i += n;
-        aud_pos_ += n;
+        if (!studio) aud_pos_ += n;
     }
 
     for (int j = 0; j < 2 * frames; ++j) out[j] = std::clamp(out[j], -1.0f, 1.0f);
@@ -375,6 +419,7 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     // Acknowledge only the slot actually consumed, after its playing/ended state is visible.
     // A newer published start must stay pending, including when this one ended on its first tick.
     if (consumed_play) acknowledged_play_seq_.store(consumed_play_seq, std::memory_order_release);
+    if (consumed_audition) acknowledged_audition_seq_.store(consumed_audition_seq, std::memory_order_release);
     frames_rendered_ += static_cast<uint64_t>(frames);
     frames_written_.store(static_cast<int64_t>(frames_rendered_), std::memory_order_release);
     // AAudio/Oboe support latency tuning at the end of the data callback. This changes the used
@@ -393,6 +438,29 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     if (spent > max_callback_ns_.load(std::memory_order_relaxed)) {
         max_callback_ns_.store(spent, std::memory_order_relaxed);
     }
+    if (probe) {
+        const int64_t cpu_end = thread_cpu_ns();
+        const int cpu = sched_getcpu();
+        auto& group = timing_[refill_mask];
+        if (cpu >= 0 && cpu < 64) {
+            const auto mask = group.cpu_mask.load(std::memory_order_relaxed);
+            group.cpu_mask.store(mask | (uint64_t{1} << cpu), std::memory_order_relaxed);
+        }
+        if (frames > group.max_frames.load(std::memory_order_relaxed)) {
+            group.max_frames.store(frames, std::memory_order_relaxed);
+        }
+        group.frame_total.store(group.frame_total.load(std::memory_order_relaxed) + rendered_frames,
+                                std::memory_order_relaxed);
+        group.output_frame_total.store(group.output_frame_total.load(std::memory_order_relaxed) + frames,
+                                       std::memory_order_relaxed);
+        if (cpu_start >= 0 && cpu_end >= cpu_start) {
+            const int64_t cpu_ns = cpu_end - cpu_start;
+            group.cpu_total_ns.store(group.cpu_total_ns.load(std::memory_order_relaxed) + cpu_ns,
+                                     std::memory_order_relaxed);
+            group.cpu.record(cpu_ns);
+        }
+        group.wall.record(spent);
+    }
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
@@ -409,6 +477,12 @@ int64_t Engine::presented_frame_locked() {
     }
     last_latency_frames_.store(latency, std::memory_order_relaxed);
     return written - latency;
+}
+
+bool Engine::audition_active() const {
+    const uint32_t published = published_audition_seq_.load(std::memory_order_acquire);
+    const uint32_t acknowledged = acknowledged_audition_seq_.load(std::memory_order_acquire);
+    return after(published, acknowledged) || auditioning_.load(std::memory_order_acquire);
 }
 
 bool Engine::start_pending() const {
@@ -499,6 +573,46 @@ void Engine::stats(int64_t* out, int count) {
     v[12] = last_latency_frames_.load();
     v[13] = raw_latency_frames_.load();
     for (int i = 0; i < count && i < kStatCount; ++i) out[i] = v[i];
+}
+
+void Engine::TimingHistogram::record(int64_t ns) {
+    const int64_t bin = ns > 0 ? std::min<int64_t>((ns - 1) / kBinNs, kBins) : 0;
+    bins[bin].store(bins[bin].load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    if (ns > max_ns.load(std::memory_order_relaxed)) max_ns.store(ns, std::memory_order_relaxed);
+    count.store(count.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+}
+
+int64_t Engine::TimingHistogram::p99(int64_t samples) const {
+    if (!samples) return 0;
+    int64_t remaining = samples - samples / 100;  // nearest rank ceil(0.99 * n)
+    for (int i = 0; i < kBins; ++i) {
+        remaining -= bins[i].load(std::memory_order_relaxed);
+        if (remaining <= 0) return (i + 1) * kBinNs;
+    }
+    return -1;  // p99 landed in overflow, not an invented 64 ms measurement
+}
+
+void Engine::timing_stats(int64_t out[kTimingStatCount]) const {
+    *out++ = timing_enabled_.load(std::memory_order_relaxed) ? 1 : 0;
+    *out++ = TimingHistogram::kBinNs;
+    *out++ = TimingHistogram::kBinNs * TimingHistogram::kBins;
+    for (const auto& group : timing_) {
+        const auto n = group.wall.count.load(std::memory_order_acquire);
+        const auto cpu_n = group.cpu.count.load(std::memory_order_acquire);
+        *out++ = n;
+        *out++ = group.wall.max_ns.load(std::memory_order_relaxed);
+        *out++ = group.cpu.max_ns.load(std::memory_order_relaxed);
+        *out++ = group.wall.p99(n);
+        *out++ = group.cpu.p99(cpu_n);
+        *out++ = group.max_frames.load(std::memory_order_relaxed);
+        *out++ = static_cast<int64_t>(group.cpu_mask.load(std::memory_order_relaxed));
+        *out++ = cpu_n;
+    }
+    for (const auto& group : timing_) {
+        *out++ = group.cpu_total_ns.load(std::memory_order_relaxed);
+        *out++ = group.frame_total.load(std::memory_order_relaxed);
+        *out++ = group.output_frame_total.load(std::memory_order_relaxed);
+    }
 }
 
 }  // namespace thortracker

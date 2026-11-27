@@ -280,6 +280,57 @@ static inline void delay_frame(StudioFx *fx, float *left, float *right) {
     *right = dsp_lerp(*right, b, mix);
 }
 
+/* Only use contiguous tap reads when both interpolation endpoints exist. Clear,
+ * tap transitions and control/bypass slews keep the scalar path. The delay's
+ * minimum distance is 1 ms (>=8 frames at every supported sample rate). */
+static bool delay_settled(const StudioFx *fx) {
+    const Tap *tap = &fx->state.delay.tap;
+    return fx->enabled == 1.f && fx->enabled_goal == 1.f &&
+           tap->blend == 1.f && tap->to == tap->goal &&
+           fx->state.delay.history.valid > (uint32_t)tap->to &&
+           fx->current.delay.feedback == fx->goal.delay.feedback &&
+           fx->current.delay.tone == fx->goal.delay.tone &&
+           fx->current.delay.mix == fx->goal.delay.mix;
+}
+
+static void delay_settled_block(StudioFx *fx, float *stereo, uint32_t frames) {
+    Ring *ring = &fx->state.delay.history;
+    const uint32_t capacity = ring->capacity;
+    const float distance = fx->state.delay.tap.to;
+    const uint32_t whole = (uint32_t)distance;
+    const float fraction = distance - (float)whole;
+    const float feedback = fx->current.delay.feedback, tone = fx->current.delay.tone, mix = fx->current.delay.mix;
+    float lp[2] = {fx->state.delay.tone[0], fx->state.delay.tone[1]};
+    uint32_t available = capacity - ring->valid;
+    ring->valid += frames < available ? frames : available;
+    while (frames) {
+        uint32_t write = ring->write, read = ring_back(ring, whole);
+        uint32_t older = fraction == 0.f ? read : (read ? read - 1 : capacity - 1);
+        uint32_t run = frames;
+        if (run > capacity - write) run = capacity - write;
+        if (run > capacity - read) run = capacity - read;
+        if (run > capacity - older) run = capacity - older;
+        float *dst = ring->data + 2 * write;
+        const float *tap = ring->data + 2 * read, *prev = ring->data + 2 * older;
+        /* Sequential even when tap and write ranges overlap: short feedback delays
+         * must read the samples written earlier in this same run, not a snapshot. */
+        for (uint32_t i = 0; i < run; ++i, stereo += 2, tap += 2, prev += 2, dst += 2) {
+            for (unsigned c = 0; c < 2; ++c) {
+                float dry = dsp_audio(stereo[c], 4.f);
+                float wet = fraction == 0.f ? tap[c] : dsp_lerp(tap[c], prev[c], fraction);
+                lp[c] = dsp_filter(lp[c], wet, tone);
+                dst[c] = dsp_clamp(dry + lp[c] * feedback, -4.f, 4.f);
+                stereo[c] = dsp_clamp(dsp_lerp(dry, wet, mix), -4.f, 4.f);
+            }
+        }
+        write += run;
+        ring->write = write == capacity ? 0 : write;
+        frames -= run;
+    }
+    fx->state.delay.tone[0] = lp[0];
+    fx->state.delay.tone[1] = lp[1];
+}
+
 /* Monotonic rational saturator, exactly ±1 at ±3 with zero slope at the join. */
 static inline float saturate(float x) {
     x = dsp_clamp(x, -3.f, 3.f);
@@ -375,17 +426,12 @@ static inline void chorus_frame(StudioFx *fx, float *left, float *right) {
 
 #undef SLEW
 
-void studio_fx_frame(StudioFx *fx, float *left, float *right) {
+typedef void (*FrameKernel)(StudioFx *, float *, float *);
+
+static inline void process_frame(StudioFx *fx, float *left, float *right, FrameKernel kernel) {
     float dry_l = dsp_audio(*left, 4.f), dry_r = dsp_audio(*right, 4.f);
     float l = dry_l, r = dry_r;
-    fx->primed = true;
-    switch (fx->kind) {
-    case STUDIO_FX_DELAY:   delay_frame(fx, &l, &r); break;
-    case STUDIO_FX_DRIVE:   drive_frame(fx, &l, &r); break;
-    case STUDIO_FX_CRUSHER: crusher_frame(fx, &l, &r); break;
-    case STUDIO_FX_REVERB:  reverb_frame(fx, &l, &r); break;
-    case STUDIO_FX_CHORUS:  chorus_frame(fx, &l, &r); break;
-    }
+    kernel(fx, &l, &r);
     fx->enabled = dsp_approach(fx->enabled, fx->enabled_goal, fx->bypass_step);
     if (fx->enabled != 1.f) {
         l = dsp_lerp(dry_l, l, fx->enabled);
@@ -395,6 +441,32 @@ void studio_fx_frame(StudioFx *fx, float *left, float *right) {
     *right = dsp_clamp(r, -4.f, 4.f);
 }
 
+void studio_fx_frame(StudioFx *fx, float *left, float *right) {
+    fx->primed = true;
+    switch (fx->kind) {
+    case STUDIO_FX_DELAY:   process_frame(fx, left, right, delay_frame);   break;
+    case STUDIO_FX_DRIVE:   process_frame(fx, left, right, drive_frame);   break;
+    case STUDIO_FX_CRUSHER: process_frame(fx, left, right, crusher_frame); break;
+    case STUDIO_FX_REVERB:  process_frame(fx, left, right, reverb_frame);  break;
+    case STUDIO_FX_CHORUS:  process_frame(fx, left, right, chorus_frame);  break;
+    }
+}
+
+static inline void process_block(StudioFx *fx, float *stereo, uint32_t frames, FrameKernel kernel) {
+    for (uint32_t i = 0; i < frames; ++i, stereo += 2) process_frame(fx, stereo, stereo + 1, kernel);
+}
+
 void studio_fx_process(StudioFx *fx, float *stereo, uint32_t frames) {
-    for (uint32_t i = 0; i < frames; ++i, stereo += 2) studio_fx_frame(fx, stereo, stereo + 1);
+    if (!frames) return;
+    fx->primed = true;
+    switch (fx->kind) {
+    case STUDIO_FX_DELAY:
+        if (delay_settled(fx)) delay_settled_block(fx, stereo, frames);
+        else process_block(fx, stereo, frames, delay_frame);
+        break;
+    case STUDIO_FX_DRIVE:   process_block(fx, stereo, frames, drive_frame);   break;
+    case STUDIO_FX_CRUSHER: process_block(fx, stereo, frames, crusher_frame); break;
+    case STUDIO_FX_REVERB:  process_block(fx, stereo, frames, reverb_frame);  break;
+    case STUDIO_FX_CHORUS:  process_block(fx, stereo, frames, chorus_frame);  break;
+    }
 }

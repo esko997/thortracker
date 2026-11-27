@@ -196,12 +196,14 @@ ChipWav* chip_wav_open(const char* system_id, const uint8_t* image, size_t image
     strcpy(w->path, spool_path);
     int seek = 0;
     StudioBank* bank = NULL;
-    const int loaded = studio ? studio_load_score(w->image, image, image_size, &bank)
+    StudioGraphBank* graphs = NULL;
+    const int loaded = studio ? studio_load_score(w->image, image, image_size, &bank, &graphs)
                               : ops->load_image(w->image, image, image_size);
     const int started = loaded == CHIP_OK &&
         ops->start(w->machine, w->image, 0, 0,
                    studio ? STUDIO_START_SEEK_TICKS : START_SEEK_TICKS, &seek) == CHIP_OK;
     studio_bank_drop(bank); /* start retains the bank; failed starts retain nothing */
+    studio_graph_bank_drop(graphs);
     if (!started) {
         *problem = "image";
         chip_wav_close(w);

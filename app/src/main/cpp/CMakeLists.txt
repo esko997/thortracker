@@ -80,6 +80,9 @@ add_library(chip_engines STATIC
     studio/studio_chip.c
     studio/mono_synth.c
     studio/studio_score.c
+    studio/studio_graph_bank.c
+    studio/modular/sm_compile.c
+    studio/modular/sm_voice.c
     studio/modules/studio_fx.c
     studio/modules/studio_voice.c
     chip_wav.c

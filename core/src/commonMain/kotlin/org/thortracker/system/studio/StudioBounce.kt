@@ -98,7 +98,7 @@ fun StudioBouncePlan.lower(): ByteArray {
         clock = false, previewPrefix = prefix.map(remap::getValue)))
     val wire = ByteArray(StudioEngine.imageSize)
     StudioEngine.lowerOnce(isolated, wire)
-    return if (assets.decodedBytes == 0) wire else StudioEngine.withBank(wire, assets)
+    return StudioEngine.withResources(wire,isolated.studio,includePcm=assets.decodedBytes != 0)
 }
 
 /** The worker owns open/run/status/close exclusively. The host removes its private spool in finally,

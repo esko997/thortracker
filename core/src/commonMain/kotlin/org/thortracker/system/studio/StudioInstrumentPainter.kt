@@ -13,13 +13,14 @@ import org.thortracker.ui.*
 internal class StudioInstrumentPainter(v:PaneView):Painter(v) {
     private val mono by lazy { StudioSoundPainter(v) }
     private val module by lazy { StudioModulePainter(v) }
+    private val modular by lazy { ModularPainter(v) }
     private var drawn:Painter?=null; private var active:Painter?=null
     override fun draw(c:Surface,area:Rect) {
         if (st.studioPaneWidth != area.width() || st.studioPaneHeight != area.height()) {
             if (st.studioPaneWidth >= 0f) StudioSoundView.panel(st).invalidate()
             st.studioPaneWidth = area.width(); st.studioPaneHeight = area.height()
         }
-        val face=if(StudioSoundView.patch(song,st) is MonoPatch) mono else module
+        val face=when(StudioSoundView.patch(song,st)) { is MonoPatch -> mono; is ModularPatch -> modular; else -> module }
         face.draw(c,area); drawn=face
     }
     override fun down(x:Float,y:Float):Boolean {

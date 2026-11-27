@@ -11,6 +11,7 @@ internal val StudioKind.faceName: String get() = when (this) {
     StudioKind.PERCUSSION -> "Drums"
     StudioKind.WAVETABLE -> "Wavetable"
     StudioKind.PLUCK -> "Pluck"
+    StudioKind.MODULAR -> "Modular"
     StudioKind.DELAY -> "Delay"
     StudioKind.DRIVE -> "Drive"
     StudioKind.CRUSHER -> "Bitcrusher"
@@ -70,8 +71,9 @@ internal object StudioAssignments {
     private fun targets(s: StudioSound, channel: Int, slot: Int, menu: MenuContext, title: String,
         picked: (StudioBinding, StudioParameter, Int) -> Unit) {
         val lane = s.tracks[channel]
-        fun params(kind: StudioKind, id: Int, value: (Int) -> Int) {
-            menu.menu("${kind.faceName} parameter", kind.parameters.map { p ->
+        fun params(kind: StudioKind, id: Int, value: (Int) -> Int, patch: StudioPatch? = null) {
+            menu.menu("${kind.faceName} parameter", kind.parameters.map { spec ->
+                val p = if (patch is ModularPatch) spec.copy(name=patch.graph.macros[spec.id].name) else spec
                 "${p.name}  ${p.display(value(p.id))}" to {
                     picked(StudioBinding(id, kind, p.id), p, value(p.id))
                 }
@@ -82,7 +84,7 @@ internal object StudioAssignments {
             val kinds = s.patches.distinctBy { it.kind }
             for (patch in kinds) {
                 val example = s.patch(slot)?.takeIf { it.kind == patch.kind } ?: patch
-                add("Instrument: ${patch.kind.faceName}" to { params(patch.kind, 0, example::value) })
+                add("Instrument: ${patch.kind.faceName}" to { params(patch.kind, 0, example::value, example) })
             }
             for ((index, pedal) in lane.inserts.withIndex()) {
                 add("Insert ${index + 1}: ${pedal.kind.faceName}" to { params(pedal.kind, pedal.id, pedal::value) })
@@ -134,16 +136,16 @@ internal object StudioAssignments {
     }
 
     fun writeParameter(session: EditorSession, menu: MenuContext, origin: ViewState, binding: StudioBinding,
-        parameter: StudioParameter, value: Int) {
+        parameter: StudioParameter, value: Int, originValid: () -> Boolean = { true }) {
         val dest = destination(session, menu, origin) ?: return
         if (binding.instance != 0 && session.song.studio.tracks[dest.channel].inserts.none { it.id == binding.instance }) {
             menu.error("Focus a Pattern effect cell on the track that owns this pedal."); return
         }
-        assign(session, menu, origin, dest, binding, parameter, value)
+        assign(session, menu, origin, dest, binding, parameter, value, originValid)
     }
 
     private fun assign(session: EditorSession, menu: MenuContext, origin: ViewState, dest: Destination,
-        binding: StudioBinding, p: StudioParameter, value: Int) {
+        binding: StudioBinding, p: StudioParameter, value: Int, originValid: () -> Boolean = { true }) {
         if (!dest.valid(session, menu, origin)) { menu.error("Pattern target changed. Choose the cell again."); return }
         val song = session.song
         val lane = song.studio.tracks[dest.channel]
@@ -157,6 +159,7 @@ internal object StudioAssignments {
         if (code == null) { menu.error("All E–Z bindings are in use on this track."); return }
         val hex = p.nearestByte(value)
         fun write(byte: Int) {
+            if (!originValid()) { menu.error("The instrument changed. Choose Write again."); return }
             if (!dest.valid(session, menu, origin)) { menu.error("Pattern target changed. Choose the cell again."); return }
             session.apply("Write ${binding.kind.faceName} ${p.name}") { doc ->
                 val sound = doc.studio

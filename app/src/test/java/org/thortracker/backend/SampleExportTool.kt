@@ -85,11 +85,17 @@ object SampleExportTool {
         fun studioImage(name:String, document:Song) {
             val score=ByteArray(StudioEngine.imageSize)
             StudioEngine.lower(document,score)
-            File(directory,name).writeBytes(StudioEngine.withBank(score,document.studio.assets))
+            File(directory,name).writeBytes(StudioEngine.withResources(score,document.studio,includePcm=true))
         }
         val studioDemo = StudioSound().system.demo()
         studioImage("studio-demo.stimg", studioDemo)
         File(directory, "studio-demo.thor").writeBytes(ProjectCodec.encodeBytes(studioDemo))
+        val modular = studioModularDemo()
+        studioImage("studio-modular.stimg", modular)
+        File(directory,"studio-modular.thor").writeBytes(ProjectCodec.encodeBytes(modular))
+        val modularMax = modularCapacity()
+        studioImage("studio-modular-capacity.stimg", modularMax)
+        File(directory,"studio-modular-capacity.thor").writeBytes(ProjectCodec.encodeBytes(modularMax))
         val bounce = studioBounceFixture()
         File(directory, "studio-bounce-prefix.stimg").writeBytes(StudioBounce.plan(bounce, 3, 1, 32).lower())
         File(directory, "studio-bounce-source.thor").writeBytes(ProjectCodec.encodeBytes(bounce))
@@ -610,6 +616,40 @@ object SampleExportTool {
         } }
         return song.copy(title = "Studio bounce oracle", sound = sound, ticksPerRow = 8,
             patterns = listOf(prefix, parked, body), orders = listOf(0, 1, 0, 2), parkedOrders = listOf(1))
+    }
+
+    /** Full portable format, intentionally not a real-time promise: 32 distinct plans, every slot
+     * reached by one of eight lanes, 64 nodes, 256 cables and 128 continuous assignments per slot. */
+    private fun modularCapacity(): Song {
+        var song=StudioSound().system.blank()
+        repeat(7) { song=song.addStudioTrack() }
+        val kinds=listOf(ModularKind.NOTE,ModularKind.NOISE)+List(6){ModularKind.OSC}+
+            List(48){ModularKind.RESONATOR}+List(7){ModularKind.MIX}+ModularKind.OUT
+        val nodes=kinds.mapIndexed { index,kind -> ModularNode(index+1,kind) }
+        val edges=mutableListOf<ModularConnection>()
+        fun connect(a:Int,output:Int,b:Int,input:Int,scale:Int=1000) {
+            edges.add(ModularConnection(edges.size+1,a,output,b,input,scale))
+        }
+        for (osc in 3..8) connect(1,0,osc,0)
+        for (ring in 9..56) {
+            connect(1,0,ring,1);connect(3+(ring%6),0,ring,0,250)
+            connect(ring,0,57+(ring%7),0,100)
+        }
+        for (mix in 57..63) connect(mix,0,64,0,100)
+        for (source in 2..55) for (dest in maxOf(9,source+1)..56) {
+            if(edges.size < ModularGraph.MAX_CONNECTIONS)connect(source,0,dest,2,80)
+        }
+        val targets=nodes.flatMap { n -> n.kind.parameters.filterNot { it.discrete }.map { p ->
+            ModularTarget(n.id,p.id,p.default,p.max)
+        } }
+        val macros=List(8){ m -> ModularMacro("Range ${m+1}",targets.subList(16*m,16*(m+1))) }
+        val graph=ModularGraph(nodes,edges,macros)
+        val patches=List(32){ slot -> ModularPatch("Capacity ${slot+1}",graph.copy(seed=slot+1)) }
+        return song.copy(title="Modular capacity",ticksPerRow=2,sound=song.studio.copy(patches=patches,
+            tracks=song.studio.tracks.map { it.copy(gain=15,bindings=mapOf(14 to StudioBinding(0,StudioKind.MODULAR,0))) }),
+            patterns=listOf(Pattern.blank(8).copy(tracks=List(8){ ch -> List(Songs.ROWS){ row ->
+                Cell(36+(row+ch)%24,1+8*(row%4)+ch,14,(row*5+ch)%256)
+            } })))
     }
 
     /** Full documented capacity, for opted-in physical callback/RSS checks, never a factory preset. */

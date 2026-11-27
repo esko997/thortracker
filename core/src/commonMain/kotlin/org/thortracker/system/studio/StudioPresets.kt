@@ -28,6 +28,7 @@ internal fun studioInstrumentPresets(kind: StudioKind): List<StudioPatch> = when
     )
     StudioKind.WAVETABLE -> wavetablePresets
     StudioKind.PLUCK -> pluckPresets
+    StudioKind.MODULAR -> studioModularPresets()
     // Sampler patches retain their own imported asset, region and slices rather than borrowing an unrelated file.
     else -> emptyList()
 }

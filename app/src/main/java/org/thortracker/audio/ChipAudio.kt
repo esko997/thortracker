@@ -9,6 +9,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.thortracker.model.Song
 import org.thortracker.system.studio.StudioEngine
+import org.thortracker.system.studio.StudioModularAdmission
+import org.thortracker.system.studio.StudioModularLimits
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.ay.AyVgmRenderer
@@ -53,7 +55,11 @@ import org.thortracker.system.ym2612.YmExportRenderer
  *   release, resuming at that channel's next note.
  * - Work runs on one control thread; the audio callback never allocates or waits.
  */
-class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixedStudio: Boolean = false) : TrackerAudio {
+class ChipAudio(
+    @Suppress("UNUSED_PARAMETER") context: Context,
+    private val mixedStudio: Boolean = false,
+    private val modularLimits: StudioModularLimits = AndroidModularProfile.current,
+) : TrackerAudio {
     private val executor = ScheduledThreadPoolExecutor(1) { runnable ->
         Thread(runnable, "thor-audio-control").apply { isDaemon = true }
     }.apply {
@@ -83,6 +89,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
     private var hasImage = false
     private var idleCheck: ScheduledFuture<*>? = null
     private var retrySong: Song? = null
+    private var auditionSlot: Int? = null
+    private var timingProbeEnabled = false
     // Mixed only: resolve the native row's image version to the exact USB score heard at that boundary.
     private val scores = if (mixedStudio) LinkedHashMap<Int, Song>() else null
     internal fun studioClockAlive(): Boolean = synchronized(handleLock) {
@@ -119,10 +127,12 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun play(order: Int, row: Int) = post(transport = true) {
         retryFailedImage()
+        imageSong?.let { if (refuseModular(it, null)) return@post }
         val h = readyHandle() ?: return@post
         val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
         val result = nativePlay(h, order, row, engine.seekTicks)
         commandError = if (result < 0) engineFailure(result, "play") else null
+        if (result >= 0 && engine === StudioEngine) auditionSlot = null
         scheduleIdleCheck()
     }
 
@@ -135,6 +145,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun silence() = post(transport = true) {
         commandError = null
+        auditionSlot = null
         val h = handle
         if (h != 0L) nativePanic(h)
         scheduleIdleCheck()
@@ -156,10 +167,17 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
             commandError = it
             return@post
         }
+        StudioModularAdmission.problem(song, modularLimits, instrument)?.let {
+            if (handle != 0L) nativeReleaseAudition(handle)
+            commandError = it
+            scheduleIdleCheck()
+            return@post
+        }
         val h = readyHandle() ?: return@post
         val result = nativeAudition(h, channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune))
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
+            auditionSlot = if (song.sound is org.thortracker.system.studio.StudioSound) instrument else null
             // A held note keeps the stream: a pending idle check must not stop it before the
             // callback has picked the audition up.
             idleCheck?.cancel(false)
@@ -192,19 +210,38 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun error(): String? = deviceError ?: commandError ?: songError
 
+    /** Queue optional per-callback measurements. Disabling pauses, not resets, this engine's counters. */
+    fun setTimingProbe(enabled: Boolean) = post {
+        timingProbeEnabled = enabled
+        if (handle != 0L) nativeSetTimingProbe(handle, enabled)
+    }
+
     /**
      * Measurements for latency tuning: sample rate, frames per burst, buffer size (frames), xruns,
      * worst callback (ns), last seek / audition preparation (ns), driver faults, last seek mode
      * (0 from song start, 1 from order start), exclusive stream, low-latency stream, last live
      * image apply inside the callback (ns), output latency used for the playhead and the raw
      * timestamp measurement (frames at 48 kHz; negative measurements fall back to the buffer size).
+     * Timing groups indicate actual driver renders (none/song/audition/both), including Studio
+     * continuation pulls. They do not count sounding voices or cached chip samples.
+     * P99 is a histogram upper bound in ns: 0 for no samples, -1 above timingCeilingNs.
+     * CpuMask samples the exit CPU (ids 0..63); CpuCount excludes failed thread-clock reads.
+     * CpuTotalNs sums valid CPU samples; FrameTotal sums newly rendered song and audition frames.
+     * OutputFrameTotal counts callback output once, including cached or silent frames.
+     * Live counters may advance while diagnostics are read; all restart at engine replacement.
      */
     fun diagnostics(): Map<String, Long> = synchronized(handleLock) {
         val h = handle
         if (h == 0L) return emptyMap()
         val values = LongArray(DIAGNOSTIC_NAMES.size)
         nativeStats(h, values)
-        DIAGNOSTIC_NAMES.zip(values.toList()).toMap()
+        val timing = LongArray(TIMING_NAMES.size)
+        nativeTimingStats(h, timing)
+        buildMap(values.size + timing.size + 1) {
+            for (i in values.indices) put(DIAGNOSTIC_NAMES[i], values[i])
+            for (i in timing.indices) put(TIMING_NAMES[i], timing[i])
+            put("auditionActive", if (nativeAuditionActive(h)) 1L else 0L)
+        }
     }
 
     override fun close() {
@@ -269,6 +306,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     private fun applySong(song: Song) {
         retrySong = null
+        if (refuseModular(song, reservedAuditionSlot())) return
         val h = engineFor(song.system)
         if (h == 0L) {
             retrySong = song
@@ -289,8 +327,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         imageVersion++
         val studio = song.sound as? org.thortracker.system.studio.StudioSound
         val old = imageSong?.sound as? org.thortracker.system.studio.StudioSound
-        val wire = if(studio!=null && studio.assets !== old?.assets)
-            StudioEngine.withBank(image,studio.assets) else image
+        val wire = if (studio != null)
+            StudioEngine.withResources(image, studio, includePcm = studio.assets !== old?.assets) else image
         if (scores != null) {
             // The USB worker needs cells/routes, not PCM. Never pin 64 historical sample banks here.
             val score = if(studio!=null && studio.assets.ids.isNotEmpty()) song.copy(sound=studio.copy(
@@ -319,6 +357,25 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         }
     }
 
+    private fun reservedAuditionSlot(): Int? {
+        if (auditionSlot != null && (handle == 0L || !nativeAuditionActive(handle))) auditionSlot = null
+        return auditionSlot
+    }
+
+    /** Reject before lowering or native allocation; never keep playing an obsolete modular graph. */
+    private fun refuseModular(song: Song, slot: Int?): Boolean {
+        val problem = StudioModularAdmission.problem(song, modularLimits, slot) ?: return false
+        if (handle != 0L) nativePanic(handle)
+        auditionSlot = null
+        hasImage = false
+        imageSong = null
+        retrySong = song
+        commandError = null
+        songError = problem
+        scheduleIdleCheck()
+        return true
+    }
+
     /**
      * The handle of [next]'s engine: the running one, or a new one replacing another system's (its
      * transport, stream and image go with it). 0 when it cannot be created ([deviceError] says why).
@@ -336,11 +393,13 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         system = null
         hasImage = false
         imageSong = null
+        auditionSlot = null
         val created = nativeCreate(next.engine.id)
         if (created == 0L) {
             deviceError = "Audio engine could not start the ${next.name} player"
             return 0L
         }
+        if (timingProbeEnabled) nativeSetTimingProbe(created, true)
         synchronized(handleLock) { handle = created }
         system = next
         if (image.size != next.engine.imageSize) image = ByteArray(next.engine.imageSize)
@@ -385,6 +444,17 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
             "lastAuditionPrepNs", "driverFaults", "lastSeekMode", "exclusive", "lowLatency", "lastLiveApplyNs",
             "outputLatencyFrames", "rawTimestampLatencyFrames",
         )
+        private val TIMING_NAMES = buildList {
+            addAll(listOf("timingEnabled", "timingBinNs", "timingCeilingNs"))
+            val fields = listOf("Count", "WallMaxNs", "CpuMaxNs", "WallP99Ns", "CpuP99Ns", "MaxFrames", "CpuMask", "CpuCount")
+            val groups = listOf("None", "Song", "Audition", "Both")
+            for (group in groups) for (field in fields) add("timing$group$field")
+            for (group in groups) {
+                add("timing${group}CpuTotalNs")
+                add("timing${group}FrameTotal")
+                add("timing${group}OutputFrameTotal")
+            }
+        }
 
         init {
             System.loadLibrary("thortracker_audio")
@@ -465,7 +535,10 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         @JvmStatic private external fun nativePosition(handle: Long): Long
         @JvmStatic private external fun nativeNextRow(handle: Long, cursor: Long, row: LongArray): Int
         @JvmStatic private external fun nativeClockAlive(handle: Long): Boolean
+        @JvmStatic private external fun nativeAuditionActive(handle: Long): Boolean
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
+        @JvmStatic private external fun nativeSetTimingProbe(handle: Long, enabled: Boolean)
+        @JvmStatic private external fun nativeTimingStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** WonderSwan / WonderSwan Color VGM (`ws/ws_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */

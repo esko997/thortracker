@@ -1593,6 +1593,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         }
         val stats = (audio as? ChipAudio)?.diagnostics().orEmpty()
         out += "Audio" to if (stats.isEmpty()) "engine not started" else stats.entries.joinToString(", ") { (k, v) -> "$k=$v" }
+        val modular = org.thortracker.audio.AndroidModularProfile.current
+        out += "Modular" to "${modular.name}: ${modular.workUnits} work units, ${modular.reservationBytes / (1024 * 1024)} MiB reservation"
         audio?.error()?.let { out += "Audio error" to it }
         return out
     }

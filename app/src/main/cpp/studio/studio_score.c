@@ -4,9 +4,9 @@
 #include <stdlib.h>
 
 typedef struct { int lo,hi; } Range;
-static const uint8_t counts[]={9,8,9,6,5,3,4,5,3,6,6};
+static const uint8_t counts[]={9,8,9,6,5,3,4,5,3,6,6,8};
 int studio_parameter_count(unsigned k){return k<sizeof counts/sizeof counts[0]?counts[k]:0;}
-static bool instrument(unsigned k){return k==MONO||k==SAMPLER||k==FM||k==DRUM||k==WAVETABLE||k==PLUCK;}
+static bool instrument(unsigned k){return k==MONO||k==SAMPLER||k==FM||k==DRUM||k==WAVETABLE||k==PLUCK||k==MODULAR;}
 static bool insert(unsigned k){return k==DELAY||k==DRIVE||k==CRUSHER||k==REVERB||k==CHORUS;}
 static const Range limits[][9]={
     {{0,1},{0,100},{0,100},{0,100},{0,100},{0,100},{0,100},{-24,24},{0,100}},
@@ -17,7 +17,8 @@ static const Range limits[][9]={
     {{2,16},{100,48000},{0,100},{-24,6}},{{0,100},{200,8000},{30,20000},{0,120},{0,100}},
     {{5,800},{0,10000},{0,100}},
     {{0,300},{0,800},{0,100},{0,2000},{0,4000},{0,100}},
-    {{0,100},{0,100},{0,100},{40,8000},{0,4000},{0,100}}
+    {{0,100},{0,100},{0,100},{40,8000},{0,4000},{0,100}},
+    {{0,127},{0,127},{0,127},{0,127},{0,127},{0,127},{0,127},{0,127}}
 };
 static int valid(int k,int id,int v){return id>=0 && id<studio_parameter_count(k) && v>=limits[k][id].lo && v<=limits[k][id].hi;}
 static int values_ok(int k,const uint8_t *p){ for(int i=0;i<counts[k];i++) if(!valid(k,i,(int32_t)u32(p+4*i))) return 0; return 1; }
@@ -111,7 +112,7 @@ int studio_bind_bank(ChipImage *s,StudioBank *b){
     }
     s->bank=b;return CHIP_OK;
 }
-int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
+static int load_prefix(ChipImage *s,const uint8_t *p,size_t size){
     if(!s||!p||size!=IMAGE_SIZE||u32(p)!=0x324d5453u||!p[4]||p[4]>TRACKS||!p[5]||p[7]>BUS)return CHIP_ERR_IMAGE;
     unsigned orders=u16(p+8),patterns=u16(p+10),events=u16(p+12);
     if(!orders||orders>PATTERNS||p[6]>=orders||p[14]>p[6]||!patterns||patterns>PATTERNS||events>EVENTS)return CHIP_ERR_IMAGE;
@@ -120,13 +121,17 @@ int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
         for(unsigned j=0;j<i;j++)if(u32(t)==u32(p+16+6*j))return CHIP_ERR_IMAGE;
     }
     for(int i=0;i<NOTES;i++){float f=f32(p+64+4*i);if(!isfinite(f)||f<=0.f)return CHIP_ERR_IMAGE;s->frequencies[i]=f;}
-    uint32_t waves=0;
+    uint32_t waves=0,modular=0;
     for(int i=0;i<SLOTS;i++){
         const uint8_t *r=p+PATCH_BASE+PATCH_BYTES*i;
         if(!instrument(r[0])||!values_ok(r[0],r+4))return CHIP_ERR_IMAGE;
         if(r[0]==SAMPLER){
             if(r[1]>SLOTS||r[2]>SLOTS||(r[2] && !u32(r+60+8*(r[2]-1))))return CHIP_ERR_IMAGE;
         }else if(r[1]||r[2]||r[3])return CHIP_ERR_IMAGE;
+        if(r[0]==MODULAR){
+            modular|=UINT32_C(1)<<i;
+            for(int j=36;j<PATCH_BYTES;j++)if(r[j])return CHIP_ERR_IMAGE;
+        }
         if(r[0]==WAVETABLE || r[0]==PLUCK){
             if(r[0]==WAVETABLE)waves|=UINT32_C(1)<<i;
             for(int j=r[0]==WAVETABLE?40+WAVE_BYTES:40;j<PATCH_BYTES;j++)if(r[j])return CHIP_ERR_IMAGE;
@@ -167,15 +172,25 @@ int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
         }
     }
     s->bytes=base+events*8;s->event_base=base;s->wave_mask=waves;s->waves=NULL;s->bank=NULL;s->live=NULL;
+    s->modular_mask=modular;s->graphs=NULL;s->basis=NULL;
     memcpy(s->data,p,s->bytes);return CHIP_OK;
 }
-int studio_load_score(ChipImage *s,const uint8_t *p,size_t size,StudioBank **current){
-    if(size<IMAGE_SIZE || studio_score_load(s,p,IMAGE_SIZE)!=CHIP_OK)return CHIP_ERR_IMAGE;
-    if(size==IMAGE_SIZE)return studio_bind_bank(s,*current);
-    StudioBank *next=NULL;
-    if(studio_bank_decode(p+IMAGE_SIZE,size-IMAGE_SIZE,&next)!=CHIP_OK)return CHIP_ERR_IMAGE;
-    if(studio_bind_bank(s,next)!=CHIP_OK){studio_bank_drop(next);return CHIP_ERR_IMAGE;}
-    studio_bank_drop(*current);*current=next;return CHIP_OK;
+int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
+    return load_prefix(s,p,size)==CHIP_OK && !s->modular_mask?CHIP_OK:CHIP_ERR_IMAGE;
+}
+int studio_load_score(ChipImage *s,const uint8_t *p,size_t size,StudioBank **current,StudioGraphBank **graphs){
+    if(!current || size<IMAGE_SIZE || load_prefix(s,p,IMAGE_SIZE)!=CHIP_OK || (s->modular_mask && !graphs))return CHIP_ERR_IMAGE;
+    p+=IMAGE_SIZE;size-=IMAGE_SIZE;
+    StudioGraphBank *next_graphs=NULL;
+    if(studio_graph_decode(graphs?*graphs:NULL,s->modular_mask,&p,&size,&next_graphs)!=CHIP_OK)return CHIP_ERR_IMAGE;
+    StudioBank *next=*current;
+    if(size && studio_bank_decode(p,size,&next)!=CHIP_OK)goto fail;
+    if(studio_bind_bank(s,next)!=CHIP_OK){if(size)studio_bank_drop(next);goto fail;}
+    if(size){studio_bank_drop(*current);*current=next;}
+    if(graphs){studio_graph_bank_drop(*graphs);*graphs=next_graphs;}
+    s->graphs=next_graphs;return CHIP_OK;
+fail:
+    studio_graph_bank_drop(next_graphs);return CHIP_ERR_IMAGE;
 }
 void studio_pedal_set(StudioPedal *p,const uint8_t *w,int speed){
     int v[5]; for(int i=0;i<counts[p->kind];i++) v[i]=(p->mask & (1u<<i))?p->value[i]:(int32_t)u32(w+8+4*i);
@@ -194,9 +209,24 @@ void studio_pedal_set(StudioPedal *p,const uint8_t *w,int speed){
 }
 void studio_rack_dispose(StudioRack *r){
     for(int i=0;i<STRIPS;i++)for(int j=0;j<INSERTS;j++)studio_fx_destroy(r->pedals[i][j].fx);
+    for(int i=0;i<TRACKS;i++)sm_voice_destroy(r->mod[i]);
+    studio_graph_bank_drop(r->graphs);
     studio_bank_drop(r->bank);studio_wave_bank_drop(r->waves);memset(r,0,sizeof *r);
 }
 int studio_rack_prepare(StudioRack *r,const ChipImage *s,uint32_t rate,const StudioDspTables *fallback_basis){
+    if(s->modular_mask && !s->graphs)return CHIP_ERR_IMAGE;
+    for(int i=0;i<TRACKS;i++){
+        /* This rack is exclusively producer-owned. Forget all borrowed plans before
+         * exchanging references, including a retired voice from a removed track. */
+        if(r->mod[i])sm_bind(r->mod[i],NULL,NULL,false);
+        if(s->graphs && i<s->data[4] && s->data[21+6*i]){
+            if(!r->mod[i]){
+                const StudioDspTables *basis=fallback_basis?fallback_basis:s->basis;
+                if(!basis || !(r->mod[i]=sm_voice_create(rate,basis)))return CHIP_ERR_IMAGE;
+            }
+        }else {sm_voice_destroy(r->mod[i]);r->mod[i]=NULL;}
+    }
+    if(r->graphs!=s->graphs){studio_graph_retain(s->graphs);studio_graph_bank_drop(r->graphs);r->graphs=s->graphs;}
     if(s->wave_mask && !s->waves){
         /* Raw direct start/audition, never the callback. Host publication always supplies a bank. */
         if(!fallback_basis || studio_wave_bank_update(&r->waves,s,fallback_basis)!=CHIP_OK)return CHIP_ERR_IMAGE;
@@ -231,6 +261,10 @@ void studio_rack_swap(StudioRack *current,StudioRack *incoming){
     }
     StudioBank *old=current->bank;current->bank=incoming->bank;incoming->bank=old;
     StudioWaveBank *waves=current->waves;current->waves=incoming->waves;incoming->waves=waves;
+    StudioGraphBank *graphs=current->graphs;current->graphs=incoming->graphs;incoming->graphs=graphs;
+    for(int i=0;i<TRACKS;i++)if(!current->mod[i] || !incoming->mod[i]){
+        SmVoice *v=current->mod[i];current->mod[i]=incoming->mod[i];incoming->mod[i]=v;
+    }
 }
 int studio_live_prepare(StudioLive **owner,ChipImage *s,uint32_t rate){
     if(!*owner && !(*owner=calloc(1,sizeof **owner)))return CHIP_ERR_IMAGE;

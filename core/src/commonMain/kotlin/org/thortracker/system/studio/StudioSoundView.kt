@@ -90,7 +90,9 @@ internal object StudioSoundView : SystemView() {
         st.wavetablePage = st.wavetablePage.coerceIn(0, 1)
         st.waveSource = st.waveSource.coerceIn(0, 3)
         st.wavePoint = st.wavePoint.coerceIn(0, 63)
-        val sampler = patch(v.song, st) as? SamplerPatch
+        val current = patch(v.song, st)
+        if (current is ModularPatch) ModularControls.normalise(st, current.graph)
+        val sampler = current as? SamplerPatch
         if (sampler != null && sampler.slices.none { it.id == st.samplerSlice })
             st.samplerSlice = sampler.defaultSlice ?: sampler.slices.firstOrNull()?.id ?: 0
         st.instField = when {
@@ -214,7 +216,7 @@ internal object StudioSoundView : SystemView() {
         p.editBlocked = false
         val st = v.state
         val patch = patch(v.song, st)
-        val guarded = patch is WavetablePatch || patch is PluckPatch
+        val guarded = patch is WavetablePatch || patch is PluckPatch || patch is ModularPatch
         st.studioHoldVersion = if (guarded) v.session.documentVersion else -1
         st.studioHoldSlot = st.instrument
         st.studioHoldRevision = p.revision
@@ -244,6 +246,7 @@ internal object StudioSoundView : SystemView() {
         if (v.state.instField == NAME) rename(v, ViewController.deleteChar(patch(v.song, v.state).name, v.state.textPos))
         else when (val patch = patch(v.song, v.state)) {
             is MonoPatch -> param(v.state)?.let { set(v, it, it.read(init)) }
+            is ModularPatch -> ModularControls.clear(v, patch)
             else -> StudioModuleControls.field(patch, v.state)?.let { key ->
                 patch.kind.parameters.firstOrNull { it.id == key }?.let { StudioModuleControls.set(v, key, it.default, false) }
             }
@@ -363,7 +366,9 @@ internal object StudioSoundView : SystemView() {
     override fun hints(v: ViewController, h: MutableList<Hint>) {
         val st = v.state
         h += Hint(v.ud(), "Sound slot")
-        h += Hint(v.lr(), "Parameter")
+        val modular = patch(v.song, st) is ModularPatch
+        h += Hint(v.lr(), if (modular) "Control" else "Parameter")
+        if (modular) h += Hint(v.k(Action.EDIT), "Open")
         h += Hint(v.editLr(), when (st.instField) { MODE -> "Switch face"; NAME -> "Change letter"; else -> "Adjust" })
         h += Hint(v.k(Action.AUDITION), "Listen")
         if (st.instField == NAME) h += Hint(v.editUd(), "Letter position")

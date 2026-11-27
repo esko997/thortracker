@@ -9,6 +9,7 @@ import org.thortracker.audio.TrackerAudio
 import org.thortracker.model.Song
 import org.thortracker.system.PlaybackEngine
 import org.thortracker.system.SoundSystem
+import org.thortracker.system.studio.StudioModularAdmission
 import kotlin.math.roundToInt
 
 /**
@@ -21,6 +22,9 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
     private var system: SoundSystem? = null   // whose engine the glue has open
     private var image = ByteArray(0)
     private var hasImage = false
+    private val modularLimits = NativeModularProfile.current
+    private var auditionSlot: Int? = null
+    private var refusedSong: Song? = null
 
     /** The song the engine's current image was lowered from (audition note numbers depend on it, e.g. NES DPCM). */
     private var imageSong: Song? = null
@@ -34,13 +38,15 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
 
     /** Lowers the song and hands its image to the engine (applied live while playing); a bad song keeps the last one. */
     override fun update(song: Song) {
+        refusedSong = null
+        if (refuseModular(song, reservedAuditionSlot())) return
         val engine = open(song.system) ?: return
         songError = try {
             engine.lower(song, image)
             val studio=song.sound as? org.thortracker.system.studio.StudioSound
             val old=imageSong?.sound as? org.thortracker.system.studio.StudioSound
-            val wire=if(studio!=null && studio.assets !== old?.assets)
-                org.thortracker.system.studio.StudioEngine.withBank(image,studio.assets) else image
+            val wire=if(studio!=null)
+                org.thortracker.system.studio.StudioEngine.withResources(image,studio,includePcm=studio.assets !== old?.assets) else image
             val result = wire.usePinned { da_set_image(it.addressOf(0).reinterpret(), wire.size) }
             require(result==0 || studio==null) { "Studio player could not prepare the sample bank or effect graph ($result)" }
             if (result == 0) { hasImage = true; imageSong = song; null }
@@ -57,21 +63,31 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
     }
 
     override fun play(order: Int, row: Int) {
+        refusedSong?.let { update(it) }
+        imageSong?.let { if (refuseModular(it, null)) return }
         val engine = ready() ?: return
         commandError = failure(da_play(order, row, engine.seekTicks), "play")
+        if (commandError == null && engine === org.thortracker.system.studio.StudioEngine) auditionSlot = null
     }
 
-    override fun stop() { commandError = null; if (system != null) da_stop() }   // a failed command is over once its sound is
-    override fun silence() { commandError = null; if (system != null) da_panic() }
+    override fun stop() { commandError = null; if (system != null) da_stop() }
+    override fun silence() { commandError = null; auditionSlot = null; if (system != null) da_panic() }
 
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
         auditions++
+        refusedSong?.let { update(it) }
         val engine = ready() ?: return
         val song = imageSong ?: run { commandError = songError ?: "No playable song loaded"; return }
         engine.auditionProblem(song, channel, note, instrument, detune)?.let { commandError = it; return }
+        StudioModularAdmission.problem(song, modularLimits, instrument)?.let {
+            da_release_audition()
+            commandError = it
+            return
+        }
         // The cap counts driver ticks, which multispeed songs run several times per frame.
         val capTicks = (AUDITION_CAP_SECONDS * song.system.ticksPerSecond(song)).roundToInt()
         commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune), capTicks), "audition")
+        if (commandError == null) auditionSlot = if (song.sound is org.thortracker.system.studio.StudioSound) instrument else null
     }
 
     override fun releaseAudition() { commandError = null; if (system != null) da_release_audition() }
@@ -90,7 +106,25 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
         return listOf(
             "Audio" to "SDL $driver, ${v[0]} Hz float stereo, device buffer ${v[1]} frames, engine ${system?.engine?.id ?: "not open"}",
             "Audio stats" to "callbacks ${v[2]}, late callbacks ${v[3]}, worst callback ${v[4] / 1000} µs, driver faults ${v[5]}",
+            "Modular" to "${modularLimits.name}: ${modularLimits.workUnits} work units, ${modularLimits.reservationBytes / (1024 * 1024)} MiB reservation",
         )
+    }
+
+    private fun reservedAuditionSlot(): Int? {
+        if (auditionSlot != null && (system == null || da_audition_active() == 0)) auditionSlot = null
+        return auditionSlot
+    }
+
+    private fun refuseModular(song: Song, slot: Int?): Boolean {
+        val problem = StudioModularAdmission.problem(song, modularLimits, slot) ?: return false
+        if (system != null) da_panic()
+        auditionSlot = null
+        hasImage = false
+        imageSong = null
+        refusedSong = song
+        commandError = null
+        songError = problem
+        return true
     }
 
     /** [next]'s engine, opening it in place of another system's (whose playback ends); null if it cannot open. */
@@ -103,6 +137,7 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
         system = null
         hasImage = false
         imageSong = null
+        auditionSlot = null
         val result = da_open(next.engine.id)
         if (result != 0) {
             da_close()
