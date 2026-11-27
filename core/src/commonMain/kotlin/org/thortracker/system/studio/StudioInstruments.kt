@@ -35,31 +35,40 @@ internal object StudioInstruments {
         is MonoPatch -> p.copy(name=name); is SamplerPatch -> p.copy(name=name)
         is FmPatch -> p.copy(name=name); is PercussionPatch -> p.copy(name=name)
         is WavetablePatch -> p.copy(name=name); is PluckPatch -> p.copy(name=name)
+        is ModularPatch -> p.copy(name=name)
     }
     fun store(session:EditorSession,slot:Int,value:StudioPatch?,label:String):Boolean {
         val song=session.song; val current=song.studio.patch(slot) ?: return false
         song.removedSliceProblem(slot,current,value)?.let { session.note(it); return false }
         return session.apply(label) { it.copy(sound=it.studio.withPatch(slot,value)) }
     }
-    fun library(session:EditorSession,menu:MenuContext,slot:Int) {
+    fun library(session:EditorSession,menu:MenuContext,slot:Int, valid:()->Boolean = { true }) {
         val doc=session.documentVersion
         val current=session.song.studio.patch(slot) ?: return
         fun apply(next:StudioPatch) {
-            if(doc!=session.documentVersion) { menu.error("The instrument changed. Open presets again."); return }
+            if(!valid() || doc!=session.documentVersion) { menu.error("The instrument changed. Open presets again."); return }
             menu.menu("Replace ${fxHex(slot)} ${current.name}?",listOf("Use ${next.name}" to {
-                if(doc==session.documentVersion) store(session,slot,next,"Load ${next.name}"); Unit
+                if(valid() && doc==session.documentVersion) store(session,slot,next,"Load ${next.name}"); Unit
             }))
         }
         menu.menu("Instrument ${fxHex(slot)} · ${current.name}",StudioKind.entries.filter { it.instrument }.map { kind -> kind.faceName to {
+            val presets=studioInstrumentPresets(kind)
             val init=when(kind) {
                 StudioKind.MONO -> MonoPatch(); StudioKind.SAMPLER -> SamplerPatch()
                 StudioKind.FM -> FmPatch(); StudioKind.PERCUSSION -> PercussionPatch()
                 StudioKind.WAVETABLE -> WavetablePatch(); StudioKind.PLUCK -> PluckPatch()
+                StudioKind.MODULAR -> presets.first()
                 else -> error("Not an instrument: $kind")
             }
             menu.menu("${kind.faceName} instruments",buildList {
-                add("New ${kind.faceName}" to { apply(init) })
-                for(p in studioInstrumentPresets(kind)) add(p.name to { apply(p) })
+                if (kind == StudioKind.MODULAR) {
+                    add("New Modular · ${init.name}" to { apply(init) })
+                    for (i in 1 until presets.size) add(presets[i].name to { apply(presets[i]) })
+                    add("Simple patch · unassigned macros" to { apply(ModularPatch()) })
+                } else {
+                    add("New ${kind.faceName}" to { apply(init) })
+                    for (p in presets) add(p.name to { apply(p) })
+                }
                 if(kind==StudioKind.SAMPLER && current is SamplerPatch) add("Import WAV…" to { if(doc==session.documentVersion) importStudioSample(session,menu,slot) })
             })
         } })
@@ -86,6 +95,7 @@ internal object StudioModuleControls {
     private val fm=intArrayOf(2,1,6,3,4,5,8,LIBRARY); private val fmExact=intArrayOf(0,1,2,3,4,5,6,7,8,LIBRARY)
     private val drums=intArrayOf(0,1,2,4,3,5,LIBRARY)
     fun fields(p:StudioPatch,st:ViewState):IntArray = when(p) {
+        is ModularPatch -> ModularControls.fields(st)
         is SamplerPatch -> if(StudioSoundView.panel(st).advanced) samplerExact else when(st.samplerPage){1->chop;2->shape;else->play}
         is FmPatch -> if(StudioSoundView.panel(st).advanced) fmExact else fm
         is WavetablePatch -> if(StudioSoundView.panel(st).advanced) waveExact else if(st.wavetablePage==1) waveDraw else wavePlay
@@ -189,6 +199,7 @@ internal object StudioModuleControls {
     private fun voiceHelp(p:StudioPatch,k:Int):String =
         when(p.kind){StudioKind.FM->when(k){1->"Multiplier of the modulation oscillator.";2->"How far the modulator bends the carrier.";3->"Feed the modulator back into itself.";else->"Edit the stored operator envelope or level."};StudioKind.PERCUSSION->when(k){0->"Kick, snare and metallic hat; notes set pitch.";1->"Weight of the ringing drum body.";2->"Amount of attack transient.";else->"Shape the pitched drum voice."};else->if(p.kind.parameters.first { it.id==k }.trigger) "Takes effect at the next note attack." else "Shapes the sample while it sounds."}
     fun set(v:ViewController,k:Int,n:Int,preview:Boolean) {
+        if(StudioSoundView.patch(v.song,v.state) is ModularPatch) { ModularControls.set(v,k,n); return }
         val st=v.state; val s=v.song.studio; val p=s.patches[st.instrument-1]; val r=range(p,st,s,k) ?: return
         val amount=n.coerceIn(r); if(amount==value(p,st,s,k)) return
         val next=if(k<100) p.withValue(k,amount) else if(p is WavetablePatch) when(k) {
@@ -210,6 +221,7 @@ internal object StudioModuleControls {
             p !is WavetablePatch && p !is PluckPatch && (v.auditionHeld || (preview && v.editHeld))) StudioSoundView.audition(v)
     }
     fun adjust(v:ViewController,k:Int,dx:Int,dy:Int) {
+        if(StudioSoundView.patch(v.song,v.state) is ModularPatch) { ModularControls.adjust(v,k,dx,dy); return }
         val st=v.state; val s=v.song.studio; val p=s.patches[st.instrument-1]; val delta=if(dx!=0) dx else dy
         when(k) {
             PAGE->if(p is WavetablePatch) selectPage(v,(st.wavetablePage+delta).mod(2)) else selectPage(v,(st.samplerPage+delta).mod(3))
@@ -222,6 +234,7 @@ internal object StudioModuleControls {
         }
     }
     fun activate(v:ViewController,k:Int) {
+        if(StudioSoundView.patch(v.song,v.state) is ModularPatch) { ModularControls.activate(v,k); return }
         val st=v.state; val s=v.song.studio; val p=s.patches[st.instrument-1]; val version=v.session.documentVersion
         val slot=st.instrument; val revision=StudioSoundView.panel(st).revision; val field=st.instField
         val source=st.waveSource; val point=st.wavePoint

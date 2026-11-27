@@ -190,6 +190,24 @@ jobs:
         run: ./gradlew --no-daemon --console=plain --max-workers=2 :core:compileKotlinLinuxArm64
       - name: Build pinned upstream SDL2 for linking only
         run: brick/tools/build-sdl2-link.sh
+      - name: Build isolated modular capacity probe
+        shell: bash
+        run: |
+          konan="${KONAN_DATA_DIR:-$HOME/.konan}/dependencies"
+          llvm="$konan/llvm-16.0.0-x86_64-linux-essentials-80/bin"
+          gcc="$konan/aarch64-unknown-linux-gnu-gcc-8.3.0-glibc-2.25-kernel-4.9-2"
+          "$llvm/clang" --target=aarch64-unknown-linux-gnu --gcc-toolchain="$gcc" \
+            --sysroot="$gcc/aarch64-unknown-linux-gnu/sysroot" -fuse-ld=lld \
+            -std=c11 -O2 -Wall -Wextra -Werror -Iapp/src/main/cpp \
+            app/src/test/cpp/studio_modular_bench.c \
+            app/src/main/cpp/studio/modular/sm_compile.c \
+            app/src/main/cpp/studio/modular/sm_voice.c \
+            app/src/main/cpp/studio/modules/studio_voice.c -lm -o "$RUNNER_TEMP/modular-probe-arm64"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thor-tracker-modular-probe
+          path: ${{ runner.temp }}/modular-probe-arm64
+          if-no-files-found: error
       - name: ARM64 release executable
         run: ./gradlew --no-daemon --console=plain --max-workers=2 :brick:linkReleaseExecutableLinuxArm64
       - name: Package NextUI Pak and check ELF ABI requirements

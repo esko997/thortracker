@@ -242,7 +242,7 @@ destinations…** adds or removes tracks, up to eight. Instrument numbers select
 previous patch. Changing an instrument's type uses that same slot, not a new bank.
 
 Open **Instrument / presets** to choose **Mono**, **Sampler**, **FM**, **Drums**,
-**Wavetable** or **Pluck**, load a starting sound, or copy/paste a patch.
+**Wavetable**, **Pluck** or **Modular**, load a starting sound, or copy/paste a patch.
 The instrument list stays on the left.
 **Sound** and **Advanced** edit the same saved values; changing faces does not
 regenerate the patch. Up/Down selects slots, Left/Right selects a control, and
@@ -257,6 +257,7 @@ edits and Undo.
 | Drums | Kick, snare or hat, with body, snap, tone, decay and level |
 | Wavetable | Four editable cycles, morph position, scan, attack, release and level |
 | Pluck | Harmonic-to-metallic material, strike, damping, ring, release and level |
+| Modular | A monophonic signal graph, eight named macros, and Performance / Build faces |
 
 These are original software instruments, not hardware-emulation export targets.
 Notes control pitch, including drums. **Load demo → Studio** opens **Pocket Circuit**:
@@ -341,6 +342,68 @@ harmonic toward metallic; **Strike** changes their initial emphasis on the next
 attack. **Ring** sets decay time and **Damping** shortens the upper partials.
 **Release** controls note-off, while ties preserve the existing ring instead of
 striking again. Tap the artwork or hold X to audition without changing the patch.
+
+#### Modular: Performance and Build
+
+**New Modular · Patchwork Bass** starts with a playable instrument and eight mapped
+controls. **Performance** shows its named macro ribbons; drag a ribbon, or select it
+and hold A + Left/Right to adjust. Tap a ribbon for its automation actions.
+**Build** edits the same patch's modules, cables and macro bindings. Each display
+keeps its own face and selection, so a dual-screen workspace can show both at once.
+
+A modular instrument has one note voice per track, not one oscillator. Its graph
+can contain parallel sound sources and stereo routing. An initiating note or held
+audition starts the voice. Ties preserve it; OFF and Stop still terminate it even
+when internal envelopes or trigger connections loop.
+
+In Build, select **Send from** and **Receive at** to inspect two modules. Drag
+between compatible sockets, or tap a socket and choose a destination using the
+controller-friendly menus. **Patch map** lists the whole patch, adds modules and
+jumps between connected neighbors. **Cables** edits connection amount and offset
+or disconnects a route. Removing a module also removes its cables and macro
+targets; Undo restores them together.
+
+| Module | Purpose |
+| --- | --- |
+| Note | Tracker pitch, gate, trigger, velocity and accent |
+| Oscillator / Noise | Sine, saw or pulse; seeded noise |
+| Filter / VCA | Resonant low-pass and amplitude control |
+| Function | Triggered or looping rise/fall envelope, with an end-cycle event |
+| Sample & hold | Sample an input or generate stepped/smoothed random values |
+| Mixer | Blend two audio paths, invert, scale and add an offset |
+| Unit delay | Explicit one-sample audio delay, including feedback paths |
+| Wavefolder / Resonator | Fold a waveform or excite a tuned ringing body |
+| Output | Final left/right output; an unconnected right input follows left |
+
+Sockets distinguish audio, modulation, pitch, gates and events. Audio and gates
+can feed modulation inputs explicitly; other connections require matching types.
+Pitch is measured in semitones, oscillator FM in semitone offsets and filter/rate
+modulation in octaves. Connection amounts and offsets use thousandths:
+`1000` means 1, `-500` means −0.5. Multiple continuous inputs sum; gates and events
+combine without accumulating a queue.
+
+Audio-rate modulation runs at the full render rate. Instantaneous cycles are
+refused: route audio feedback through **Unit delay**. Event cables also delay their
+pulse by one sample, allowing deterministic function/random feedback without an
+unbounded event loop. These are musical signal rules, not a circuit simulation.
+
+**Bindings** names a macro and assigns up to 16 continuous parameter targets.
+Choose each target's value at macro **0** and **127**; reversing the endpoints
+reverses its response. A parameter has one macro owner. Unassigned parameters use
+their module settings. Pattern effects automate the running track's macro values,
+not the saved patch or another track playing it.
+
+Starting patches include **Patchwork Bass**, **Krell Garden**, **Wire Cabinet** and
+**Feedback Lantern**. Krell Garden uses a looping function's end event to change
+random pitch and the next envelope's rate. Hold a note or tie successive rows to
+let it evolve; the saved seed makes a fresh start repeatable.
+
+The portable graph format allows 64 modules, 256 cables and eight macros. Actual
+real-time capacity is platform-dependent and applies to the whole project,
+including effects, audition and prepared graph memory. If the project exceeds the
+device's playback reserve, it remains editable and saveable without pruning or
+changing its sound. Offline WAV rendering does not use the real-time CPU limit;
+format and memory constraints still apply.
 
 #### Track strip and pedals
 

@@ -9,6 +9,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.thortracker.model.Song
 import org.thortracker.system.studio.StudioEngine
+import org.thortracker.system.studio.StudioModularAdmission
+import org.thortracker.system.studio.StudioModularLimits
 import org.thortracker.system.SoundSystem
 import org.thortracker.system.ay.AyVgm
 import org.thortracker.system.ay.AyVgmRenderer
@@ -53,7 +55,11 @@ import org.thortracker.system.ym2612.YmExportRenderer
  *   release, resuming at that channel's next note.
  * - Work runs on one control thread; the audio callback never allocates or waits.
  */
-class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixedStudio: Boolean = false) : TrackerAudio {
+class ChipAudio(
+    @Suppress("UNUSED_PARAMETER") context: Context,
+    private val mixedStudio: Boolean = false,
+    private val modularLimits: StudioModularLimits = AndroidModularProfile.current,
+) : TrackerAudio {
     private val executor = ScheduledThreadPoolExecutor(1) { runnable ->
         Thread(runnable, "thor-audio-control").apply { isDaemon = true }
     }.apply {
@@ -83,6 +89,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
     private var hasImage = false
     private var idleCheck: ScheduledFuture<*>? = null
     private var retrySong: Song? = null
+    private var auditionSlot: Int? = null
+    val modularProfileName: String get() = modularLimits.name
     // Mixed only: resolve the native row's image version to the exact USB score heard at that boundary.
     private val scores = if (mixedStudio) LinkedHashMap<Int, Song>() else null
     internal fun studioClockAlive(): Boolean = synchronized(handleLock) {
@@ -119,6 +127,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun play(order: Int, row: Int) = post(transport = true) {
         retryFailedImage()
+        imageSong?.let { if (refuseModular(it, auditionSlot)) return@post }
         val h = readyHandle() ?: return@post
         val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
         val result = nativePlay(h, order, row, engine.seekTicks)
@@ -128,6 +137,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun stop() = post(transport = true) {
         commandError = null   // a failed command is over once its sound is
+        auditionSlot = null
         val h = handle
         if (h != 0L) nativeStop(h)
         scheduleIdleCheck()
@@ -135,6 +145,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun silence() = post(transport = true) {
         commandError = null
+        auditionSlot = null
         val h = handle
         if (h != 0L) nativePanic(h)
         scheduleIdleCheck()
@@ -152,6 +163,13 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
             commandError = songError ?: "No playable song loaded"
             return@post
         }
+        StudioModularAdmission.problem(song, modularLimits, instrument)?.let {
+            if (handle != 0L) nativeReleaseAudition(handle)
+            auditionSlot = null
+            commandError = it
+            scheduleIdleCheck()
+            return@post
+        }
         engine.auditionProblem(song, channel, note, instrument, detune)?.let {
             commandError = it
             return@post
@@ -160,6 +178,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         val result = nativeAudition(h, channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune))
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
+            auditionSlot = instrument
             // A held note keeps the stream: a pending idle check must not stop it before the
             // callback has picked the audition up.
             idleCheck?.cancel(false)
@@ -169,6 +188,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     override fun releaseAudition() = post {
         commandError = null
+        auditionSlot = null
         val h = handle
         if (h != 0L) nativeReleaseAudition(h)
         scheduleIdleCheck()
@@ -269,6 +289,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
 
     private fun applySong(song: Song) {
         retrySong = null
+        if (refuseModular(song, auditionSlot)) return
         val h = engineFor(song.system)
         if (h == 0L) {
             retrySong = song
@@ -289,8 +310,8 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         imageVersion++
         val studio = song.sound as? org.thortracker.system.studio.StudioSound
         val old = imageSong?.sound as? org.thortracker.system.studio.StudioSound
-        val wire = if(studio!=null && studio.assets !== old?.assets)
-            StudioEngine.withBank(image,studio.assets) else image
+        val wire = if (studio != null)
+            StudioEngine.withResources(image, studio, includePcm = studio.assets !== old?.assets) else image
         if (scores != null) {
             // The USB worker needs cells/routes, not PCM. Never pin 64 historical sample banks here.
             val score = if(studio!=null && studio.assets.ids.isNotEmpty()) song.copy(sound=studio.copy(
@@ -319,6 +340,20 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         }
     }
 
+    /** Reject before lowering or native allocation; never keep playing an obsolete modular graph. */
+    private fun refuseModular(song: Song, slot: Int?): Boolean {
+        val problem = StudioModularAdmission.problem(song, modularLimits, slot) ?: return false
+        if (handle != 0L) nativePanic(handle)
+        auditionSlot = null
+        hasImage = false
+        imageSong = null
+        retrySong = song
+        commandError = null
+        songError = problem
+        scheduleIdleCheck()
+        return true
+    }
+
     /**
      * The handle of [next]'s engine: the running one, or a new one replacing another system's (its
      * transport, stream and image go with it). 0 when it cannot be created ([deviceError] says why).
@@ -336,6 +371,7 @@ class ChipAudio(@Suppress("UNUSED_PARAMETER") context: Context, private val mixe
         system = null
         hasImage = false
         imageSong = null
+        auditionSlot = null
         val created = nativeCreate(next.engine.id)
         if (created == 0L) {
             deviceError = "Audio engine could not start the ${next.name} player"

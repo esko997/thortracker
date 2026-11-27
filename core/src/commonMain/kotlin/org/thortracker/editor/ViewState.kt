@@ -73,6 +73,10 @@ data class ViewState(
     var wavetablePage: Int = 0,
     var waveSource: Int = 0,
     var wavePoint: Int = 0,
+    /** Build's patch bay follows node IDs, not mutable positions. Sound data stays in the patch. */
+    var modularSource: Int = 0,
+    var modularDestination: Int = 0,
+    var modularParameter: Int = 0,
     /** Independent, non-document presentation and pointer ownership for the three musical design pilots. */
     var gbPanel: MusicalPanelState = MusicalPanelState(),
     var sidPanel: MusicalPanelState = MusicalPanelState(),

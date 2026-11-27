@@ -665,10 +665,12 @@ static void test_studio_tail(const char* samples) {
         ChipImage* score = calloc(1, ops->image_storage);
         ChipMachine* machine = ops->create(RATE);
         StudioBank* bank = NULL;
+        StudioGraphBank* graphs = NULL;
         int seek = 0;
-        int ready = score && machine && studio_load_score(score, image, image_size, &bank) == CHIP_OK &&
+        int ready = score && machine && studio_load_score(score, image, image_size, &bank, &graphs) == CHIP_OK &&
             ops->start(machine, score, 0, 0, 65536, &seek) == CHIP_OK;
         studio_bank_drop(bank);
+        studio_graph_bank_drop(graphs);
         EXPECT(ready, "independent live machine loads the embedded bank");
         if (ready) {
             float buf[CHIP_MAX_TICK_FRAMES * 2];
@@ -726,7 +728,8 @@ static void test_studio_bounce(const char* samples) {
     const ChipEngineOps* ops = &studio_mono_ops;
     ChipImage* score = (ChipImage*)malloc(ops->image_storage);
     StudioBank* bank = NULL;
-    const int loaded = score && studio_load_score(score, image, size, &bank) == CHIP_OK;
+    StudioGraphBank* graphs = NULL;
+    const int loaded = score && studio_load_score(score, image, size, &bank, &graphs) == CHIP_OK;
     EXPECT(loaded, "Studio bounce score loads independently");
     if (loaded) {
         int different_full_seek = 0;
@@ -754,6 +757,7 @@ static void test_studio_bounce(const char* samples) {
         EXPECT(different_full_seek, "Fixture distinguishes the obsolete full-prefix replay budget");
     }
     studio_bank_drop(bank);
+    studio_graph_bank_drop(graphs);
     free(score);
     int panned = 1, silent_tail = 1;
     for (int frame = 0; frame < 32000; ++frame) {
@@ -767,6 +771,21 @@ static void test_studio_bounce(const char* samples) {
     EXPECT(silent_tail, "The final blank row is retained as digital silence");
     free(wav);
     free(image);
+}
+
+/* Decode actual Kotlin-lowered plans; the hard-format project must be printable even if
+ * every real-time host profile refuses it. Limit the print to one second, never CPU-gate it. */
+static void test_modular_print(const char *samples,const char *name) {
+    char path[512];snprintf(path,sizeof path,"%s/%s.stimg",samples,name);
+    size_t bytes=0,size=0;uint8_t *image=read_file(path,&bytes);EXPECT(image!=NULL,"%s fixture exists",name);
+    if(!image)return;
+    int capped=0;const char *reason=NULL;
+    uint8_t *wav=render("studio-mono",image,bytes,0,0,1,&size,&capped,&reason);
+    EXPECT(wav && size==CHIP_WAV_HEADER+RATE*4,"%s prints one second (%s)",name,reason?reason:"");
+    if(wav && size==CHIP_WAV_HEADER+RATE*4){
+        EXPECT(peak(wav+CHIP_WAV_HEADER,0,RATE)>64,"%s has audible modular output",name);
+    }
+    free(wav);free(image);
 }
 
 int main(int argc, char** argv) {
@@ -804,6 +823,8 @@ int main(int argc, char** argv) {
     test_shortest_ay(3, "ay-cpc");
     test_studio_tail(samples);
     test_studio_bounce(samples);
+    test_modular_print(samples,"studio-modular");
+    test_modular_print(samples,"studio-modular-capacity");
     printf("WAV export: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

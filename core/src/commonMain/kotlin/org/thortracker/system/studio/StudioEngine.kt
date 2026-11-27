@@ -144,15 +144,28 @@ object StudioEngine : PlaybackEngine {
         word(12, count); word(base - 2, count)
     }
 
-    /** Optional inline bank for offline export or live publication after an asset edit.
-     * No path or native address enters a wire image. An empty trailer clears the old bank. */
-    fun withBank(score:ByteArray,assets:StudioAssets):ByteArray {
-        val ids=assets.ids.sorted()
-        val out=score.copyOf(score.size+8+ids.sumOf { 16+assets[it]!!.sampleCount*4 })
+    /** SGM1 is mandatory for modular slots and self-delimiting. Optional PCM1 follows it:
+     * omitting PCM retains the host's previous immutable PCM bank; an empty PCM1 clears it. */
+    fun withResources(score:ByteArray, sound:StudioSound, includePcm:Boolean):ByteArray {
+        require(score.size == imageSize)
+        val graphs = sound.patches.count { it is ModularPatch }
+        if (graphs == 0 && !includePcm) return score
+        val graphBytes = if (graphs == 0) 0 else 8 + sound.patches.sumOf { if (it is ModularPatch) 8 + 4*it.graph.wordCount else 0 }
+        val assets = sound.assets
+        val ids = if (includePcm) assets.ids.sorted() else emptyList()
+        val pcmBytes = if (includePcm) 8 + ids.sumOf { 16+assets[it]!!.sampleCount*4 } else 0
+        val out=score.copyOf(score.size+graphBytes+pcmBytes)
         var pos=score.size
         fun put(n:Int) { for(b in 0..3) out[pos++]=(n ushr (b*8)).toByte() }
+        if (graphs != 0) {
+            put(0x314d4753); put(graphs)
+            for ((slot,p) in sound.patches.withIndex()) if (p is ModularPatch) {
+                put(slot); put(p.graph.wordCount); p.graph.writeWords(::put)
+            }
+        }
+        if (!includePcm) return out
         put(0x314d4350); put(ids.size)
-        for(id in ids) {
+        for (id in ids) {
             val pcm=assets[id]!!
             put(id);put(pcm.channels);put(pcm.sampleRate);put(pcm.frames)
             for(i in 0 until pcm.sampleCount) put(pcm.sample(i).toBits())

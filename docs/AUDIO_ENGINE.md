@@ -93,9 +93,10 @@ the version-1 project reader migrates old Mono patches without changing their co
 `studio/studio_chip.c` plays actions at sample offsets within 48 Hz tracker ticks.
 
 Each internal lane owns its voice, automation state and four-slot serial effect rack.
-The closed instrument family comprises Mono, Sampler, two-operator FM and synthesized
-percussion. `studio/modules/` implements the latter three plus stereo delay, drive,
-crusher, reverb and chorus. Up to two post-fader return buses have their own racks;
+The instrument family comprises Mono, Sampler, two-operator FM, synthesized percussion,
+Wavetable, Pluck and Modular. `studio/modules/` implements the non-Mono voices and
+stereo delay, drive, crusher, reverb and chorus; `studio/modular/` compiles and executes
+modular graphs. Up to two post-fader return buses have their own racks;
 there are no bus-to-bus sends or cycles. Stable instance IDs preserve automation
 through reorder, independently of the screen position or saved instrument preset.
 
@@ -106,9 +107,10 @@ The DSP is original GPL-3.0-or-later code, not circuit-exact emulation.
 
 Sample-bearing `.thor` files use `ProjectDocument`'s versioned `THORBND` envelope,
 JSON manifest and checksummed deduplicated PCM records. The live native interface is
-separate: a changed bank appends a `PCM1` trailer to the fixed score prefix; ordinary
-parameter edits send only that prefix. Decoding, graph allocation and retired resource
-destruction occur on control threads. Published racks and their borrowed PCM remain
+separate: a changed bank appends a `PCM1` trailer to the fixed score prefix. Modular
+patches additionally carry `SGM1` graph records even when PCM is unchanged.
+Decoding, graph allocation and retired resource destruction occur on control threads.
+Published racks and their borrowed PCM and compiled plans remain
 alive until the audio consumer returns ownership. Android uses the image/machine
 triple buffers; SDL swaps under its output lock after preparation.
 
@@ -137,6 +139,37 @@ when finished. Hosts keep rendering tails while reporting the transport stopped.
 Panic cuts both song and audition paths. Offline export shortens/fades the tail to
 the selected fade duration; zero means no tail. Engines without this hook retain
 their existing Stop and looping-fade behavior.
+
+### Modular graph execution
+
+Modular is instrument wire ID 11; prior IDs and the PCM envelope are unchanged.
+`ModularGraph` validates types, unique stable IDs, macro ownership and scheduling
+before persistence/lowering. Native compilation independently validates the packed
+records. A patch has one Output, up to 64 nodes, 256 connections and eight macros,
+each with at most 16 continuous-parameter targets. A macro maps directly between
+two bounded endpoints; each parameter has only one macro owner.
+
+Compiled plans are immutable and shared by unchanged slots. Each active track has
+its own bounded mutable workspace. No module allocates, frees, locks or compiles
+while rendering. Instantaneous dependencies use a topological schedule; explicit
+one-sample Delay outputs and all event connections read previous-sample state.
+Audio-to-modulation and gate-to-modulation routes are explicit conversions.
+Oscillator FM and filter modulation run every sample, not at a platform-specific
+reduced control rate.
+
+Live replacement migrates state by node ID and kind while the instrument slot
+remains the same. Scalar/cable changes slew over 3 ms; topology replacement uses
+a 4 ms residual transition without rendering an additional retired graph. Both
+playback and audition rebind before a plan owner is reclaimed. Host OFF, CUT and
+Panic override internally looping functions and feedback.
+
+Real-time admission is a host policy, not a graph-format restriction. It reserves
+the largest reachable graph per local lane, current audition, effect work and
+prepared/retired memory. All compiled slots count toward memory, including unused
+ones. A rejected live edit stops the obsolete audio rather than continuing a
+different patch from the visible document. Saving and editing remain available;
+offline rendering is not gated by real-time work units. Work units and reservation
+bytes are conservative capacity estimates, not a CPU percentage or measured RSS.
 
 ## Chip engine interface (what a new sound system implements)
 

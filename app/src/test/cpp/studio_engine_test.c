@@ -59,8 +59,8 @@ static void sampler_seek_and_bank_lifetime(void) {
     for(int i=4;i<=64;i++)word(wire+ROWS_AT+2*i,n);
     word(wire+12,n);
     ChipImage *image=calloc(1,ops->image_storage);ChipMachine *m=ops->create(48000);StudioBank *bank=NULL;int mode;
-    assert(image&&m);assert(studio_load_score(image,wire,size-1,&bank)==CHIP_ERR_IMAGE && !bank);
-    assert(studio_load_score(image,wire,size,&bank)==CHIP_OK && bank);
+    assert(image&&m);assert(studio_load_score(image,wire,size-1,&bank,NULL)==CHIP_ERR_IMAGE && !bank);
+    assert(studio_load_score(image,wire,size,&bank,NULL)==CHIP_OK && bank);
     assert(ops->start(m,image,0,0,96,&mode)==CHIP_OK);
     float buf[2*CHIP_MAX_TICK_FRAMES];
     for(int i=0;i<3;i++){
@@ -72,7 +72,7 @@ static void sampler_seek_and_bank_lifetime(void) {
     assert(ops->tick(m,buf)==1000 && buf[1800]<-.2f && buf[1801]>.08f);
     // Replace a playing sample bank with a score that has none. Retired storage is
     // reclaimed on the producer, not from the process callback.
-    base=fixture(1);assert(studio_load_score(image,base,ops->image_size,&bank)==CHIP_OK);
+    base=fixture(1);assert(studio_load_score(image,base,ops->image_size,&bank,NULL)==CHIP_OK);
     StudioLive *live=NULL;assert(studio_live_prepare(&live,image,48000)==CHIP_OK);
     ops->apply_image(m,image); studio_live_destroy(live);
     assert(ops->tick(m,buf)>0);ops->destroy(m);free(image);free(wire);free(base);
@@ -193,7 +193,7 @@ static void sampler_root_is_a_recording_reference_not_a_song_tuning(void) {
     for(int frame=0;frame<FRAMES;frame++)sample(pcm+24+4*frame,frame<256?.5f:-.5f);
     ChipImage *image=calloc(1,ops->image_storage);ChipMachine *machine=ops->create(48000);
     StudioBank *bank=NULL;int mode;float output[2*CHIP_MAX_TICK_FRAMES];
-    assert(image&&machine&&studio_load_score(image,wire,size,&bank)==CHIP_OK);
+    assert(image&&machine&&studio_load_score(image,wire,size,&bank,NULL)==CHIP_OK);
     assert(ops->start(machine,image,0,0,96,&mode)==CHIP_OK);
     studio_bank_drop(bank);
     assert(ops->tick(machine,output)==1000);
@@ -229,7 +229,7 @@ static void wave_generations_while_sampling(void){
     ChipImage *image=calloc(1,ops->image_storage);
     StudioBank *bank=NULL;StudioWaveBank *waves=NULL;StudioLive *live=NULL;
     int mode;float a[2*CHIP_MAX_TICK_FRAMES],b[2*CHIP_MAX_TICK_FRAMES];
-    assert(song && key && image && studio_load_score(image,wire,size,&bank)==CHIP_OK);
+    assert(song && key && image && studio_load_score(image,wire,size,&bank,NULL)==CHIP_OK);
     assert(studio_prepare_waves(image,&waves,song)==CHIP_OK && waves);
     assert(ops->start(song,image,0,0,96,&mode)==CHIP_OK);
     assert(ops->audition(key,image,0,45,1,0)==CHIP_OK);
@@ -240,7 +240,7 @@ static void wave_generations_while_sampling(void){
         bool scalar=edit==1;
         if(scalar)dword(wave+4+4*4,750);
         else for(int i=0;i<64;i++)wave[40+i]=(edit&1)?(uint8_t)(4*i-128):0;
-        assert(studio_load_score(image,wire,ops->image_size,&bank)==CHIP_OK);
+        assert(studio_load_score(image,wire,ops->image_size,&bank,NULL)==CHIP_OK);
         assert(studio_prepare_waves(image,&waves,song)==CHIP_OK);
         if(scalar)assert(waves==before);
         assert(studio_live_prepare(&live,image,48000)==CHIP_OK);
@@ -256,7 +256,7 @@ static void wave_generations_while_sampling(void){
     }
     /* Replace the patch and reclaim the final wave generation before rendering residuals. */
     memset(wave,0,SLOT_BYTES);wave[0]=10;dword(wave+4+3*4,750);dword(wave+4+5*4,100);
-    assert(studio_load_score(image,wire,ops->image_size,&bank)==CHIP_OK);
+    assert(studio_load_score(image,wire,ops->image_size,&bank,NULL)==CHIP_OK);
     assert(studio_prepare_waves(image,&waves,song)==CHIP_OK && !waves);
     assert(studio_live_prepare(&live,image,48000)==CHIP_OK);
     ops->apply_image(song,image);ops->apply_audition_image(key,image);studio_live_destroy(live);
@@ -284,7 +284,67 @@ static void extension_wire_refusals(void){
     free(wire);free(image);
 }
 
+/* The rack owns its generation, not the caller's wire or the previous live slot.
+ * Same biased mixer on two panned lanes and an independent held audition. SGM1
+ * authoring uses native numbers, not the Kotlin encoder under test elsewhere. */
+static void modular_generations_and_lane_macros(void){
+    const ChipEngineOps *ops=&studio_mono_ops;
+    uint8_t *base=fixture(2),*wire=calloc(1,ops->image_size+256);assert(wire);
+    memcpy(wire,base,ops->image_size);free(base);
+    memset(wire+PATCHES,0,SLOT_BYTES);wire[PATCHES]=11;dword(wire+PATCHES+4,127);
+    wire[5]=255;wire[STRIPS+1]=0;wire[STRIPS+STRIP_BYTES+1]=200;
+    uint8_t *ev=wire+ROWS_AT+130;
+    put_event(ev,0,0,10,0,0xb0,0,0); /* only left playing lane gets macro=0 */
+    put_event(ev+8,0,0,1,57,255,0,0);put_event(ev+16,0,1,1,57,255,0,0);
+    word(wire+12,3);for(int i=1;i<=64;i++)word(wire+ROWS_AT+2*i,3);
+    uint8_t *g=wire+ops->image_size;memcpy(g,"SGM1",4);dword(g+4,1);dword(g+8,0);
+    uint8_t *w=g+16;uint32_t one=0x3f800000u;
+    ChipImage *s=calloc(1,ops->image_storage);ChipMachine *play=ops->create(48000),*key=ops->create(48000);
+    StudioBank *pcm=NULL;StudioGraphBank *graphs=NULL;StudioWaveBank *waves=NULL;
+    assert(s && play && key);
+    int mode;float a[2*CHIP_MAX_TICK_FRAMES],b[2*CHIP_MAX_TICK_FRAMES];
+    for(int edit=0;edit<24;edit++){
+        /* Alternate topology (extra DELAY in the path), including scalar-only publications. */
+        int delay=(edit/2)&1;
+        uint32_t words[]={1,123,(uint32_t)(2+delay),(uint32_t)(1+delay),1,
+            10,7,0,0,one,20,8,one};
+        size_t n=sizeof words/sizeof words[0];for(size_t i=0;i<n;i++)dword(w+4*i,words[i]);
+        if(delay){dword(w+4*n++,30);dword(w+4*n++,9);}
+        uint32_t edge[]={1,10,0,delay?30u:20u,0,one,0};
+        for(int i=0;i<7;i++)dword(w+4*n++,edge[i]);
+        if(delay){uint32_t e[]={2,30,0,20,0,one,0};for(int i=0;i<7;i++)dword(w+4*n++,e[i]);}
+        uint32_t target[]={0,20,0,0,one};for(int i=0;i<5;i++)dword(w+4*n++,target[i]);
+        dword(g+12,n);size_t size=ops->image_size+16+n*4;
+        StudioGraphBank *before=graphs;
+        assert(studio_load_score(s,wire,size-1,&pcm,&graphs)==CHIP_ERR_IMAGE && graphs==before);
+        dword(w+4*(n-4),999); /* dangling macro endpoint */
+        assert(studio_load_score(s,wire,size,&pcm,&graphs)==CHIP_ERR_IMAGE && graphs==before);
+        dword(w+4*(n-4),20);
+        dword(wire+PATCHES+4,(edit&1)?64:127);
+        assert(studio_load_score(s,wire,size,&pcm,&graphs)==CHIP_OK && graphs);
+        if(edit&1)assert(graphs==before);
+        assert(studio_prepare_waves(s,&waves,play)==CHIP_OK);
+        if(!edit){
+            assert(ops->start(play,s,0,0,96,&mode)==CHIP_OK);
+            assert(ops->audition(key,s,0,57,1,0)==CHIP_OK);
+        }else{
+            StudioLive *live=NULL;assert(studio_live_prepare(&live,s,48000)==CHIP_OK);
+            ops->apply_image(play,s);ops->apply_audition_image(key,s);
+            studio_live_destroy(live); /* reclaim before both machines render */
+        }
+        assert(ops->tick(play,a)==1000 && ops->tick(key,b)==1000);
+        assert(fabsf(a[1998])<.0001f && fabsf(b[1999])<.0001f);
+        float level=(edit&1)?.35f*64/127:.35f;
+        assert(fabsf(a[1999]-level)<.002f && fabsf(b[1998]-level)<.002f);
+    }
+    studio_graph_bank_drop(graphs);studio_bank_drop(pcm);studio_wave_bank_drop(waves);
+    assert(ops->stop_tail(play));assert(ops->tick(play,a)>0 && ops->tick(play,a)==0);
+    assert(ops->release(key));assert(ops->tick(key,b)>0 && ops->tick(key,b)>0 && ops->tick(key,b)==0);
+    ops->destroy(play);ops->destroy(key);free(s);free(wire);
+}
+
 int main(void) {
+    modular_generations_and_lane_macros();
     extension_wire_refusals();
     wave_generations_while_sampling();
     sampler_root_is_a_recording_reference_not_a_song_tuning();

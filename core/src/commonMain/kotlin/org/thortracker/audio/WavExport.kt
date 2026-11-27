@@ -87,8 +87,8 @@ class WavExport(song: Song, val options: WavOptions, val spool: String, renderer
         val image = ByteArray(engine.imageSize)
         engine.lower(song, image)
         val studio=song.sound as? org.thortracker.system.studio.StudioSound
-        val wire=if(studio!=null && studio.assets.ids.isNotEmpty())
-            org.thortracker.system.studio.StudioEngine.withBank(image,studio.assets) else image
+        val wire=if(studio!=null) org.thortracker.system.studio.StudioEngine.withResources(image,studio,
+            includePcm=studio.assets.ids.isNotEmpty()) else image
         job = try {
             r.open(engine.id, wire, options, spool)
         } catch (e: IllegalArgumentException) {
