@@ -45,19 +45,29 @@ static ChipMachine *create(uint32_t rate) {
     for(int i=0;i<49;i++)m->transpose[i]=exp2f((i-24)/12.f);
     return m;
 }
-static void copy_image(ChipMachine *m,const ChipImage *s) { memcpy(&m->image,s,offsetof(ChipImage,data)+s->bytes); }
-static void reset_lane(ChipMachine *m,int ch) {
-    Lane *v=&m->lanes[ch]; StudioVoice *voice=v->voice; studio_voice_clear(voice);
-    memset(v,0,sizeof *v);v->voice=voice; mono_synth_init(&v->synth,(float)m->rate);
-    v->slice=record(&m->image,0)[2]-1;
+int studio_prepare_waves(ChipImage *s,StudioWaveBank **owner,const ChipMachine *basis){
+    if(!s || !owner || !basis || studio_wave_bank_update(owner,s,&basis->tables)!=CHIP_OK)return CHIP_ERR_IMAGE;
+    s->waves=*owner;return CHIP_OK;
+}
+static void copy_image(ChipMachine *m,const ChipImage *s) {
+    memcpy(&m->image,s,offsetof(ChipImage,data)+s->bytes);
+    m->image.waves=m->rack.waves;m->image.live=NULL;
+}
+static int default_slice(const uint8_t *r){return r[0]==SAMPLER?(int)r[2]-1:-1;}
+static void reset_lane(ChipMachine *m,int ch,bool keep_overlap) {
+    Lane *v=&m->lanes[ch]; StudioVoice *voice=v->voice;
+    bool borrowed=keep_overlap && v->borrowed_pcm;
+    if(keep_overlap)studio_voice_cut(voice);else studio_voice_clear(voice);
+    memset(v,0,sizeof *v);v->voice=voice;v->borrowed_pcm=borrowed;mono_synth_init(&v->synth,(float)m->rate);
+    v->slice=default_slice(record(&m->image,0));
     v->note=-1; v->expression=635; v->cutoff_cc=v->resonance_cc=-1; v->applied.waveform=-1;
 }
 static int value(const uint8_t *r,const Lane *v,int id){return v->mask&(1u<<id)?v->param[id]:(int32_t)u32(r+4+4*id);}
 static float frequency(const ChipMachine *m,const Lane *v);
 static void sound(ChipMachine *m,Lane *v,bool attack,float velocity,float accent) {
     const uint8_t *r=record(&m->image,v->slot);float expression=v->expression/635.f;
-    int x[9]={0};static const int lengths[]={9,8,9,6};
-    for(int i=0;i<lengths[r[0]];i++)x[i]=value(r,v,i);
+    int x[9]={0};const int count=studio_parameter_count(r[0]);
+    for(int i=0;i<count;i++)x[i]=value(r,v,i);
     float hz=attack?frequency(m,v):0.f;
     if(r[0]==MONO){
         MonoSynthPatch p={x[0],v->cutoff_cc>=0?m->cutoff127[v->cutoff_cc]:m->cutoff100[x[1]],
@@ -76,7 +86,16 @@ static void sound(ChipMachine *m,Lane *v,bool attack,float velocity,float accent
     }else if(r[0]==DRUM){
         StudioDrumPatch p={(StudioDrumKind)x[0],x[1]*.01f,x[2]*.01f,x[3]*.01f,x[4]*.001f,x[5]*.01f*expression};
         if(attack)studio_voice_start_drum(v->voice,&p,hz,velocity);else studio_voice_update_drum(v->voice,&p);
-    }else{
+    }else if(r[0]==WAVETABLE){
+        StudioWavetablePatch p={x[0]/300.f,x[1]*.01f,x[2]*.01f,x[3]*.001f,x[4]*.001f,x[5]*.01f*expression};
+        if(attack)studio_voice_start_wavetable(v->voice,&p,studio_wave_set(m->rack.waves)->slot[v->slot],
+            (uint8_t)v->slot,hz,velocity,v->tied && !v->fresh_attack);
+        else studio_voice_update_wavetable(v->voice,&p);
+    }else if(r[0]==PLUCK){
+        StudioPluckPatch p={x[0]*.01f,x[1]*.01f,x[2]*.01f,x[3]*.001f,x[4]*.001f,x[5]*.01f*expression};
+        if(attack)studio_voice_start_pluck(v->voice,&p,hz,velocity,v->tied && !v->fresh_attack);
+        else studio_voice_update_pluck(v->voice,&p);
+    }else if(r[0]==SAMPLER){
         StudioSamplerPatch p={0};
         p.attack_seconds=x[4]*.001f;p.release_seconds=x[5]*.001f;p.cutoff_hz=x[6];p.level=x[7]*.01f*expression;
         if(!attack){studio_voice_update_sampler(v->voice,&p);return;}
@@ -118,7 +137,7 @@ static void dispatch(ChipMachine *m,const uint8_t *e) {
         int slot=e[4]-1;const uint8_t *r=record(&m->image,slot);
         if(slot!=v->slot){
             if(record(&m->image,v->slot)[0]!=r[0])off(m,v,true);
-            v->slice=r[2]-1;v->mask=0;v->fresh_attack=true;v->explicit_slice=false;
+            v->slice=default_slice(r);v->mask=0;v->fresh_attack=true;v->explicit_slice=false;
         }
         v->slot=slot;v->cutoff_cc=v->resonance_cc=-1;sound(m,v,false,0,0);retune(m,v);
         break;}
@@ -144,7 +163,9 @@ static void dispatch(ChipMachine *m,const uint8_t *e) {
         sound(m,v,false,0,0); break;
     case CUTOFF: v->cutoff_cc=e[4];sound(m,v,false,0,0);break;
     case RESONANCE: v->resonance_cc=e[4];sound(m,v,false,0,0);break;
-    case SLICE:v->fresh_attack|=v->slice!=e[4];v->slice=e[4];v->explicit_slice=true;break;
+    case SLICE:
+        if(record(&m->image,v->slot)[0]==SAMPLER){v->fresh_attack|=v->slice!=e[4];v->slice=e[4];v->explicit_slice=true;}
+        break;
     case CONTROL:{
         unsigned k=e[5]>>4,id=e[5]&15;
         int val=k==CRUSHER && id==1?(int)u16(e+6):(int16_t)u16(e+6);
@@ -269,11 +290,11 @@ static int tick(ChipMachine *m,float *out) {
     return frames;
 }
 static int reset(ChipMachine *m,const ChipImage *s) {
-    // A spare machine can retain a borrowed sample from an older bank. Drop those voices before releasing it.
+    /* Both notes in a spare machine must stop borrowing PCM/tables before replacing rack owners. */
     for(int i=0;i<TRACKS;i++)studio_voice_clear(m->lanes[i].voice);
-    if(studio_rack_prepare(&m->rack,s,m->rate)!=CHIP_OK)return CHIP_ERR_IMAGE;
+    if(studio_rack_prepare(&m->rack,s,m->rate,&m->tables)!=CHIP_OK)return CHIP_ERR_IMAGE;
     copy_image(m,s); m->order=m->row=m->tick=m->fraction=m->elapsed=0; m->audition=-1; m->releasing=false;
-    for (int i=0;i<TRACKS;i++) reset_lane(m,i);
+    for (int i=0;i<TRACKS;i++) reset_lane(m,i,false);
     faders(m,true);m->tail_frames=0;return CHIP_OK;
 }
 static int start(ChipMachine *m,const ChipImage *s,int order,int row,int max_ticks,int *mode) {
@@ -302,6 +323,11 @@ static void apply(ChipMachine *m,const ChipImage *s) {
     // A direct (non-host) caller may update values without a kit, never topology or bank.
     if(!s->live){
         if(s->bank!=m->rack.bank)return;
+        if(s->wave_mask!=m->image.wave_mask)return;
+        if(s->wave_mask && s->waves!=m->rack.waves){
+            for(int i=0;i<SLOTS;i++)if((s->wave_mask&(UINT32_C(1)<<i)) &&
+                memcmp(record(s,i)+40,record(&m->image,i)+40,256))return;
+        }
         for(int ch=0;ch<STRIPS;ch++){
             const uint8_t *g=strip(s,ch);
             for(int j=0;j<INSERTS;j++){const StudioPedal *p=&m->rack.pedals[ch][j];
@@ -309,24 +335,35 @@ static void apply(ChipMachine *m,const ChipImage *s) {
             }
         }
     }
+    StudioRack *incoming=s->live?&s->live->rack[m->audition>=0?1:0]:NULL;
+    if(incoming && incoming->waves!=m->rack.waves){
+        const StudioWavetableSet *next=studio_wave_set(incoming->waves);
+        for(int i=0;i<TRACKS;i++)studio_voice_rebind_wavetables(m->lanes[i].voice,next);
+    }
     unsigned pitch_changes=0;
     for (int i=0;i<TRACKS;i++) {
         Lane *v=&m->lanes[i];
         if (i>=s->data[4] && i>=m->image.data[4]) continue;
         if (i>=s->data[4] || i>=m->image.data[4] || u32(s->data+16+6*i)!=u32(m->image.data+16+6*i) ||
-            s->data[21+6*i]!=m->image.data[21+6*i]) { reset_lane(m,i);m->lanes[i].slice=record(s,0)[2]-1;continue; }
+            s->data[21+6*i]!=m->image.data[21+6*i]) { reset_lane(m,i,false);m->lanes[i].slice=default_slice(record(s,0));continue; }
         const uint8_t *before=record(&m->image,v->slot),*after=record(s,v->slot);
-        if(before[0]!=after[0] || (s->bank!=m->rack.bank && v->borrowed_pcm)){
-            int slot=v->slot; reset_lane(m,i);v->slot=slot;v->slice=after[2]-1;
+        bool invalid_pcm=s->bank!=m->rack.bank && v->borrowed_pcm;
+        if(before[0]!=after[0] || invalid_pcm){
+            /* Removing a held wave already detached its table into a bounded residual. Let
+             * that overlap finish, except when old PCM must be synchronously forgotten. */
+            bool overlap=before[0]==WAVETABLE && !invalid_pcm;
+            int slot=v->slot;reset_lane(m,i,overlap);v->slot=slot;v->slice=default_slice(after);
+            if(overlap && i==m->audition && !m->releasing)m->tail_frames=m->rate/200;
         }else{
-            if(!v->explicit_slice || (v->slice>=0 && !u32(after+60+8*v->slice)))v->slice=after[2]-1;
+            if(after[0]==SAMPLER && (!v->explicit_slice || (v->slice>=0 && !u32(after+60+8*v->slice))))
+                v->slice=default_slice(after);
             if(v->gate && (s->frequencies[v->note]!=m->image.frequencies[v->note] ||
                (after[0]==MONO && value(before,v,7)!=value(after,v,7))))pitch_changes|=1u<<i;
             if(after[0]==SAMPLER && (memcmp(before+1,after+1,19) || memcmp(before+40,after+40,PATCH_BYTES-40)))v->fresh_attack=true;
             if(after[0]==DRUM && value(before,v,0)!=value(after,v,0))v->fresh_attack=true;
         }
     }
-    if(s->live)studio_rack_swap(&m->rack,&s->live->rack[m->audition>=0?1:0]);
+    if(incoming)studio_rack_swap(&m->rack,incoming);
     m->order+=s->data[14]-m->image.data[14];
     copy_image(m,s);
     faders(m,false);
@@ -350,7 +387,7 @@ static int audition(ChipMachine *m,const ChipImage *s,int ch,int note,int slot,i
     slot=slot?slot-1:0;const uint8_t *r=record(s,slot);
     if((fine && (r[0]!=SAMPLER || !u32(r+60+8*(fine-1)))) || (r[0]==SAMPLER && (!s->bank||!r[1])))return CHIP_ERR_IMAGE;
     if(reset(m,s)!=CHIP_OK)return CHIP_ERR_IMAGE;
-    m->audition=ch;Lane *v=&m->lanes[ch];v->slot=slot;v->slice=(fine?fine:r[2])-1;
+    m->audition=ch;Lane *v=&m->lanes[ch];v->slot=slot;v->slice=fine?fine-1:default_slice(r);
     v->note=note;sound(m,v,true,s->data[20+6*ch]/127.f,0.f);v->gate=true;
     return CHIP_OK;
 }

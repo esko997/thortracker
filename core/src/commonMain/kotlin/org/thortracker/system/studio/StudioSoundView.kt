@@ -87,6 +87,9 @@ internal object StudioSoundView : SystemView() {
         }
         st.samplerPage = st.samplerPage.coerceIn(0, 2)
         st.samplerZoom = st.samplerZoom.coerceIn(1, 32)
+        st.wavetablePage = st.wavetablePage.coerceIn(0, 1)
+        st.waveSource = st.waveSource.coerceIn(0, 3)
+        st.wavePoint = st.wavePoint.coerceIn(0, 63)
         val sampler = patch(v.song, st) as? SamplerPatch
         if (sampler != null && sampler.slices.none { it.id == st.samplerSlice })
             st.samplerSlice = sampler.defaultSlice ?: sampler.slices.firstOrNull()?.id ?: 0
@@ -166,6 +169,7 @@ internal object StudioSoundView : SystemView() {
         }
         v.useEdit()
         if (p.editBlocked) return
+        if (!holdValid(v)) { p.editBlocked = true; return }
         when (st.instField) {
             MODE -> if (dx != 0) selectMode(v, dx > 0, keepModeFocus = true)
             NAME -> if (dx == 0) st.textPos = (st.textPos - dy).coerceIn(0, NAME_LIMIT - 1)
@@ -176,6 +180,7 @@ internal object StudioSoundView : SystemView() {
                 else StudioModuleControls.field(patch, st)?.let { StudioModuleControls.adjust(v, it, dx, dy) }
             }
         }
+        if (st.studioHoldVersion >= 0) st.studioHoldVersion = v.session.documentVersion
     }
 
     fun set(v: ViewController, param: Param, value: Int, preview: Boolean = false) {
@@ -197,17 +202,32 @@ internal object StudioSoundView : SystemView() {
     private fun store(v: ViewController, value: StudioPatch?, label: String): Boolean =
         StudioInstruments.store(v.session, v.state.instrument, value, label)
 
+    private fun holdValid(v: ViewController): Boolean {
+        val st = v.state
+        return st.studioHoldVersion < 0 || (st.studioHoldVersion == v.session.documentVersion &&
+            st.studioHoldSlot == st.instrument && st.studioHoldRevision == panel(st).revision)
+    }
+
     override fun editPress(v: ViewController) {
         val p = panel(v.state)
         if (p.cancelTouch != null) p.invalidate()
         p.editBlocked = false
-        if (v.state.instField >= FIRST_PARAM && !v.auditionHeld) playPatch(v, reportMissingTrack = false)
+        val st = v.state
+        val patch = patch(v.song, st)
+        val guarded = patch is WavetablePatch || patch is PluckPatch
+        st.studioHoldVersion = if (guarded) v.session.documentVersion else -1
+        st.studioHoldSlot = st.instrument
+        st.studioHoldRevision = p.revision
+        val field = if (guarded) StudioModuleControls.field(patch, st) else null
+        if (st.instField >= FIRST_PARAM && !v.auditionHeld &&
+            (!guarded || (field != null && (field < 100 || field == StudioModuleControls.HEIGHT)))) playPatch(v, reportMissingTrack = false)
     }
 
     override fun editRelease(v: ViewController, tap: Boolean) {
         val st = v.state
         val p = panel(st)
-        val blocked = p.editBlocked
+        val blocked = p.editBlocked || !holdValid(v)
+        st.studioHoldVersion = -1
         p.editBlocked = false
         if (blocked || !tap) return
         when {

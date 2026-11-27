@@ -308,10 +308,154 @@ class StudioSoundViewTest {
         assertSame(before,fixture.song)
     }
 
+    private fun drawnPatch() = WavetablePatch("Charcoal", mapOf(0 to 173), StudioWaves.of(List(4) { wave ->
+        List(64) { i -> when(i) { 0 -> 127; 63 -> -128; else -> (i * 7 + wave * 37) % 251 - 125 } }
+    }))
+
+    private fun PaneView.key(a: Action) { press(a); release(a) }
+    private fun PaneView.tap(canvas: Canvas, label: String) {
+        val (x,y) = canvas.centers.getValue(label)
+        assertTrue(touchDown(x,y)); touchUp(x,y)
+    }
+    private fun sessionWith(p: StudioPatch): EditorSession = session().let { fixture ->
+        EditorSession(fixture.song.copy(sound=fixture.song.studio.withPatch(7,p)))
+    }
+
+    @Test fun morphRailLabelsRecallTheAuthoredSourcesWithoutRewritingThem() {
+        val original=drawnPatch();val fixture=sessionWith(original)
+        val canvas=Canvas();val pane=PaneView(fixture,ViewState(kind=ViewKind.INSTRUMENT,instrument=7),1f,canvas,{0L},{})
+        for((i,label) in listOf("A","B","C","D").withIndex()) {
+            pane.draw(360,640);pane.tap(canvas,label)
+            val actual=fixture.song.studio.patch(7) as WavetablePatch
+            assertEquals(i*100,actual.value(0))
+            assertSame(original.waves,actual.waves)
+        }
+    }
+
+    @Test fun drawingASparseReverseStrokeInADuplicateKeepsTheSourceAndUndoesOnce() {
+        val original=drawnPatch(); val fixture=sessionWith(original)
+        val state=ViewState(kind=ViewKind.INSTRUMENT,instrument=7,waveSource=3)
+        val canvas=Canvas(); val pane=PaneView(fixture,state,1f,canvas,{0L},{})
+        pane.key(Action.DUPLICATE)
+        val before=fixture.song
+        assertEquals(8,state.instrument)
+        pane.draw(360,640); pane.tap(canvas,"Draw")
+        pane.draw(360,640)
+        val grid=canvas.waveBounds
+        assertTrue(pane.touchDown(grid.right-.1f,grid.top+.1f)); pane.touchUp(grid.right-.1f,grid.top+.1f)
+        assertEquals(63,state.wavePoint)
+        assertSame(before,fixture.song) // Selecting a point or Draw doesn't write.
+        pane.draw(360,640)
+        pane.press(Action.AUDITION)
+        var retriggers=0
+        fixture.onAudition={ _,_,_,_->retriggers++ }
+        val ver=fixture.documentVersion
+        assertTrue(pane.touchDown(grid.right-.1f,grid.top+.1f))
+        pane.touchMove(grid.left-grid.width()*.1f,grid.bottom+8f)
+        assertEquals(ver+1,fixture.documentVersion) // even though all 64 points were crossed
+        pane.touchMove(grid.left,grid.top-8f) // vertical revisit writes only point 1
+        pane.touchCancel()
+        val after=fixture.song.studio.patch(8) as WavetablePatch
+        assertEquals(127,after.waves.point(3,0))
+        assertEquals(-124,after.waves.point(3,1))
+        assertEquals(2,after.waves.point(3,32))
+        assertEquals(127,after.waves.point(3,63))
+        assertEquals(173,after.value(0))
+        for(w in 0..2) for(i in 0..63) assertEquals(original.waves.point(w,i),after.waves.point(w,i))
+        assertEquals(original,fixture.song.studio.patch(7))
+        assertEquals(0,retriggers)
+        pane.release(Action.AUDITION)
+        pane.key(Action.UNDO); assertSame(before,fixture.song)
+        pane.key(Action.REDO); pane.key(Action.COPY); pane.key(Action.DOWN); pane.key(Action.PASTE)
+        assertEquals(after,fixture.song.studio.patch(9))
+        pane.draw(320,240); pane.tap(canvas,"Advanced")
+        val exact=EntryMenu(); fixture.onMenuRequest={ it(exact) }
+        // Advanced begins at Morph. Its raw 173 is not rounded to a rail stop or an automation byte.
+        pane.key(Action.EDIT); exact.input!!("241")
+        val pasted=fixture.song.studio.patch(9) as WavetablePatch
+        assertEquals(after.copy(values=after.values+(0 to 241)),pasted)
+        assertEquals(after,fixture.song.studio.patch(8))
+    }
+
+    @Test fun resizeUndoSlotChangeAndSiblingEditsNeverRedirectACapturedStroke() {
+        for(event in listOf("resize","undo","slot","sibling")) {
+            val original=drawnPatch(); val fixture=sessionWith(original)
+            val state=ViewState(kind=ViewKind.INSTRUMENT,instrument=7,wavetablePage=1)
+            val canvas=Canvas(); val pane=PaneView(fixture,state,1f,canvas,{0L},{})
+            pane.draw(640,480)
+            val g=canvas.waveBounds
+            assertTrue(pane.touchDown(g.left+.1f,g.bottom-.1f))
+            pane.touchMove(g.centerX(),g.top)
+            assertNotEquals(original,fixture.song.studio.patch(7))
+            when(event) {
+                "resize"->pane.draw(320,240)
+                "undo"->{pane.key(Action.UNDO);assertSame(original,fixture.song.studio.patch(7))}
+                "slot"->{pane.key(Action.DOWN);assertEquals(8,state.instrument)}
+                "sibling"->{
+                    val other=PaneView(fixture,ViewState(kind=ViewKind.INSTRUMENT,instrument=7,instField=3),1f,Canvas(),{0L},{})
+                    other.press(Action.EDIT);other.key(Action.RIGHT);other.release(Action.EDIT)
+                    assertEquals(174,(fixture.song.studio.patch(7) as WavetablePatch).value(0))
+                }
+            }
+            val accepted=fixture.song
+            pane.touchMove(g.right,g.bottom);pane.touchUp(g.right,g.bottom)
+            assertSame(event,accepted,fixture.song)
+            assertFalse(event,fixture.inGesture)
+        }
+    }
+
+    @Test fun controllerChoosesSourceAndLastPointWithoutMovingMorphAndEditsOneGroupedHeight() {
+        val original=drawnPatch(); val fixture=sessionWith(original)
+        val state=ViewState(kind=ViewKind.INSTRUMENT,instrument=7)
+        val pane=PaneView(fixture,state,1f,Canvas(),{0L},{})
+        val exact=EntryMenu(); fixture.onMenuRequest={ it(exact) }
+        pane.draw(320,240)
+        fun adjust(vararg directions:Action) {pane.press(Action.EDIT);for(d in directions) pane.key(d);pane.release(Action.EDIT)}
+        adjust(Action.RIGHT) // Play → Draw
+        pane.key(Action.RIGHT);adjust(Action.RIGHT) // Source B
+        pane.key(Action.RIGHT);pane.key(Action.EDIT);exact.input!!("64")
+        assertEquals(1,state.waveSource);assertEquals(63,state.wavePoint)
+        assertFalse(fixture.canUndo)
+        pane.key(Action.RIGHT);adjust(Action.RIGHT,Action.RIGHT,Action.RIGHT)
+        val expected=original.copy(waves=original.waves.withPoint(1,63,-125))
+        assertEquals(expected,fixture.song.studio.patch(7))
+        pane.key(Action.UNDO);assertEquals(original,fixture.song.studio.patch(7))
+        assertFalse(fixture.canUndo)
+        pane.key(Action.DOWN);assertEquals(8,state.instrument)
+    }
+
+    @Test fun undoWhileHoldingHeightBlocksRepeatUntilANewPress() {
+        val original=drawnPatch();val fixture=sessionWith(original)
+        val state=ViewState(kind=ViewKind.INSTRUMENT,instrument=7,wavetablePage=1,instField=5)
+        val pane=PaneView(fixture,state,1f,Canvas(),{0L},{})
+        pane.press(Action.EDIT);pane.key(Action.LEFT)
+        assertEquals(126,(fixture.song.studio.patch(7) as WavetablePatch).waves.point(0,0))
+        pane.key(Action.UNDO);pane.key(Action.LEFT);pane.release(Action.EDIT)
+        assertEquals(original,fixture.song.studio.patch(7))
+        assertFalse(fixture.canUndo)
+    }
+
+    @Test fun tappingPluckStrikesOnceAndHeldStrikeEditsDoNotRetrigger() {
+        val original=PluckPatch("Foil",mapOf(1 to 52,3 to 1371));val fixture=sessionWith(original)
+        val canvas=Canvas(); val state=ViewState(kind=ViewKind.INSTRUMENT,instrument=7)
+        val pane=PaneView(fixture,state,1f,canvas,{0L},{})
+        val strikes=ArrayList<Int>();var releases=0
+        fixture.onAudition={_,_,slot,_->strikes+=slot};fixture.onReleaseAudition={releases++}
+        pane.draw(320,240);pane.tap(canvas,"Tap to strike")
+        assertEquals(listOf(7),strikes);assertEquals(1,releases);assertFalse(fixture.canUndo)
+        pane.key(Action.RIGHT) // Material → Strike
+        pane.press(Action.AUDITION);pane.press(Action.EDIT);pane.key(Action.RIGHT);pane.key(Action.RIGHT)
+        pane.release(Action.EDIT)
+        assertEquals(original.withValue(1,54),fixture.song.studio.patch(7))
+        assertEquals(listOf(7,7),strikes);assertEquals(1,releases)
+        pane.release(Action.AUDITION);pane.key(Action.UNDO);assertEquals(original,fixture.song.studio.patch(7))
+    }
+
     private class Canvas : Surface {
         val bank = ArrayList<String>()
         val text = ArrayList<String>()
         val centers = HashMap<String,Pair<Float,Float>>()
+        val waveBounds = Rect()
         var bankRight = 0f
         var bankTop = 0f
         var bankBottom = 0f
@@ -321,7 +465,10 @@ class StudioSoundViewTest {
         override fun line(x0: Float, y0: Float, x1: Float, y1: Float, color: Int, width: Float) = Unit
         override fun fillCircle(cx: Float, cy: Float, radius: Float, color: Int) = Unit
         override fun strokeCircle(cx: Float, cy: Float, radius: Float, color: Int, width: Float) = Unit
-        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) = Unit
+        override fun polyline(xs: FloatArray, ys: FloatArray, count: Int, color: Int, width: Float) {
+            // Only the Draw trace has 64 points. Test fixture includes both full-scale endpoints.
+            if(count==64) waveBounds.set(xs[0],ys.take(count).min(),xs[count-1],ys.take(count).max())
+        }
         override fun text(s: String, x: Float, top: Float, h: Float, color: Int, face: Face, bold: Boolean, size: Float, align: Align) {
             text += s
             centers[s] = x to top+h/2

@@ -4,7 +4,10 @@
 #include <stdlib.h>
 
 typedef struct { int lo,hi; } Range;
-static const uint8_t counts[]={9,8,9,6,5,3,4,5,3};
+static const uint8_t counts[]={9,8,9,6,5,3,4,5,3,6,6};
+int studio_parameter_count(unsigned k){return k<sizeof counts/sizeof counts[0]?counts[k]:0;}
+static bool instrument(unsigned k){return k==MONO||k==SAMPLER||k==FM||k==DRUM||k==WAVETABLE||k==PLUCK;}
+static bool insert(unsigned k){return k==DELAY||k==DRIVE||k==CRUSHER||k==REVERB||k==CHORUS;}
 static const Range limits[][9]={
     {{0,1},{0,100},{0,100},{0,100},{0,100},{0,100},{0,100},{-24,24},{0,100}},
     {{0,115},{-1200,1200},{0,1},{0,1},{0,2000},{0,4000},{30,20000},{0,100}},
@@ -12,9 +15,11 @@ static const Range limits[][9]={
     {{0,2},{0,100},{0,100},{0,100},{10,4000},{0,100}},
     {{0,9},{1,2000},{0,95},{30,20000},{0,100}},{{0,36},{30,20000},{-24,6}},
     {{2,16},{100,48000},{0,100},{-24,6}},{{0,100},{200,8000},{30,20000},{0,120},{0,100}},
-    {{5,800},{0,10000},{0,100}}
+    {{5,800},{0,10000},{0,100}},
+    {{0,300},{0,800},{0,100},{0,2000},{0,4000},{0,100}},
+    {{0,100},{0,100},{0,100},{40,8000},{0,4000},{0,100}}
 };
-static int valid(int k,int id,int v){ return k>=0 && k<=CHORUS && id>=0 && id<counts[k] && v>=limits[k][id].lo && v<=limits[k][id].hi; }
+static int valid(int k,int id,int v){return id>=0 && id<studio_parameter_count(k) && v>=limits[k][id].lo && v<=limits[k][id].hi;}
 static int values_ok(int k,const uint8_t *p){ for(int i=0;i<counts[k];i++) if(!valid(k,i,(int32_t)u32(p+4*i))) return 0; return 1; }
 static float f32(const uint8_t *p){ uint32_t u=u32(p); float f; memcpy(&f,&u,4); return f; }
 int studio_bank_decode(const uint8_t *p,size_t size,StudioBank **out){
@@ -40,6 +45,62 @@ int studio_bank_decode(const uint8_t *p,size_t size,StudioBank **out){
 bad: free(b);return CHIP_ERR_IMAGE;
 }
 void studio_bank_drop(StudioBank *b){if(b && !--b->refs) free(b);}
+
+/* References are acquired/released exclusively on the single producer. The audio thread
+ * only exchanges owners and borrows the immutable set. No note holds an owning reference. */
+enum { WAVE_BYTES=STUDIO_WAVETABLE_POINTS*STUDIO_WAVETABLE_WAVES };
+typedef struct {
+    unsigned refs;
+    int8_t raw[WAVE_BYTES];
+    StudioWavetable *prepared;
+} WaveEntry;
+struct StudioWaveBank {
+    unsigned refs;
+    uint32_t mask;
+    StudioWavetableSet set;
+    WaveEntry *entries[SLOTS];
+};
+const StudioWavetableSet *studio_wave_set(const StudioWaveBank *bank){return bank?&bank->set:NULL;}
+void studio_wave_bank_drop(StudioWaveBank *bank){
+    if(!bank || --bank->refs)return;
+    for(int i=0;i<SLOTS;i++){
+        WaveEntry *e=bank->entries[i];
+        if(e && !--e->refs){studio_wavetable_destroy(e->prepared);free(e);}
+    }
+    free(bank);
+}
+int studio_wave_bank_update(StudioWaveBank **owner,const ChipImage *s,const StudioDspTables *basis){
+    StudioWaveBank *old=*owner;
+    if(!s->wave_mask){*owner=NULL;studio_wave_bank_drop(old);return CHIP_OK;}
+    uint32_t changed=s->wave_mask;
+    for(int i=0;old && i<SLOTS;i++){
+        uint32_t bit=UINT32_C(1)<<i;
+        if((changed&bit) && old->entries[i] && !memcmp(old->entries[i]->raw,record(s,i)+40,WAVE_BYTES))changed&=~bit;
+    }
+    if(!changed && old && old->mask==s->wave_mask)return CHIP_OK;
+    if(changed && !basis)return CHIP_ERR_IMAGE;
+    StudioWaveBank *next=calloc(1,sizeof *next);
+    if(!next)return CHIP_ERR_IMAGE;
+    next->refs=1;next->mask=s->wave_mask;
+    for(int i=0;i<SLOTS;i++){
+        uint32_t bit=UINT32_C(1)<<i;
+        if(!(s->wave_mask&bit))continue;
+        WaveEntry *e;
+        if(changed&bit){
+            e=malloc(sizeof *e);
+            if(!e)goto fail;
+            /* int8_t, where provided, is exactly 8-bit two's complement. Copy wire bits
+             * into their signed representation without an out-of-range integer conversion. */
+            e->refs=1;memcpy(e->raw,record(s,i)+40,WAVE_BYTES);
+            e->prepared=studio_wavetable_prepare(basis,e->raw);
+            if(!e->prepared){free(e);goto fail;}
+        }else{e=old->entries[i];++e->refs;}
+        next->entries[i]=e;next->set.slot[i]=e->prepared;
+    }
+    *owner=next;studio_wave_bank_drop(old);return CHIP_OK;
+fail:
+    studio_wave_bank_drop(next);return CHIP_ERR_IMAGE;
+}
 int studio_bind_bank(ChipImage *s,StudioBank *b){
     for(int i=0;i<SLOTS;i++){
         const uint8_t *p=record(s,i); if(p[0]!=SAMPLER || !p[1])continue;
@@ -59,10 +120,17 @@ int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
         for(unsigned j=0;j<i;j++)if(u32(t)==u32(p+16+6*j))return CHIP_ERR_IMAGE;
     }
     for(int i=0;i<NOTES;i++){float f=f32(p+64+4*i);if(!isfinite(f)||f<=0.f)return CHIP_ERR_IMAGE;s->frequencies[i]=f;}
+    uint32_t waves=0;
     for(int i=0;i<SLOTS;i++){
         const uint8_t *r=p+PATCH_BASE+PATCH_BYTES*i;
-        if(r[0]>DRUM||!values_ok(r[0],r+4)||r[1]>SLOTS||r[2]>SLOTS)return CHIP_ERR_IMAGE;
-        if(r[2] && !u32(r+60+8*(r[2]-1)))return CHIP_ERR_IMAGE;
+        if(!instrument(r[0])||!values_ok(r[0],r+4))return CHIP_ERR_IMAGE;
+        if(r[0]==SAMPLER){
+            if(r[1]>SLOTS||r[2]>SLOTS||(r[2] && !u32(r+60+8*(r[2]-1))))return CHIP_ERR_IMAGE;
+        }else if(r[1]||r[2]||r[3])return CHIP_ERR_IMAGE;
+        if(r[0]==WAVETABLE || r[0]==PLUCK){
+            if(r[0]==WAVETABLE)waves|=UINT32_C(1)<<i;
+            for(int j=r[0]==WAVETABLE?40+WAVE_BYTES:40;j<PATCH_BYTES;j++)if(r[j])return CHIP_ERR_IMAGE;
+        }
     }
     uint32_t ids[STRIPS*INSERTS]; int count=0;
     for(int i=0;i<STRIPS;i++){
@@ -71,7 +139,7 @@ int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
         if((i>=TRACKS+p[7] || (i<TRACKS && (i>=p[4] || !p[21+6*i]))) && g[4])return CHIP_ERR_IMAGE;
         for(int j=0;j<g[4];j++){
             const uint8_t *v=g+8+32*j; uint32_t id=u32(v);
-            if(!id||id>INT32_MAX||v[4]<DELAY||v[4]>CHORUS||v[5]>1||!values_ok(v[4],v+8))return CHIP_ERR_IMAGE;
+            if(!id||id>INT32_MAX||!insert(v[4])||v[5]>1||!values_ok(v[4],v+8))return CHIP_ERR_IMAGE;
             for(int k=0;k<count;k++)if(ids[k]==id)return CHIP_ERR_IMAGE;
             ids[count++]=id;
         }
@@ -90,7 +158,7 @@ int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
                (op==ATTACK && (e[6]>127||e[7]>1)) || ((op==CUTOFF||op==RESONANCE)&&e[4]>127) || (op==SLICE&&e[4]>=SLOTS))return CHIP_ERR_IMAGE;
             if(op==CONTROL){
                 const uint8_t *g=p+GRAPH_BASE+STRIP_BYTES*e[2];int k=e[5]>>4,id=e[5]&15;
-                if(k>CHORUS||id>=counts[k]||e[4]>g[4]||(!e[4])!=(k<DELAY))return CHIP_ERR_IMAGE;
+                if(id>=studio_parameter_count(k)||e[4]>g[4]||(e[4]?!insert(k):!instrument(k)))return CHIP_ERR_IMAGE;
                 if(e[4] && g[8+32*(e[4]-1)+4]!=k)return CHIP_ERR_IMAGE;
                 int v=limits[k][id].lo<0?(int16_t)u16(e+6):(int)u16(e+6);
                 if(!valid(k,id,v))return CHIP_ERR_IMAGE;
@@ -98,7 +166,8 @@ int studio_score_load(ChipImage *s,const uint8_t *p,size_t size){
             prev=u16(e);
         }
     }
-    s->bytes=base+events*8;s->event_base=base;s->bank=NULL;s->live=NULL;memcpy(s->data,p,s->bytes);return CHIP_OK;
+    s->bytes=base+events*8;s->event_base=base;s->wave_mask=waves;s->waves=NULL;s->bank=NULL;s->live=NULL;
+    memcpy(s->data,p,s->bytes);return CHIP_OK;
 }
 int studio_load_score(ChipImage *s,const uint8_t *p,size_t size,StudioBank **current){
     if(size<IMAGE_SIZE || studio_score_load(s,p,IMAGE_SIZE)!=CHIP_OK)return CHIP_ERR_IMAGE;
@@ -125,9 +194,16 @@ void studio_pedal_set(StudioPedal *p,const uint8_t *w,int speed){
 }
 void studio_rack_dispose(StudioRack *r){
     for(int i=0;i<STRIPS;i++)for(int j=0;j<INSERTS;j++)studio_fx_destroy(r->pedals[i][j].fx);
-    studio_bank_drop(r->bank);memset(r,0,sizeof *r);
+    studio_bank_drop(r->bank);studio_wave_bank_drop(r->waves);memset(r,0,sizeof *r);
 }
-int studio_rack_prepare(StudioRack *r,const ChipImage *s,uint32_t rate){
+int studio_rack_prepare(StudioRack *r,const ChipImage *s,uint32_t rate,const StudioDspTables *fallback_basis){
+    if(s->wave_mask && !s->waves){
+        /* Raw direct start/audition, never the callback. Host publication always supplies a bank. */
+        if(!fallback_basis || studio_wave_bank_update(&r->waves,s,fallback_basis)!=CHIP_OK)return CHIP_ERR_IMAGE;
+    }else if(r->waves!=s->waves){
+        if(s->waves)++s->waves->refs;
+        studio_wave_bank_drop(r->waves);r->waves=s->waves;
+    }
     for(int i=0;i<STRIPS;i++){
         const uint8_t *g=strip(s,i);
         for(int j=0;j<INSERTS;j++){
@@ -154,10 +230,11 @@ void studio_rack_swap(StudioRack *current,StudioRack *incoming){
         int k=0;for(int j=0;j<INSERTS;j++)if(!used[j]){while(k<INSERTS && incoming->pedals[i][k].fx)k++;if(k<INSERTS)incoming->pedals[i][k++]=old[j];}
     }
     StudioBank *old=current->bank;current->bank=incoming->bank;incoming->bank=old;
+    StudioWaveBank *waves=current->waves;current->waves=incoming->waves;incoming->waves=waves;
 }
 int studio_live_prepare(StudioLive **owner,ChipImage *s,uint32_t rate){
     if(!*owner && !(*owner=calloc(1,sizeof **owner)))return CHIP_ERR_IMAGE;
-    for(int i=0;i<2;i++)if(studio_rack_prepare(&(*owner)->rack[i],s,rate)!=CHIP_OK)return CHIP_ERR_IMAGE;
+    for(int i=0;i<2;i++)if(studio_rack_prepare(&(*owner)->rack[i],s,rate,NULL)!=CHIP_OK)return CHIP_ERR_IMAGE;
     s->live=*owner;return CHIP_OK;
 }
 void studio_live_destroy(StudioLive *s){if(s){studio_rack_dispose(&s->rack[0]);studio_rack_dispose(&s->rack[1]);free(s);}}

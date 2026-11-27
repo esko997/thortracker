@@ -241,8 +241,9 @@ destinations…** adds or removes tracks, up to eight. Instrument numbers select
 32 shared slots; each track plays its own voice. A blank instrument cell keeps the
 previous patch. Changing an instrument's type uses that same slot, not a new bank.
 
-Open **Instrument / presets** to choose **Mono**, **Sampler**, **FM** or **Drums**,
-load a starting sound, or copy/paste a patch. The instrument list stays on the left.
+Open **Instrument / presets** to choose **Mono**, **Sampler**, **FM**, **Drums**,
+**Wavetable** or **Pluck**, load a starting sound, or copy/paste a patch.
+The instrument list stays on the left.
 **Sound** and **Advanced** edit the same saved values; changing faces does not
 regenerate the patch. Up/Down selects slots, Left/Right selects a control, and
 hold A + Left/Right adjusts it. Hold X to audition. Touch controls offer the same
@@ -254,10 +255,13 @@ edits and Undo.
 | Sampler | Pitched sample playback, regions, reverse, loops, envelope, filter, slices |
 | FM | Two-operator ratios, brightness, feedback and amplitude envelope |
 | Drums | Kick, snare or hat, with body, snap, tone, decay and level |
+| Wavetable | Four editable cycles, morph position, scan, attack, release and level |
+| Pluck | Harmonic-to-metallic material, strike, damping, ring, release and level |
 
 These are original software instruments, not hardware-emulation export targets.
 Notes control pitch, including drums. **Load demo → Studio** opens **Pocket Circuit**:
-an original synthesized break, bass, FM keys and hats, with track effects and a shared room.
+an original synthesized break, bass, FM keys, hats, scanning waves and plucked responses,
+with track effects and a shared room.
 
 #### Sampler: Play, Chop and Shape
 
@@ -290,6 +294,31 @@ Sample-bearing `.thor` projects embed their audio: transfer the project alone.
 Identical recordings are shared between patches. Ordinary knob edits share PCM with
 Undo; older history may be trimmed to keep unique current/Undo/Redo audio within
 64 MiB. Existing chip and sample-free projects retain their JSON format.
+
+#### Wavetable: Play and Draw
+
+Each patch contains four editable 64-point cycles, **A–D**. **Play** blends adjacent
+cycles with **Morph**; **Scan rate** and **Scan depth** move that blend around its base
+position. Scanning stops at the ends rather than wrapping from D to A. A zero rate
+disables scanning.
+
+**Draw** selects a source cycle, point and height. Selecting a source to edit does not
+change Morph: X still auditions the complete patch. Tap the graph to select a point;
+drag to paint, with crossed points filled between successive positions. One stroke
+is one Undo. Controller editing uses the Wave, Point and Height fields.
+
+The exact Morph range is 0–300: A=0, B=100, C=200 and D=300. When bound to an effect,
+`00`, `55`, `AA` and `FF` select those four positions. Scalar controls can be automated;
+the drawing cursor and individual points cannot. Copies, Undo and saved projects
+retain all four source cycles. Flat cycles are silent.
+
+#### Pluck: strike and ring
+
+Pluck is a small three-mode resonator. **Material** moves its upper partials from
+harmonic toward metallic; **Strike** changes their initial emphasis on the next
+attack. **Ring** sets decay time and **Damping** shortens the upper partials.
+**Release** controls note-off, while ties preserve the existing ring instead of
+striking again. Tap the artwork or hold X to audition without changing the patch.
 
 #### Track strip and pedals
 

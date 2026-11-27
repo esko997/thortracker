@@ -91,6 +91,7 @@ Engine::~Engine() {
     }
     for (auto& image : image_storage_) { studio_live_destroy(image.studio); free(image.data); }
     studio_bank_drop(studio_bank_);
+    studio_wave_bank_drop(studio_waves_);
     free(control_image_.data);
 }
 
@@ -98,7 +99,8 @@ int Engine::set_image(const uint8_t* bytes, size_t size, uint32_t version) {
     const bool studio = ops_ == &studio_mono_ops;
     const int loaded = studio ? studio_load_score(control_image_.data, bytes, size, &studio_bank_) :
         ops_->load_image(control_image_.data, bytes, size);
-    if (loaded != CHIP_OK) {
+    if (loaded != CHIP_OK || (studio && studio_prepare_waves(control_image_.data, &studio_waves_,
+                                                            slot_storage_[0].machine) != CHIP_OK)) {
         has_image_ = false;
         return CHIP_ERR_IMAGE;
     }

@@ -51,6 +51,8 @@ internal fun studioModuleDemo(): Song {
     patches[1] = studioInstrumentPresets(StudioKind.MONO)[0]
     patches[2] = studioInstrumentPresets(StudioKind.FM)[0]
     patches[3] = studioInstrumentPresets(StudioKind.PERCUSSION)[2]
+    patches[4] = studioInstrumentPresets(StudioKind.WAVETABLE)[1]
+    patches[5] = studioInstrumentPresets(StudioKind.PLUCK)[1]
     val tracks = listOf(
         StudioTrack(MidiTrack(1, 0, gate = 100), gain = 85, sends = listOf(10, 0),
             inserts = listOf(StudioInsert(1, StudioKind.CRUSHER, values = mapOf(0 to 10, 1 to 12000, 2 to 15))),
@@ -64,13 +66,18 @@ internal fun studioModuleDemo(): Song {
         StudioTrack(MidiTrack(3, 2, gate = 100), gain = 65, pan = 18, sends = listOf(28, 0),
             inserts = listOf(StudioInsert(4, StudioKind.CHORUS, values = mapOf(0 to 28, 1 to 3000, 2 to 25))),
             bindings = mapOf(14 to StudioBinding(0, StudioKind.FM, 2))),
-        StudioTrack(MidiTrack(4, 3, gate = 100), gain = 45, pan = 12, sends = listOf(8, 0))
+        StudioTrack(MidiTrack(4, 3, gate = 100), gain = 45, pan = 12, sends = listOf(8, 0)),
+        StudioTrack(MidiTrack(5, 4, gate = 100), gain = 32, pan = -30, sends = listOf(25, 0),
+            bindings = mapOf(14 to StudioBinding(0, StudioKind.WAVETABLE, 0))),
+        StudioTrack(MidiTrack(6, 5, gate = 100), gain = 38, pan = 30, sends = listOf(18, 0),
+            bindings = mapOf(14 to StudioBinding(0, StudioKind.PLUCK, 0),
+                15 to StudioBinding(0, StudioKind.PLUCK, 1)))
     )
-    val sound = StudioSound(tracks = tracks, patches = patches, nextId = 5, nextInstance = 6,
+    val sound = StudioSound(tracks = tracks, patches = patches, nextId = 7, nextInstance = 6,
         assets = added.assets, buses = listOf(StudioBus(listOf(StudioInsert(5, StudioKind.REVERB,
             values = mapOf(0 to 45, 1 to 1400, 2 to 4200, 3 to 12, 4 to 100))))))
     val patterns = List(2) { variation ->
-        val rows = List(4) { MutableList(Songs.ROWS) { Cell.BLANK } }
+        val rows = List(tracks.size) { MutableList(Songs.ROWS) { Cell.BLANK } }
         val sliceOrder = if (variation == 0) listOf(0, 1, 2, 3, 4, 5, 6, 7) else listOf(0, 4, 1, 5, 2, 6, 3, 7)
         for (step in 0 until 16) {
             val row = step * 2
@@ -87,10 +94,21 @@ internal fun studioModuleDemo(): Song {
         val melody = if (variation == 0) listOf(60, 67, 63, 62) else listOf(56, 63, 58, 65)
         for (step in melody.indices) rows[2][step * 8] = Cell(melody[step], 3, 14, 0x18 + step * 4)
         for (row in 1 until 32 step 2) rows[3][row] = Cell(if (row % 4 == 1) 60 else 63, 4)
+        for (step in melody.indices) {
+            for (offset in 0 until 8) {
+                var cell = Cell(melody[step] - 24, 5, 12, if (offset == 7) 0 else 1)
+                if (offset == 0) cell = cell.withEffect(1, 14,
+                    if (variation == 0) 0x55 + step * 0x22 else 0xBB - step * 0x22)
+                rows[4][step * 8 + offset] = cell
+            }
+            rows[5][step * 8 + 3] = Cell(melody[step] - 12, 6, 14, 0x10 + step * 0x28)
+            rows[5][step * 8 + 6] = Cell(melody[step] - 5, 6, 15, 0xA0)
+        }
         Pattern(if (variation == 0) "Circuit" else "Rewire", rows, length = 32)
     }
     return Song(title = "Pocket Circuit", artist = "Thor Tracker", ticksPerRow = 6,
         comment = "Original synthesized break. Track 1: D slices, E crusher wet, F sampler cutoff. " +
-            "Track 2: E Mono cutoff. Track 3: E FM brightness. Shared room on Return A.",
+            "Track 2: E Mono cutoff. Track 3: E FM brightness. Track 5: C tie, E wave morph. " +
+            "Track 6: E material, F strike. Shared room on Return A.",
         patterns = patterns, orders = listOf(0, 1), sound = sound)
 }
