@@ -222,11 +222,14 @@ class ModularActivityTest {
         val audition = args.getString("modularAudition") == "true"
         val edits = args.getString("modularEdits") == "true"
         require(!edits || audition)
+        val auditionTrack = args.getString("modularAuditionTrack")?.toInt()
+            ?: if (tracks < fixture.studio.tracks.size) tracks else 0
+        require(auditionTrack in fixture.studio.tracks.indices)
         val staged = soakSong(fixture,tracks,rack)
         runCase("soak") {
             seed(staged)
             val audio = engine()
-            report.appendLine("fixture=$name activeTracks=$tracks maxRack=$rack audition=$audition edits=$edits requestedMs=$duration")
+            report.appendLine("fixture=$name activeTracks=$tracks maxRack=$rack audition=$audition auditionTrack=$auditionTrack edits=$edits requestedMs=$duration")
             // All measurements come from the backend selected by MainActivity, never a second ChipAudio.
             // ChipAudio queues song changes; wait for its probe command behind the fixture update
             // before recording a baseline (the previous song may have used another native engine).
@@ -240,6 +243,8 @@ class ModularActivityTest {
                     chord(KeyEvent.KEYCODE_BUTTON_R2,KeyEvent.KEYCODE_BUTTON_B)
                     assertEquals(ViewKind.INSTRUMENT,ui { tracker.state.kind })
                     focusField(2)
+                    // Prefer a blank lane so audition adds a voice instead of borrowing a sounding one.
+                    ui { tracker.state.listenChannel = auditionTrack }
                 }
                 val initial = audio.diagnostics()
                 report.appendLine("beforePlay=$initial")
