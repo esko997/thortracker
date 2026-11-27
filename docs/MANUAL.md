@@ -273,6 +273,8 @@ Selection belongs to the track, even when two tracks use the same patch. It pers
 until changed; choosing a different instrument restores that patch's default slice.
 Repeating the same instrument number does not reset it. Cursor starts reconstruct
 the preceding selection.
+The root describes the recording in standard 12-tone tuning. A song tuning changes
+playback pitch without reinterpreting that recording reference.
 
 Moving a marker preserves its slice ID. Removing a referenced slice requires resolving
 its pattern commands explicitly. Replacing a recording preserves slice IDs and scales

@@ -88,7 +88,10 @@ static void sound(ChipMachine *m,Lane *v,bool attack,float velocity,float accent
             p.loop_end=u32(r+52);if(!p.loop_end || p.loop_end>p.end)p.loop_end=p.end;
             if(p.loop_start>=p.loop_end)p.loop_start=p.loop_end=0;
         }
-        p.reverse=x[2]!=0;p.root_hz=m->image.frequencies[x[0]];p.fine_cents=x[1];
+        /* Recording calibration is fixed; song tuning changes the requested playback Hz. */
+        static const float root_octave[12]={16.35159783f,17.32391444f,18.35404799f,19.44543648f,
+            20.60172231f,21.82676446f,23.12465142f,24.49971475f,25.95654360f,27.5f,29.13523509f,30.86770633f};
+        p.reverse=x[2]!=0;p.root_hz=ldexpf(root_octave[x[0]%12],x[0]/12);p.fine_cents=x[1];
         v->borrowed_pcm|=studio_voice_start_sampler(v->voice,&p,hz,velocity);
     }
 }

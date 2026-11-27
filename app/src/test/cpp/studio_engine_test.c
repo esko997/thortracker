@@ -127,7 +127,36 @@ static void reorder_and_post_fader_send(void){
     }
     assert(energy>1.);
 }
+static void sampler_root_is_a_recording_reference_not_a_song_tuning(void) {
+    const ChipEngineOps *ops=&studio_mono_ops;
+    enum { FRAMES=1024 };
+    size_t size=ops->image_size+24+FRAMES*4;
+    uint8_t *base=fixture(1),*wire=calloc(1,size);assert(wire);
+    memcpy(wire,base,ops->image_size);free(base);
+    sample(wire+64+4*57,880.f); /* A-4 target retuned one octave above its 440 Hz recording root. */
+    uint8_t *patch=wire+PATCHES+SLOT_BYTES;
+    memset(patch,0,SLOT_BYTES);patch[0]=1;patch[1]=1;
+    dword(patch+4,57);dword(patch+4+6*4,20000);dword(patch+4+7*4,100);
+    uint8_t *events=wire+ROWS_AT+130;
+    put_event(events,0,0,0,2,0,0,0);put_event(events+8,0,0,1,57,255,0,0);
+    for(int row=1;row<=64;row++)word(wire+ROWS_AT+2*row,2);
+    word(wire+12,2);
+    uint8_t *pcm=wire+ops->image_size;memcpy(pcm,"PCM1",4);
+    dword(pcm+4,1);dword(pcm+8,1);dword(pcm+12,1);dword(pcm+16,48000);dword(pcm+20,FRAMES);
+    for(int frame=0;frame<FRAMES;frame++)sample(pcm+24+4*frame,frame<256?.5f:-.5f);
+    ChipImage *image=calloc(1,ops->image_storage);ChipMachine *machine=ops->create(48000);
+    StudioBank *bank=NULL;int mode;float output[2*CHIP_MAX_TICK_FRAMES];
+    assert(image&&machine&&studio_load_score(image,wire,size,&bank)==CHIP_OK);
+    assert(ops->start(machine,image,0,0,96,&mode)==CHIP_OK);
+    studio_bank_drop(bank);
+    assert(ops->tick(machine,output)==1000);
+    /* Double speed crosses the sign transition at frame 128, not frame 256. */
+    assert(output[2*200]<-.05f && output[2*200+1]<-.05f);
+    ops->destroy(machine);free(image);free(wire);
+}
+
 int main(void) {
+    sampler_root_is_a_recording_reference_not_a_song_tuning();
     sampler_seek_and_bank_lifetime();
     reorder_and_post_fader_send();
     const ChipEngineOps *ops=&studio_mono_ops;

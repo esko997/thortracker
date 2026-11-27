@@ -19,7 +19,11 @@ data class StudioParameter(val id: Int, val name: String, val unit: String, val 
         return if (scale == StudioScale.LOG) (min * (max.toDouble() / min).pow(hex / 255.0)).roundToInt()
         else min + ((max - min) * hex + 127) / 255
     }
-    fun display(value: Int): String = labels.getOrNull(value - min) ?: if (unit.isEmpty()) "$value" else "$value $unit"
+    fun display(value: Int): String = labels.getOrNull(value - min) ?: when (unit) {
+        "note" -> org.thortracker.model.Songs.noteName(value, 0)
+        "" -> "$value"
+        else -> "$value $unit"
+    }
 }
 private fun p(id:Int, name:String, unit:String, min:Int, max:Int, default:Int, log:Boolean=false, trigger:Boolean=false) =
     StudioParameter(id,name,unit,min,max,default,if(log) StudioScale.LOG else StudioScale.LINEAR,trigger=trigger)
