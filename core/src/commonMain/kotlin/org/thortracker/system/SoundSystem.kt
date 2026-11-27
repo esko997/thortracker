@@ -381,6 +381,8 @@ interface SoundSystem {
     /** How the audio hosts play this system's songs. */
     val engine: PlaybackEngine get() = throw UnsupportedOperationException("$name uses external output")
     val driverDescription: String get() = engine.driver
+    /** Ordinary auditions use fine pitch; Studio also accepts a selected slice for sampler preview. */
+    val auditionArgumentMax: Int get() = fine.max
     fun auditionProblem(song: Song, channel: Int, note: Int, instrument: Int, fine: Int): String? =
         engine.auditionProblem(song, channel, note, instrument, fine)
 

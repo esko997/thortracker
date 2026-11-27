@@ -47,7 +47,7 @@ object VsuSystem : SoundSystem {
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = VsuRules.EFFECTS
-    override val views = ViewKind.entries.toSet()
+    override val views = ViewKind.standard
     override val exports = listOf(ExportFormat("vgm") { VsuVgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help

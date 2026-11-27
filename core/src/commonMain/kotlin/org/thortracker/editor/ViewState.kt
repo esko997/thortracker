@@ -5,7 +5,15 @@ import org.thortracker.model.PhraseSettings
 import org.thortracker.model.Scale
 import org.thortracker.system.panel.MusicalPanelState
 
-enum class ViewKind { PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP }
+enum class ViewKind {
+    PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP, STUDIO_STRIP;
+
+    val displayName: String get() = if (this == STUDIO_STRIP) "Track strip" else name.lowercase().replaceFirstChar(Char::uppercase)
+
+    companion object {
+        val standard = setOf(PATTERN, SONG, INSTRUMENT, WAVE, KEYBOARD, SKETCH, HELP)
+    }
+}
 
 /** Device-local pane magnification. Unknown stored values use the unchanged 100% layout. */
 enum class PaneZoom(val percent: Int) {
@@ -53,6 +61,14 @@ data class ViewState(
     var songItem: Int = SONG_HEADER_ITEMS,
     var songField: Int = 0,
     var instField: Int = 0,
+    /** Studio navigation is pane-local. Pedals use instance IDs rather than positions in the chain. */
+    var stripField: Int = 0,
+    var stripBus: Int = -1,
+    var stripPedal: Int = 0,
+    var pedalField: Int = 0,
+    var samplerPage: Int = 0,
+    var samplerSlice: Int = 0,
+    var samplerZoom: Int = 1,
     /** Independent, non-document presentation and pointer ownership for the three musical design pilots. */
     var gbPanel: MusicalPanelState = MusicalPanelState(),
     var sidPanel: MusicalPanelState = MusicalPanelState(),

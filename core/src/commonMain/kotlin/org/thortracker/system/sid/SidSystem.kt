@@ -49,7 +49,7 @@ object SidSystem : SoundSystem {
     override fun noteName(note: Int): String = if (note == SidRules.KEY_ON) "ON" else Songs.noteName(note, nameOctaveOffset)
 
     override val effects: List<EffectSpec> get() = SidRules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(
         ExportFormat("sid") { SidExport.psid(it) },
         ExportFormat("prg") { SidExport.prg(it) },

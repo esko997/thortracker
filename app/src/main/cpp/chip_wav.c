@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "chip_engine.h"
+#include "studio/studio_runtime.h"
 
 #define POSITIONS 256              /* orders and rows both fit in a byte (the hosts pack them so) */
 #define TRAIL_FRAMES CHIP_WAV_RATE /* silence kept after the last audible frame when fading */
@@ -107,6 +108,10 @@ static void finish(ChipWav* w) {
 /* The song part is over (loop passes done, or the limit): fade out, or end here. */
 static void end_song(ChipWav* w) {
     if (w->fade_frames) {
+        if (w->ops->stop_tail && !w->ops->stop_tail(w->machine)) {
+            finish(w);
+            return;
+        }
         w->phase = FADING;
         w->target = (int64_t)(w->frames + w->fade_frames);
     } else {
@@ -160,7 +165,8 @@ ChipWav* chip_wav_open(const char* system_id, const uint8_t* image, size_t image
         *problem = "unknown system";
         return NULL;
     }
-    if (image_size != ops->image_size) {
+    const int studio = ops == &studio_mono_ops;
+    if (studio ? image_size < ops->image_size : image_size != ops->image_size) {
         *problem = "image";
         return NULL;
     }
@@ -188,8 +194,13 @@ ChipWav* chip_wav_open(const char* system_id, const uint8_t* image, size_t image
     }
     strcpy(w->path, spool_path);
     int seek = 0;
-    if (ops->load_image(w->image, image, image_size) != CHIP_OK ||
-        ops->start(w->machine, w->image, 0, 0, START_SEEK_TICKS, &seek) != CHIP_OK) {
+    StudioBank* bank = NULL;
+    const int loaded = studio ? studio_load_score(w->image, image, image_size, &bank)
+                              : ops->load_image(w->image, image, image_size);
+    const int started = loaded == CHIP_OK &&
+        ops->start(w->machine, w->image, 0, 0, START_SEEK_TICKS, &seek) == CHIP_OK;
+    studio_bank_drop(bank); /* start retains the bank; failed starts retain nothing */
+    if (!started) {
         *problem = "image";
         chip_wav_close(w);
         return NULL;

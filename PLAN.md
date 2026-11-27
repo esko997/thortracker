@@ -10,6 +10,25 @@ with one to eight tracks, 32 patch slots and Sound/Advanced editing. Android Stu
 can combine internal voices and USB MIDI destinations; USB output remains Android-only.
 The synth is an original subtractive instrument, not a circuit model of a particular device.
 
+### Studio module roadmap
+
+Studio is the portable software-instrument workspace; these additions do not alter chip
+projects or their hardware exports. Modules are built in, not VST/AU plugins.
+
+1. Track strips with four serial inserts, named parameter automation, gain/pan and delay.
+2. A portable sampler with shared audio assets, pitched playback and self-contained projects.
+3. Play/Chop/Shape pages: notes remain pitches; `Dxx` selects a slice within one instrument.
+4. Drive and bitcrusher effects.
+5. An approachable two-operator FM instrument with exact editing.
+6. Synthesized kick, snare/noise and metallic percussion.
+7. Algorithmic reverb, two post-fader send/return buses and chorus.
+8. Module presets, demonstration material, cross-platform workflow and resource hardening.
+
+Follow-on candidates: track resampling/freeze and stems, wavetable and resonator instruments,
+bounded polyphony, modulation macros, additional filtering/dynamics, assisted slicing and
+time-stretching. These remain roadmap entries until their complete playback, editing,
+persistence and export paths are verified.
+
 ## Goal
 
 A controller-first, multi-system music tracker for Android, Steam Deck / x86_64 Linux

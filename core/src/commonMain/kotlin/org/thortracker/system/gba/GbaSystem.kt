@@ -35,7 +35,7 @@ object GbaSystem : SoundSystem {
     override val noteRange = GbaRules.NOTES
     override val nameOctaveOffset = 0
     override val effects: List<EffectSpec> get() = GbaRules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(ExportFormat("xm", ".xm (Maxmod, eight channels)") { GbaXmExporter.export(it) })
     override val fine: FinePitch = SemitonePitch
     override val help: SystemHelp = Help

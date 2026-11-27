@@ -3,6 +3,8 @@
 package org.thortracker.deck
 
 import kotlinx.cinterop.*
+import org.thortracker.model.ProjectCodec
+import org.thortracker.model.Song
 import org.thortracker.ui.PopupItem
 import org.thortracker.ui.PopupSpec
 import org.thortracker.ui.Popups
@@ -28,6 +30,27 @@ object Files {
     }
 
     fun readText(path: String): String? = readBytes(path)?.decodeToString()
+
+    fun readProject(path: String): Song {
+        val file = fopen(path, "rb") ?: error("Cannot read ${pretty(path)}")
+        try {
+            return ProjectCodec.readDocument { bytes, offset, length ->
+                val count = bytes.usePinned { fread(it.addressOf(offset), 1u, length.convert(), file).toInt() }
+                if (ferror(file) != 0) error("Read failed: ${pretty(path)}")
+                if (count == 0) -1 else count
+            }
+        } finally {
+            fclose(file)
+        }
+    }
+
+    fun writeProject(path: String, song: Song): Boolean {
+        val document = ProjectCodec.prepareDocument(song)
+        return write(path) { sink ->
+            document.writeTo(sink)
+            true
+        }
+    }
 
     /** Writes via a temporary file and rename, so a crash never leaves a half-written file at [path]. */
     fun write(path: String, bytes: ByteArray): Boolean = write(path) { sink ->

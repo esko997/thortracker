@@ -21,6 +21,9 @@ import org.thortracker.system.gb.GbSystem
 import org.thortracker.system.nes.NesChip
 import org.thortracker.system.nes.NesEpsmSystem
 import org.thortracker.system.nes.nes
+import org.thortracker.system.studio.StudioSound
+import org.thortracker.system.studio.StudioKind
+import org.thortracker.system.studio.FmPatch
 import org.thortracker.ui.TrackerView
 import org.thortracker.input.Binding
 import org.thortracker.input.Control
@@ -311,6 +314,7 @@ class ControllerWorkflowTest {
 
     @Test fun studioPatchesTracksAndPlaybackSurviveRecovery() {
         fun sound() = tracker.session.song.sound as org.thortracker.system.studio.StudioSound
+        fun mono(slot: Int) = sound().patch(slot) as org.thortracker.system.studio.MonoPatch
         fun tracks() { openFiles(); clickRow("Studio tracks and destinations…") }
         fun screenshot(name: String) {
             instrumentation.runOnMainSync {
@@ -336,18 +340,18 @@ class ControllerWorkflowTest {
         chord(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_RIGHT)
         instrumentation.runOnMainSync {
             assertEquals(2, tracker.state.instrument)
-            assertEquals(1, sound().patch(2)!!.waveform)
-            assertEquals("Editing slot 2 must not change slot 1", 0, sound().patch(1)!!.waveform)
+            assertEquals(1, mono(2).waveform)
+            assertEquals("Editing slot 2 must not change slot 1", 0, mono(1).waveform)
         }
         chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
-        instrumentation.runOnMainSync { assertEquals(0, sound().patch(2)!!.waveform) }
+        instrumentation.runOnMainSync { assertEquals(0, mono(2).waveform) }
         chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_B)
-        instrumentation.runOnMainSync { assertEquals(1, sound().patch(2)!!.waveform) }
+        instrumentation.runOnMainSync { assertEquals(1, mono(2).waveform) }
         tap(KeyEvent.KEYCODE_DPAD_RIGHT)
         chord(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_LEFT)
         instrumentation.runOnMainSync {
             assertEquals("Left/right must stay on the same instrument", 2, tracker.state.instrument)
-            assertEquals(59, sound().patch(2)!!.cutoff)
+            assertEquals(59, mono(2).cutoff)
         }
         val patch = sound().patch(2)
         repeat(3) { tap(KeyEvent.KEYCODE_DPAD_LEFT) }
@@ -403,6 +407,94 @@ class ControllerWorkflowTest {
                 saved, org.thortracker.model.ProjectCodec.encode(tracker.session.song))
             tracker.session.replaceSong(Songs.blank())
             assertSame(GbSystem, tracker.session.song.system)
+        }
+    }
+
+    @Test fun studioPedalAutomationKeepsItsTargetAcrossReorderAndRecovery() {
+        fun sound() = tracker.session.song.sound as StudioSound
+        fun menu(label: String) { tap(KeyEvent.KEYCODE_MENU); clickRow(label) }
+        fun enterHex(text: String) {
+            fun field(v: View): android.widget.EditText? = when (v) {
+                is android.widget.EditText -> v
+                is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { field(v.getChildAt(it)) }
+                else -> null
+            }
+            instrumentation.runOnMainSync { requireNotNull(field(activity.window.decorView)).setText(text) }
+            clickRow("Apply")
+        }
+        openFiles()
+        clickRow("New Studio song")
+        clickRow("Continue")
+        menu("Instrument / presets…")
+        clickRow("FM")
+        clickRow("New FM")
+        clickRow("Use ${FmPatch().name}")
+        instrumentation.runOnMainSync { assertTrue(sound().patch(1) is FmPatch) }
+        chord(KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_DPAD_UP)
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        repeat(2) { tap(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        menu("Track strip")
+        repeat(2) { tap(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        clickRow("Delay")
+        var delayId = 0
+        var originalTime = 0
+        instrumentation.runOnMainSync {
+            val pedal = sound().tracks[0].inserts.single()
+            assertEquals(StudioKind.DELAY, pedal.kind)
+            delayId = pedal.id
+            originalTime = pedal.value(1)
+        }
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        chord(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_RIGHT)
+        instrumentation.runOnMainSync {
+            assertEquals(originalTime + 1, sound().tracks[0].inserts.single().value(1))
+        }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        clickRow("Write to Pattern…")
+        clickRow("Enter another hex value…")
+        enterHex("80")
+        instrumentation.runOnMainSync {
+            val lane = sound().tracks[0]
+            assertEquals(delayId, lane.bindings.getValue(14).instance)
+            assertEquals(1, lane.bindings.getValue(14).parameter)
+            val cell = tracker.session.song.patterns[0].tracks[0][0]
+            assertEquals(14, cell.effectCode(0))
+            assertEquals(0x80, cell.effectParam(0))
+            assertEquals("Automation must not change the saved pedal setting",
+                originalTime + 1, lane.inserts.single().value(1))
+        }
+        repeat(3) { tap(KeyEvent.KEYCODE_DPAD_LEFT) }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        tap(KeyEvent.KEYCODE_DPAD_RIGHT)
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        clickRow("Drive")
+        repeat(3) { tap(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        clickRow("Move earlier")
+        instrumentation.runOnMainSync {
+            assertEquals(StudioKind.DRIVE, sound().tracks[0].inserts[0].kind)
+            assertEquals(delayId, sound().tracks[0].inserts[1].id)
+            assertEquals(delayId, sound().tracks[0].bindings.getValue(14).instance)
+        }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_A)
+        instrumentation.runOnMainSync { assertEquals(delayId, sound().tracks[0].inserts[0].id) }
+        chord(KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_B)
+        tap(KeyEvent.KEYCODE_BUTTON_START)
+        awaitPlayback(true)
+        menu("Panic / cut tails")
+        awaitPlayback(false)
+        var saved = ByteArray(0)
+        instrumentation.runOnMainSync {
+            saved = org.thortracker.model.ProjectCodec.encodeBytes(tracker.session.song)
+            activity.finish()
+        }
+        instrumentation.waitForIdleSync()
+        launchActivity()
+        instrumentation.runOnMainSync {
+            assertArrayEquals(saved, org.thortracker.model.ProjectCodec.encodeBytes(tracker.session.song))
+            assertEquals(delayId, sound().tracks[0].inserts[1].id)
+            assertEquals(delayId, sound().tracks[0].bindings.getValue(14).instance)
         }
     }
 

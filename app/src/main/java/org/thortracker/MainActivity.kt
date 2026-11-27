@@ -108,6 +108,7 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         override val supportsUsbMidi = true
         override fun midiOutputs() = (audio as? org.thortracker.audio.MidiAudio)?.endpoints().orEmpty().map { it.key to it.label }
         override fun midiPanic() { (audio as? org.thortracker.audio.MidiAudio)?.panic() }
+        override fun audioPanic() { audio?.silence() }
         override val displayCount: Int get() = hosts.size
         override val keymap: Keymap get() = this@MainActivity.keymap
         override fun refresh() {
@@ -137,10 +138,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         override fun importTuningPack(done: () -> Unit) = this@MainActivity.importTuningPack(done)
         override fun removeTuningPack(id: String, done: () -> Unit) = this@MainActivity.removeTuningPack(id, done)
         override fun loadTuningFile(loaded: (Tuning) -> Unit) { tuningLoaded = loaded; launchTuningPicker() }
-        override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) {
-            fileLoad = FileLoad(extensions, maxBytes, loaded)
-            launchFilePicker()
-        }
+        override fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (String, String, ByteArray) -> Unit) =
+            chooseFile(extensions, maxBytes, null, { it }, loaded)
+        override fun <T> pickFileDecoded(title: String, extensions: List<String>, maxBytes: Int,
+            decode: (ByteArray) -> T, picked: (String, String, T) -> Unit) =
+            chooseFile(extensions, maxBytes, title, decode, picked)
         override fun installRhythmRom(bytes: ByteArray): String? = this@MainActivity.installRhythmRom(bytes)
         override fun openUrl(url: String): Boolean = try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -407,6 +409,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         displays.unregisterDisplayListener(this)
         inputDevices.unregisterInputDeviceListener(this)
         main.removeCallbacksAndMessages(null)
+        fileLoad = null
+        activeFileLoad?.cancelled = true
         detachSecondary()
         // Nothing can pick a destination for a render any more: free it (a file being written still completes).
         wavRun?.cancel()
@@ -1065,10 +1069,23 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         }, "tuning-file").start()
     }
 
-    /** A pending [MenuHost.loadFile]: the extensions it accepts, its size limit and where the bytes go. */
-    private class FileLoad(val extensions: List<String>, val maxBytes: Int, val loaded: (String, String, ByteArray) -> Unit)
+    private class FileLoad(val extensions: List<String>, val maxBytes: Int, val title: String?,
+        val decode: (name: String, extension: String, bytes: ByteArray) -> (() -> Unit)) {
+        @Volatile var cancelled = false
+    }
 
     private var fileLoad: FileLoad? = null
+    private var activeFileLoad: FileLoad? = null
+
+    private fun <T> chooseFile(extensions: List<String>, maxBytes: Int, title: String?,
+        decode: (ByteArray) -> T, loaded: (String, String, T) -> Unit) {
+        if (activeFileLoad != null || fileLoad != null) return showError("A file import is already running")
+        fileLoad = FileLoad(extensions, maxBytes, title) { name, extension, bytes ->
+            val value = decode(bytes)
+            ({ loaded(name, extension, value) })
+        }
+        launchFilePicker()
+    }
 
     private fun launchFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -1078,34 +1095,83 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         catch (e: Exception) { fileLoad = null; showError("No document provider could open: ${e.message}") }
     }
 
-    /** Reads the file the generic picker returns off the UI thread, checks its extension and size, and hands it on. */
+    /** Read and prepare the selected file off the UI thread. Dismissing progress discards its result. */
     private fun importFile(uri: Uri) {
         val load = fileLoad ?: return
         fileLoad = null
+        activeFileLoad = load
+        val progress = load.title?.let {
+            PopupSpec(it, "Reading file…", listOf(PopupItem("Cancel") {
+                load.cancelled = true
+                popups.back()
+            }))
+        }
+        if (progress != null) popups.show(progress, modalDisplay)
         Thread({
             val result = runCatching {
-                val file = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-                    ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "file"
+                val columns = arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE)
+                val info = contentResolver.query(uri, columns, null, null, null)?.use { c ->
+                    if (!c.moveToFirst()) null else {
+                        val sizeAt = c.getColumnIndex(columns[1])
+                        c.getString(c.getColumnIndexOrThrow(columns[0])) to
+                            if (sizeAt >= 0 && !c.isNull(sizeAt)) c.getLong(sizeAt) else -1L
+                    }
+                }
+                val file = info?.first ?: "file"
                 val extension = load.extensions.firstOrNull { file.endsWith(it, ignoreCase = true) }
                     ?: error("choose a ${load.extensions.joinToString(" or ")} file")
-                val bytes = checkNotNull(contentResolver.openInputStream(uri)) { "the file could not be opened" }.use { stream ->
-                    val out = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        val n = stream.read(buffer)
-                        if (n < 0) break
-                        out.write(buffer, 0, n)
-                        check(out.size() <= load.maxBytes) { "the file is larger than ${load.maxBytes / 1024} KiB" }
-                    }
-                    out.toByteArray()
-                }
-                Triple(file.dropLast(extension.length), extension, bytes)
+                val bytes = checkNotNull(contentResolver.openInputStream(uri)) { "the file could not be opened" }
+                    .use { readImportBytes(it, load, info?.second ?: -1L) }
+                check(!load.cancelled) { "import cancelled" }
+                load.decode(file.dropLast(extension.length), extension, bytes)
             }
             main.post {
-                if (isDestroyed) return@post
-                result.fold({ (name, extension, bytes) -> load.loaded(name, extension, bytes) }, { e -> showError("Not loaded: ${e.message}") })
+                activeFileLoad = null
+                if (isDestroyed || load.cancelled || (progress != null && popups.top !== progress)) return@post
+                if (progress != null) popups.back()
+                result.fold({ it() }, { e -> showError("Not loaded: ${e.message}") })
             }
         }, "file-import").start()
+    }
+
+    private fun readImportBytes(input: java.io.InputStream, load: FileLoad, size: Long): ByteArray {
+        val tooLarge = "the file is larger than ${load.maxBytes / 1024} KiB"
+        check(size <= load.maxBytes) { tooLarge }
+        fun fill(bytes: ByteArray): Int {
+            var used = 0
+            while (used < bytes.size) {
+                check(!load.cancelled) { "import cancelled" }
+                val n = input.read(bytes, used, minOf(64 * 1024, bytes.size - used))
+                if (n < 0) break
+                check(n > 0) { "the provider returned an invalid read" }
+                used += n
+            }
+            return used
+        }
+        if (size >= 0) {
+            val bytes = ByteArray(size.toInt())
+            check(fill(bytes) == bytes.size && input.read() == -1) { "the file length changed while reading" }
+            return bytes
+        }
+        // Some document providers cannot report sizes; bound allocations before reading unknown data.
+        val chunks = ArrayList<ByteArray>()
+        var total = 0
+        while (total < load.maxBytes) {
+            val chunk = ByteArray(minOf(64 * 1024, load.maxBytes - total))
+            val used = fill(chunk)
+            if (used > 0) chunks += chunk
+            total += used
+            if (used < chunk.size) break
+        }
+        check(total < load.maxBytes || input.read() == -1) { tooLarge }
+        val bytes = ByteArray(total)
+        var at = 0
+        for (chunk in chunks) {
+            val used = minOf(chunk.size, total - at)
+            chunk.copyInto(bytes, at, endIndex = used)
+            at += used
+        }
+        return bytes
     }
 
     /** Writes or reads a keymap file off the UI thread; a provider that stalls cannot freeze input. */
@@ -1222,7 +1288,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             return
         }
         if (requestCode == FILE_IMPORT) {
-            if (resultCode == RESULT_OK) data?.data?.let(::importFile) else fileLoad = null
+            val uri = data?.data
+            if (resultCode == RESULT_OK && uri != null) importFile(uri) else fileLoad = null
             return
         }
         if (requestCode == EXPORT_WAV) {

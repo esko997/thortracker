@@ -15,7 +15,6 @@ import org.thortracker.editor.patternAt
 import org.thortracker.input.Control
 import org.thortracker.input.Keymap
 import org.thortracker.input.Keys
-import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Song
 import org.thortracker.model.Songs
 import org.thortracker.audio.WavExport
@@ -77,7 +76,7 @@ fun main(args: Array<String>) {
     WavExport.renderer = DeckWav
     try {
         val requested = songPath?.let { path -> runCatching {
-            ProjectCodec.decode(requireNotNull(Files.readText(path)) { "Cannot read $path" })
+            Files.readProject(path)
         } }
         val app = DeckApp(platform, appDir, requested?.getOrNull(), density)
         requested?.exceptionOrNull()?.let { app.shell.error("Project could not be opened: ${it.message}") }
@@ -167,6 +166,7 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
             audio.error().let { if (it != lastAudioError) { lastAudioError = it; if (it != null) { RecentMessages.record("audio", it); session.note(it) } } }
             shell.pumpExport()
             shell.pumpTuningPacks()
+            shell.pumpFiles()
             shell.autosave(now)
             val typing = popup.fieldFocused
             if (typing != textInput) { textInput = typing; platform.textInput(typing) }
@@ -184,10 +184,9 @@ class DeckApp(private val platform: Platform, appDir: String, opened: Song?, den
             platform.present()
             frames++
         }
-        shell.autosave(platform.ticks(), force = true)
     }
 
-    fun close() { shell.autosave(platform.ticks(), force = true); shell.close(); audio.close(); (pane.surface as SdlSurface).close() }
+    fun close() { shell.close(); audio.close(); (pane.surface as SdlSurface).close() }
 
     fun focusChanged() { repeatCode = 0; input.reset(); pane.cancelInteraction() }
     fun type(text: String) = popup.type(text)

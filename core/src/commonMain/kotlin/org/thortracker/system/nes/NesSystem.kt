@@ -211,7 +211,7 @@ abstract class NesFamiStudioSystem internal constructor(val expansion: NesExpans
     override val nameOctaveOffset = 0
     override val effects: List<EffectSpec> get() = NesRules.effects(expansion)
     override fun effectColumns(channel: Int) = Cell.MAX_EFFECT_COLUMNS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(
         ExportFormat("nsf") { NsfExporter.export(it) },
         ExportFormat("txt") { FamiStudioText.export(it) },

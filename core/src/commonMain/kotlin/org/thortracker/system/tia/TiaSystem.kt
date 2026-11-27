@@ -58,7 +58,7 @@ sealed class TiaSystem(val region: TiaRegion, override val id: String, override 
     override val effects: List<EffectSpec> get() = TiaRules.EFFECTS
 
     /** The shared views plus the Instrument view; the TIA has no wavetables. */
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
 
     /** WAV only (the hosts' generic export): VGM has no TIA, and a cartridge would need a 6507 driver and display kernel. */
     override val exports: List<ExportFormat> = emptyList()

@@ -46,7 +46,7 @@ object Opl3System : SoundSystem {
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = Opl3Rules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(ExportFormat("vgm") { Opl3Vgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help

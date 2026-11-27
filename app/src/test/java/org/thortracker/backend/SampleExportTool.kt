@@ -3,6 +3,9 @@ package org.thortracker.backend
 import org.thortracker.model.Cell
 import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Songs
+import org.thortracker.model.Song
+import org.thortracker.model.Pattern
+import org.thortracker.system.studio.*
 import org.thortracker.system.cbm.CbmChip
 import org.thortracker.system.cbm.CbmDemoSong
 import org.thortracker.system.cbm.TedSystem
@@ -79,6 +82,23 @@ object SampleExportTool {
         // Every demo's engine image: the native WAV export test (app/src/test/cpp/wav_render_test.c) renders them.
         File(directory, "thor-groove.gbimg").writeBytes(ByteArray(song.system.engine.imageSize).also { song.system.engine.lower(song, it) })
         println("Exported ${song.title} to ${directory.absolutePath}")
+        fun studioImage(name:String, document:Song) {
+            val score=ByteArray(StudioEngine.imageSize)
+            StudioEngine.lower(document,score)
+            File(directory,name).writeBytes(StudioEngine.withBank(score,document.studio.assets))
+        }
+        studioImage("studio-demo.stimg",StudioSound().system.demo())
+        // One tick of song (1000 frames): source ends in 5 ms, first delay return is
+        // deliberately beyond the song endpoint at 80 ms. Channels have opposite signs.
+        val impulse=StudioPcm.of(2,48000,FloatArray(480) { if(it%2==0) .5f else -.25f })
+        val added=StudioAssets.EMPTY.add(impulse)
+        val base=StudioSound().system.blank().addStudioInsert(0,StudioKind.DELAY)
+        val lane=base.studio.tracks.single()
+        val delay=lane.inserts.single().copy(values=mapOf(0 to 0,1 to 80,2 to 50,4 to 50))
+        val shortSound=base.studio.withPatch(1,SamplerPatch(assetId=added.id)).copy(
+            assets=added.assets,tracks=listOf(lane.copy(inserts=listOf(delay))))
+        studioImage("studio-sampler-delay.stimg",base.copy(sound=shortSound,ticksPerRow=1,
+            patterns=listOf(Pattern.blank(1).copy(length=1,tracks=listOf(List(Songs.ROWS) { if(it==0) Cell(48,1) else Cell.BLANK })))))
         val gba = GbaSystem.demo()
         File(directory, "gba-demo.thor").writeText(ProjectCodec.encode(gba), Charsets.UTF_8)
         File(directory, "gba-demo.xm").writeBytes(GbaXmExporter.export(gba))

@@ -6,6 +6,7 @@ int da_open(const char* system_id);                        /* 0, -2 unknown syst
 int da_set_image(const unsigned char* bytes, int size);    /* lowered image of the system; applied live while playing */
 int da_play(int order, int row, int max_ticks);            /* order = played-order position; max_ticks = seek budget */
 void da_stop(void);
+void da_panic(void);                                       /* cuts song, audition and effect tails */
 int da_audition(int channel, int note, int instrument, int fine, int ticks); /* sounds until ticks run out or release */
 void da_release_audition(void);
 int da_playing(void);

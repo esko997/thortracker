@@ -236,41 +236,110 @@ maps. See [Instrument workflow](#instrument-workflow) and the [instrument guide]
 
 ### Studio: internal instruments
 
-Choose **Files → New Studio song** to start with one mono-synth track. Open
-**Files → Studio tracks and destinations…** to add or remove tracks, up to eight.
-Each track has its own voice; instrument numbers select from 32 shared patch slots.
-A blank instrument cell keeps the track's previous patch.
+Choose **Files → New Studio song** for internal instruments. **Studio tracks and
+destinations…** adds or removes tracks, up to eight. Instrument numbers select from
+32 shared slots; each track plays its own voice. A blank instrument cell keeps the
+previous patch. Changing an instrument's type uses that same slot, not a new bank.
 
-In **Instrument**, choose a slot on the left and edit its **Sound** or **Advanced** face
-on the right. Both edit the same patch. Up/Down selects slots; Left/Right selects a control;
-hold A and press Left/Right to adjust it. Hold X to audition. Touch the waveform buttons,
-drag knobs vertically, or move the output sliders. Advanced also offers exact numeric entry.
+Open **Instrument / presets** to choose **Mono**, **Sampler**, **FM** or **Drums**,
+load a starting sound, or copy/paste a patch. The instrument list stays on the left.
+**Sound** and **Advanced** edit the same saved values; changing faces does not
+regenerate the patch. Up/Down selects slots, Left/Right selects a control, and
+hold A + Left/Right adjusts it. Hold X to audition. Touch controls offer the same
+edits and Undo.
 
-The synth has saw and square waves, cutoff, resonance, filter-envelope depth and decay,
-accent amount, glide, tuning and output level. Accent changes the response to accented rows;
-glide applies to tied notes. Clearing a slot restores its Init patch.
-
-Studio offers four effect columns. Codes `0`–`8` provide the same arpeggio, pitch/expression
-slides, repeats, delay, echoes and velocity controls as the [MIDI workflow](USB_MIDI.md).
-Mono tracks add:
-
-| Code | Action |
+| Instrument | Main controls |
 | --- | --- |
-| `9xx` | Filter cutoff, `00`–`7F` |
-| `Axx` | Resonance, `00`–`7F` |
+| Mono | Saw/square, cutoff, resonance, filter envelope, accent, glide, tuning, level |
+| Sampler | Pitched sample playback, regions, reverse, loops, envelope, filter, slices |
+| FM | Two-operator ratios, brightness, feedback and amplitude envelope |
+| Drums | Kick, snare or hat, with body, snap, tone, decay and level |
+
+These are original software instruments, not hardware-emulation export targets.
+Notes control pitch, including drums. **Load demo → Studio** opens **Pocket Circuit**:
+an original synthesized break, bass, FM keys and hats, with track effects and a shared room.
+
+#### Sampler: Play, Chop and Shape
+
+Import a WAV into a Sampler slot. **Play** handles ordinary pitched playback and the
+sample region. **Chop** divides that region into up to 32 slices, with waveform zoom,
+marker adjustment and slice audition. **Shape** handles envelope, filtering and loop
+controls. Regions and slices are non-destructive; they never duplicate the recording
+or consume additional instrument slots.
+
+Notes always mean pitch relative to the sample's root note. `D00`–`D1F` chooses a
+slice for subsequent note triggers; it does not seek an already-playing voice.
+Selection belongs to the track, even when two tracks use the same patch. It persists
+until changed; choosing a different instrument restores that patch's default slice.
+Repeating the same instrument number does not reset it. Cursor starts reconstruct
+the preceding selection.
+
+Moving a marker preserves its slice ID. Removing a referenced slice requires resolving
+its pattern commands explicitly. Replacing a recording preserves slice IDs and scales
+their positions to the new recording, or refuses the change if a slice would collapse.
+
+Supported WAV input is mono/stereo PCM 8/16/24-bit or normalized Float32, at
+8–192 kHz. Stereo and supported sample precision are retained; unsupported input is
+rejected rather than downmixed or truncated. Limits are 20 MiB per input WAV,
+16 MiB decoded per asset and 32 MiB decoded per project.
+
+Sample-bearing `.thor` projects embed their audio: transfer the project alone.
+Identical recordings are shared between patches. Ordinary knob edits share PCM with
+Undo; older history may be trimmed to keep unique current/Undo/Redo audio within
+64 MiB. Existing chip and sample-free projects retain their JSON format.
+
+#### Track strip and pedals
+
+Open **Track strip** for the selected track's instrument shortcut, four serial insert
+slots, gain, pan and two post-fader sends. Available pedals are **Delay**, **Drive**,
+**Crusher**, **Reverb** and **Chorus**. Select a pedal for its controls and presets;
+**Pedal options** provides bypass, reorder and removal.
+
+Inserts process every instrument played on their track. Gain multiplies the signal;
+it is not a ceiling over programmed volume. Up to two return buses share effects
+between tracks. Returns do not feed one another, so the routing cannot form a
+feedback cycle. A fully wet reverb on a return keeps the dry sound on its source track.
+
+Delay offers straight, dotted and triplet divisions or millisecond timing, with
+bounded feedback. Reordering pedals preserves their automation targets. Removing a
+referenced pedal asks to clear its bindings and commands; Undo restores them together.
+
+#### Pattern automation
+
+Studio has four effect columns. `0`–`8` retain the arpeggio, pitch/expression slides,
+repeats, note delay, echoes and velocity commands in the [MIDI reference](USB_MIDI.md).
+
+| Code | Internal-track action |
+| --- | --- |
+| `9xx` / `Axx` | Mono cutoff / resonance, `00`–`7F` |
 | `Bxx` | Accent strength for this row's attacks, `00`–`7F` |
-| `C01` | Tie the final attack into the following row's first note without retriggering; use the patch's glide |
-| `C00` | Disable the tie |
+| `C01` / `C00` | Tie the final attack into the next row's first note / cancel tie |
+| `Dxx` | Sampler slice ID, `00`–`1F` |
+| `Exx`–`Zxx` | A named parameter binding on this track, value `00`–`FF` |
 
-A blank row or OFF breaks a tie. Mono projects support Scala tunings and WAV rendering.
-The synth is an original software instrument, not a classic-chip emulator or a circuit-exact 303.
+Choose a parameter on the instrument/strip and assign it to an available command.
+The picker shows its name and real-value range. **Write** uses the focused pattern
+effect cell and refuses to silently overwrite an occupied cell. Four columns limit
+simultaneous commands, not the number of parameters used across the song.
 
-On Android, a track's **Destination** can instead be **USB MIDI**. Configure its port,
-channel and CC assignments in the same track menu. USB tracks use `9xx`/`Axx` for named CCs,
-not filter controls; accent and tie are Mono-only. Use instrument `01` for USB track defaults
-and choose its bank/program in the track menu. Mixed projects do not support custom tunings
-or offline WAV rendering. Deck and NextUI keep mixed projects editable but refuse playback
-until every track targets Mono; they never silently omit the USB parts.
+Automation changes the running track instance, not the saved patch or another track.
+Bindings follow stable pedal identities rather than insert positions. An instrument
+binding only applies to its named type; incompatible or unbound commands are reported,
+not silently redirected.
+
+Blank rows and OFF break ties. **Stop** ends source notes and permits effect tails
+for up to eight seconds. **Panic / cut tails** silences them immediately. Fresh Play
+and cursor starts reconstruct control values but clear effect history; uninterrupted
+loops retain it. WAV export runs the same DSP from the beginning, then fades the
+existing tails for the chosen duration, capped at eight seconds. **Cut tails** ends
+the file at the song boundary.
+
+Internal-only projects support Scala tunings and WAV rendering. On Android,
+**Destination → USB MIDI** instead uses the track's port, channel, bank/program and
+CC settings. Its insert strip is inactive, not applied to the external instrument.
+Mixed USB projects do not support custom tunings or offline WAV rendering. Deck and
+NextUI preserve their settings but refuse playback until every track is internal;
+they never silently omit USB parts.
 
 ### Game Boy Advance: Maxmod samples and XM
 

@@ -31,6 +31,9 @@ import org.thortracker.system.SoundSystem
 import org.thortracker.system.SoundSystems
 import org.thortracker.system.fm.RhythmRomMenu
 import org.thortracker.system.fm.Ym2608RhythmRom
+import org.thortracker.system.studio.StudioAssignments
+import org.thortracker.system.studio.StudioSound
+import org.thortracker.system.studio.StudioInstruments
 
 /**
  * Everything a frontend's menus need from its platform: files, displays, persistence and status. The shared
@@ -40,6 +43,8 @@ interface MenuHost {
     val supportsUsbMidi: Boolean get() = false
     fun midiOutputs(): List<Pair<String, String>> = emptyList()
     fun midiPanic() {}
+    /** Silence local Studio voices and effect tails immediately. Not an all-ports MIDI message. */
+    fun audioPanic() {}
     /** The display popups open on (the touched one, or the controller-focused one). */
     val modalDisplay: Int
     /** How many displays show panes (2 on the Thor; 1 elsewhere). */
@@ -94,6 +99,17 @@ interface MenuHost {
      * extensions go through [error] instead.
      */
     fun loadFile(title: String, extensions: List<String>, maxBytes: Int, loaded: (name: String, extension: String, bytes: ByteArray) -> Unit)
+    /** Decode before posting [picked] back to the editor. */
+    fun <T> pickFileDecoded(title: String, extensions: List<String>, maxBytes: Int, decode: (ByteArray) -> T,
+        picked: (name: String, extension: String, value: T) -> Unit) {
+        loadFile(title, extensions, maxBytes) { name, extension, bytes ->
+            val value = try { decode(bytes) } catch (e: IllegalArgumentException) {
+                error(e.message ?: "Unsupported file")
+                return@loadFile
+            }
+            picked(name, extension, value)
+        }
+    }
     /**
      * Keeps [bytes], a checked YM2608 rhythm ROM ([org.thortracker.system.fm.Ym2608RhythmRom.problem] found nothing), as
      * this device's firmware (`firmware/ym2608_adpcm_rom.bin` in the app's data, never in a project or export), installs
@@ -146,8 +162,13 @@ class AppMenus(
         }
         override fun pickFile(title: String, extensions: List<String>, maxBytes: Int, picked: (String, String, ByteArray) -> Unit) =
             host.loadFile(title, extensions, maxBytes, picked)
+        override fun <T> pickFileDecoded(title: String, extensions: List<String>, maxBytes: Int, decode: (ByteArray) -> T,
+            picked: (String, String, T) -> Unit) = host.pickFileDecoded(title, extensions, maxBytes, decode, picked)
         override fun status(message: String) = host.status(message)
         override fun error(message: String) = host.error(message)
+        override fun patternCursor(origin: ViewState): ViewState =
+            states.getOrNull(focus)?.takeIf { it.kind == ViewKind.PATTERN }
+                ?: states.firstOrNull { it.kind == ViewKind.PATTERN } ?: origin
         override fun installRhythmRom(bytes: ByteArray): String? {
             val problem = host.installRhythmRom(bytes)
             if (problem == null) transport.songChanged(session.song)
@@ -161,7 +182,7 @@ class AppMenus(
 
     fun chooseView(index: Int) {
         val kinds = ViewKind.entries.filter { it in session.song.system.views }
-        choose("View on display ${index + 1}", kinds.map { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { selected ->
+        choose("View on display ${index + 1}", kinds.map { it.displayName }) { selected ->
             states[index].switchKind(kinds[selected])
             states[index].pinned = true
             host.refresh()
@@ -227,6 +248,19 @@ class AppMenus(
         menu("Thor Tracker", buildList {
             add("Files" to ::fileMenu)
             add("Song details / tempo" to host::showSongDetails)
+            if (session.song.sound is StudioSound) {
+                val state = states[host.modalDisplay.coerceIn(states.indices)]
+                add("Track strip" to {
+                    state.switchKind(ViewKind.STUDIO_STRIP)
+                    state.pinned = true
+                    host.refresh()
+                })
+                add("Instrument / presets…" to { StudioInstruments.library(session, context, state.instrument) })
+                if (state.kind == ViewKind.PATTERN) add("Write module parameter…" to {
+                    StudioAssignments.choose(session, context, state)
+                })
+                add("Panic / cut tails" to host::audioPanic)
+            }
             // The YM2608 drum ROM is device firmware the user supplies; offered (with its state) while a song of a
             // system with rhythm drums (the NES EPSM, the YM2608) is open.
             if (session.song.system.rhythmRom) {
@@ -654,7 +688,17 @@ class AppMenus(
         val song = session.song
         val errors = song.system.errors(song)
         if (errors.isNotEmpty()) return host.error(errors.joinToString("\n"))
-        choose("Export .wav: length", WavOptions.CHOICES.map { it.label }) { host.exportWav(song, WavOptions.CHOICES[it]) }
+        val studio = song.sound is StudioSound
+        val title = if (studio) "Export .wav: length (Studio tails capped at 8s)" else "Export .wav: length"
+        val choices = WavOptions.CHOICES.map { option ->
+            when {
+                !studio -> option.label
+                option.fadeSeconds == 0 -> "Once through, cut tails"
+                option.loops == 0 -> "Once through + ${option.fadeSeconds}s tail fade"
+                else -> "Once + ${option.loops} ${if (option.loops == 1) "loop" else "loops"} + ${option.fadeSeconds}s tail fade"
+            }
+        }
+        choose(title, choices) { host.exportWav(song, WavOptions.CHOICES[it]) }
     }
 
     /** Help → About's actions: report a bug (the issue form) and the diagnostics text. */

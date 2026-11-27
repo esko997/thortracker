@@ -49,7 +49,7 @@ object PceSystem : SoundSystem {
     override val effects: List<EffectSpec> get() = PceRules.EFFECTS
 
     /** Every shared view plus the Wave view (the song's 32-step waves). */
-    override val views = ViewKind.entries.toSet()
+    override val views = ViewKind.standard
     override val exports = listOf(ExportFormat("vgm") { PceVgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help

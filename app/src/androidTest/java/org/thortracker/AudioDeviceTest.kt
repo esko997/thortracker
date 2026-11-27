@@ -23,6 +23,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import org.thortracker.system.midi.MidiTrack
 import org.thortracker.system.studio.StudioSound
+import org.thortracker.system.studio.MonoPatch
 import org.thortracker.system.studio.StudioTarget
 import org.thortracker.system.studio.StudioTrack
 import org.thortracker.system.studio.studio
@@ -285,17 +286,17 @@ class AudioDeviceTest {
                 assertTrue("native row deadlines advance across loops", row[3] > previousTime)
                 previousTime = row[3]
             }
-            val edited = song.copy(sound = sound.withPatch(1, sound.patch(1)!!.copy(cutoff = 23)))
+            val edited = song.copy(sound = sound.withPatch(1, (sound.patch(1) as MonoPatch).copy(cutoff = 23)))
             audio.update(edited)
             var heard = nextRow()
-            repeat(8) { if (heard.studio.patch(1)!!.cutoff != 23) heard = nextRow() }
-            assertEquals(23, heard.studio.patch(1)!!.cutoff)
+            repeat(8) { if ((heard.studio.patch(1) as MonoPatch).cutoff != 23) heard = nextRow() }
+            assertEquals(23, (heard.studio.patch(1) as MonoPatch).cutoff)
             assertEquals(sound.tracks, heard.studio.tracks)
             audio.stop()
             await("mixed native timeline stops", audio) { audio.position().let { !it.pending && !it.playing } }
             audio.play(0, 2)
             cursor = -1
-            assertEquals(23, nextRow().studio.patch(1)!!.cutoff)
+            assertEquals(23, (nextRow().studio.patch(1) as MonoPatch).cutoff)
             assertEquals(2L, row[2])
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
             audio.stop()
@@ -320,7 +321,7 @@ class AudioDeviceTest {
             await("Studio starts and advances", audio) { audio.position().playing && audio.position().row >= 3 }
             val before = audio.position().row
             val sound = song.sound as org.thortracker.system.studio.StudioSound
-            val changed = sound.withPatch(1, sound.patch(1)!!.copy(waveform = 1, cutoff = 28, resonance = 65))
+            val changed = sound.withPatch(1, (sound.patch(1) as MonoPatch).copy(waveform = 1, cutoff = 28, resonance = 65))
             audio.update(song.copy(sound = changed))
             await("Studio keeps advancing after a live patch edit", audio) {
                 audio.position().playing && audio.position().row > before

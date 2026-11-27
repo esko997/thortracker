@@ -79,6 +79,9 @@ add_library(chip_engines STATIC
     chip_engine.c
     studio/studio_chip.c
     studio/mono_synth.c
+    studio/studio_score.c
+    studio/modules/studio_fx.c
+    studio/modules/studio_voice.c
     chip_wav.c
     cpu6502.c
     huge_chip.c

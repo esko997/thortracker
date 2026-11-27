@@ -6,6 +6,10 @@ import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import org.thortracker.audio.WaveChunks
+import org.thortracker.audio.u16le
+import org.thortracker.audio.u32le
+import org.thortracker.audio.u8
 
 /** Original procedural sounds and offline PCM edits. Every result is suitable for an undoable model replacement. */
 object GbaSamples {
@@ -57,29 +61,12 @@ object GbaSamples {
     fun fromWav(bytes: ByteArray, name: String = "Imported", rootNote: Int = 48): GbaSample {
         require(bytes.size in 12..MAX_WAV_BYTES) { "WAV must be 12 bytes–16 MiB; shorten the source first" }
         require(rootNote in 0..95) { "Root note must be C0–B7" }
-        fun u8(p: Int) = bytes[p].toInt() and 255
-        fun u16(p: Int) = u8(p) or (u8(p + 1) shl 8)
-        fun u32(p: Int): Long = u16(p).toLong() or (u16(p + 2).toLong() shl 16)
-        fun tag(p: Int, value: String) = value.indices.all { u8(p + it) == value[it].code }
-        require(tag(0, "RIFF") && tag(8, "WAVE")) { "Import an uncompressed RIFF WAVE file" }
-        val endLong = u32(4) + 8
-        require(endLong in 12..bytes.size.toLong()) { "WAV RIFF length is truncated or invalid" }
-        val end = endLong.toInt()
-        var p = 12
-        var format = -1; var data = -1; var dataSize = 0; var formatSize = 0
-        while (p < end) {
-            require(end - p >= 8) { "Truncated WAV chunk header" }
-            val size = u32(p + 4)
-            require(size <= end - p - 8) { "Truncated WAV chunk" }
-            if (tag(p, "fmt ")) { require(format < 0) { "WAV has duplicate format chunks" }; format = p + 8; formatSize = size.toInt() }
-            if (tag(p, "data")) { require(data < 0) { "WAV has duplicate data chunks" }; data = p + 8; dataSize = size.toInt() }
-            val next = p.toLong() + 8 + size + (size and 1)
-            require(next <= end) { "WAV chunk is missing its padding byte" }
-            p = next.toInt()
-        }
-        require(format >= 0 && formatSize >= 16 && data >= 0) { "WAV needs format and data chunks" }
-        val encoding = u16(format); val channels = u16(format + 2)
-        val rate = u32(format + 4); val align = u16(format + 12); val bits = u16(format + 14)
+        val wav = WaveChunks.parse(bytes)
+        val format = wav.fmt
+        val data = wav.data
+        val dataSize = wav.dataBytes
+        val encoding = bytes.u16le(format); val channels = bytes.u16le(format + 2)
+        val rate = bytes.u32le(format + 4); val align = bytes.u16le(format + 12); val bits = bytes.u16le(format + 14)
         require(channels in 1..2) { "WAV must be mono or stereo" }
         require(rate in 1L..GbaSample.MAX_RATE.toLong()) { "WAV rate must be 1–48000 Hz; resample the source first" }
         require((encoding == 1 && bits in listOf(8, 16, 24, 32)) || (encoding == 3 && bits in listOf(32, 64))) {
@@ -90,15 +77,15 @@ object GbaSamples {
         val count = dataSize / align
         require(count in 1..GbaSound.MAX_PCM_BYTES) { "Sample exceeds the 512 KiB PCM budget; trim or resample before import" }
         fun value(at: Int): Double = if (encoding == 3) {
-            val raw = if (bits == 32) Float.fromBits(u32(at).toInt()).toDouble()
-            else Double.fromBits(u32(at) or (u32(at + 4) shl 32))
+            val raw = if (bits == 32) Float.fromBits(bytes.u32le(at).toInt()).toDouble()
+            else Double.fromBits(bytes.u32le(at) or (bytes.u32le(at + 4) shl 32))
             require(raw.isFinite()) { "WAV contains non-finite floating-point samples" }
             raw.coerceIn(-1.0, 1.0)
         } else when (bits) {
-            8 -> (u8(at) - 128) / 128.0
-            16 -> u16(at).toShort() / 32768.0
-            24 -> ((u8(at) or (u8(at + 1) shl 8) or (u8(at + 2) shl 16)) shl 8 shr 8) / 8388608.0
-            else -> u32(at).toInt() / 2147483648.0
+            8 -> (bytes.u8(at) - 128) / 128.0
+            16 -> bytes.u16le(at).toShort() / 32768.0
+            24 -> ((bytes.u8(at) or (bytes.u8(at + 1) shl 8) or (bytes.u8(at + 2) shl 16)) shl 8 shr 8) / 8388608.0
+            else -> bytes.u32le(at).toInt() / 2147483648.0
         }
         val pcm = List(count) { i ->
             var sum = 0.0

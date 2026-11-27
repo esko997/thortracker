@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "chip_engine.h"
+#include "studio/studio_runtime.h"
 
 #define RATE 48000
 
@@ -21,10 +22,14 @@ static ChipMachine* song_spare;      /* seeks run here outside the lock, then sw
 static ChipMachine* audition_spare;  /* likewise for auditions */
 static ChipImage* image;   /* the image the machines play */
 static ChipImage* spare;   /* loaded and validated outside the lock, then swapped with image */
+static StudioBank *studio_bank;
+static StudioLive *studio_live; /* apply runs synchronously under ao_lock; prepare/retire outside */
 static int has_image;
 static int playing;
+static int tailing;
 static int auditioning;
 static int audition_ticks_left;
+static int audition_releasing, audition_stopped;
 static int audition_channel;
 static int borrowed_channel = -1;   /* channel muted on the song machine */
 static float song_buf[CHIP_MAX_TICK_FRAMES * 2];
@@ -40,12 +45,12 @@ static void feed(int additional) {
     const uint64_t started = ao_ticks_ns();
     ++callbacks;
     /* A callback more than two device buffers after the previous one while sounding probably let the device run dry. */
-    if ((playing || auditioning) && last_callback_ns && device_frames > 0 &&
+    if ((playing || tailing || auditioning) && last_callback_ns && device_frames > 0 &&
         started - last_callback_ns > 2 * (uint64_t)device_frames * 1000000000ULL / RATE)
         ++late_callbacks;
     last_callback_ns = started;
     while (additional > 0) {
-        if (!playing && !auditioning) {
+        if (!playing && !tailing && !auditioning) {
             static const float silence[512 * 2];
             int n = additional < (int)sizeof silence ? additional : (int)sizeof silence;
             ao_put(silence, n);
@@ -53,7 +58,7 @@ static void feed(int additional) {
             continue;
         }
         int frames = 0;
-        if (playing) {
+        if (playing || tailing) {
             int order, row, tick;
             /* Borrowing changes at a tick boundary, as audio_engine.cpp does. */
             const int desired = auditioning ? audition_channel : -1;
@@ -63,15 +68,23 @@ static void feed(int additional) {
                 borrowed_channel = desired;
             }
             ops->position(song_machine, &order, &row, &tick);
-            pos_order = order;
-            pos_row = row;
+            if (playing) {
+                pos_order = order;
+                pos_row = row;
+            }
             frames = ops->tick(song_machine, song_buf);
-            if (frames <= 0) { if (frames < 0) ++faults; playing = 0; frames = 0; }
+            if (frames <= 0) { if (frames < 0) ++faults; playing = tailing = 0; frames = 0; }
         }
         if (auditioning) {
             int n = ops->tick(audition_machine, audition_buf);
             /* n == 0: a released note has ended. */
-            if (n <= 0 || --audition_ticks_left <= 0) auditioning = 0;
+            if (n <= 0) {
+                if (n < 0) ++faults;
+                auditioning = 0;
+            } else if (!audition_releasing && --audition_ticks_left <= 0) {
+                if (ops->stop_tail && ops->release(audition_machine)) audition_releasing = 1;
+                else auditioning = 0;
+            }
             if (n > 0) {
                 if (frames == 0) { memset(song_buf, 0, sizeof(float) * 2 * (size_t)n); frames = n; }
                 int m = n < frames ? n : frames;
@@ -103,14 +116,19 @@ int da_open(const char* system_id) {
 }
 
 int da_set_image(const unsigned char* bytes, int size) {
-    if (size < 0 || (size_t)size != ops->image_size) return -1;
-    if (ops->load_image(spare, bytes, (size_t)size) != CHIP_OK) return -2;
+    if(size<0) return -1;
+    if(ops==&studio_mono_ops) {
+        if(studio_load_score(spare,bytes,(size_t)size,&studio_bank)!=CHIP_OK ||
+           studio_live_prepare(&studio_live,spare,RATE)!=CHIP_OK) { has_image=0; return -2; }
+    } else if((size_t)size!=ops->image_size || ops->load_image(spare,bytes,(size_t)size)!=CHIP_OK) return -2;
     ao_lock();
     ChipImage* t = image;
     image = spare;
     spare = t;
     has_image = 1;
-    if (playing) ops->apply_image(song_machine, image);
+    if (playing || tailing) ops->apply_image(song_machine, image);
+    if (auditioning && ops == &studio_mono_ops && ops->apply_audition_image)
+        ops->apply_audition_image(audition_machine, image);
     ao_unlock();
     return 0;
 }
@@ -132,6 +150,8 @@ int da_play(int order, int row, int max_ticks) {
         pos_row = row;
     }
     playing = r == CHIP_OK;
+    tailing = 0;
+    if (ops->stop_tail) auditioning = 0; /* fresh Studio starts do not inherit audition effects */
     borrowed_channel = -1;   /* start resets the machine: nothing is muted */
     ao_unlock();
     return r;
@@ -139,7 +159,18 @@ int da_play(int order, int row, int max_ticks) {
 
 void da_stop(void) {
     ao_lock();
+    if (playing) tailing = ops->stop_tail && ops->stop_tail(song_machine);
+    if (auditioning && ops->stop_tail && !audition_stopped) {
+        audition_releasing = audition_stopped = 1;
+        if (!ops->stop_tail(audition_machine)) auditioning = 0;
+    }
     playing = 0;
+    ao_unlock();
+}
+
+void da_panic(void) {
+    ao_lock();
+    playing = tailing = auditioning = 0;
     ao_unlock();
 }
 
@@ -150,6 +181,7 @@ int da_audition(int channel, int note, int instrument, int fine, int ticks) {
     if (r == CHIP_OK) swap(&audition_machine, &audition_spare);
     auditioning = r == CHIP_OK;
     audition_ticks_left = ticks;
+    audition_releasing = audition_stopped = 0;
     audition_channel = channel;
     ao_unlock();
     return r;
@@ -158,7 +190,10 @@ int da_audition(int channel, int note, int instrument, int fine, int ticks) {
 void da_release_audition(void) {
     ao_lock();
     /* Chips with a release phase keep sounding until their tick reports the end. */
-    if (auditioning && !ops->release(audition_machine)) auditioning = 0;
+    if (auditioning && (!audition_releasing || !ops->stop_tail)) {
+        if (ops->stop_tail) audition_releasing = 1;
+        if (!ops->release(audition_machine)) auditioning = 0;
+    }
     ao_unlock();
 }
 
@@ -180,11 +215,14 @@ void da_close(void) {
     if (song_spare) ops->destroy(song_spare);
     if (audition_spare) ops->destroy(audition_spare);
     song_machine = audition_machine = song_spare = audition_spare = NULL;
+    studio_live_destroy(studio_live); studio_live=NULL;
+    studio_bank_drop(studio_bank); studio_bank=NULL;
     free(image);
     free(spare);
     image = spare = NULL;
     /* Closed state, so da_open can start another system's engine. */
     ops = NULL;
-    has_image = playing = auditioning = 0;
+    has_image = playing = tailing = auditioning = 0;
+    audition_releasing = audition_stopped = 0;
     borrowed_channel = -1;
 }

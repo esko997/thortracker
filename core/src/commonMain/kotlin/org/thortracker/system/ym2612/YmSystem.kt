@@ -71,7 +71,7 @@ object YmSystem : SoundSystem {
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = YmRules.EFFECTS
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
     override val exports = listOf(
         ExportFormat("vgm") { YmExport.export(it, YmExport.Format.VGM) },
         ExportFormat("xgm", ".xgm (XGM2)") { YmExport.export(it, YmExport.Format.XGM) },

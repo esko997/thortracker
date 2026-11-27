@@ -63,7 +63,7 @@ abstract class KonamiSccSystem internal constructor(val variant: SccVariant) : S
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = SccRules.EFFECTS
-    override val views = ViewKind.entries.toSet()
+    override val views = ViewKind.standard
     override val exports = listOf(ExportFormat("vgm") { SccVgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help(variant)

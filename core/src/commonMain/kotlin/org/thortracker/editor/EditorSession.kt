@@ -7,6 +7,9 @@ import org.thortracker.model.Scale
 import org.thortracker.model.Songs
 import org.thortracker.model.Tuning
 import org.thortracker.model.TuningMap
+import org.thortracker.system.studio.StudioPcm
+import org.thortracker.system.studio.StudioAssets
+import org.thortracker.system.studio.StudioSound
 
 /**
  * Selection shared by every display. Views publish their cursor here; sibling views that follow the
@@ -202,6 +205,37 @@ class EditorSession(initial: Song) {
         redoStack.clear()
     }
 
+    private class HistoryPcm(val pcm: StudioPcm) {
+        override fun hashCode(): Int = pcm.hashCode()
+        override fun equals(other: Any?): Boolean = other is HistoryPcm && pcm === other.pcm
+    }
+
+    /** Keep a contiguous Undo suffix. Redo has already been discarded on an edit; moving entries never adds PCM. */
+    private fun trimStudioHistory(): Boolean {
+        val seen = HashSet<HistoryPcm>()
+        var bytes = 0L
+        var lastBank: StudioAssets? = null
+        fun include(document: Song): Boolean {
+            val assets = (document.sound as? StudioSound)?.assets ?: return true
+            if (assets === lastBank) return bytes <= STUDIO_HISTORY_BYTES
+            lastBank = assets
+            for (id in assets.ids) {
+                val pcm = checkNotNull(assets[id])
+                if (seen.add(HistoryPcm(pcm))) bytes += pcm.sampleCount.toLong() * Float.SIZE_BYTES
+            }
+            return bytes <= STUDIO_HISTORY_BYTES
+        }
+        include(song)
+        gestureStart?.let { include(it) } // Current plus gesture origin fit even at two full project banks.
+        var discard = undoStack.size
+        for (index in undoStack.lastIndex downTo 0) {
+            if (!include(undoStack[index].before)) break
+            discard = index
+        }
+        repeat(discard) { undoStack.removeFirst() }
+        return discard != 0
+    }
+
     /**
      * Applies an immutable command. Returns true if the document changed. Outside a gesture each
      * change is its own undo step; inside a gesture the gesture is one step.
@@ -218,7 +252,8 @@ class EditorSession(initial: Song) {
         }
         if (!inGesture) push(Entry(label, before, after, previousSelection, selection))
         else { redoStack.clear(); gestureEdits++; gestureInner = label }
-        message = null
+        val assetsChanged = (before.sound as? StudioSound)?.assets !== (after.sound as? StudioSound)?.assets
+        message = if (assetsChanged && trimStudioHistory()) "Older Undo history trimmed to keep Studio samples within 64 MiB" else null
         onSongChanged?.invoke(after)
         stateChanged()
         return true
@@ -265,7 +300,7 @@ class EditorSession(initial: Song) {
      */
     fun audition(channel: Int, note: Int, instrument: Int, detune: Int = 0) {
         val system = song.system
-        if (note !in system.noteRange || detune !in 0..system.fine.max) return
+        if (note !in system.noteRange || detune !in 0..system.auditionArgumentMax) return
         system.auditionProblem(song, channel, note, instrument, detune)?.let { return note(it) }
         onAudition?.invoke(channel, note, instrument, detune)
     }
@@ -731,6 +766,7 @@ class EditorSession(initial: Song) {
 
     companion object {
         const val HISTORY_LIMIT = 400
+        private const val STUDIO_HISTORY_BYTES = 64L * 1024 * 1024
         const val MAX_STEP = 16
         /** Pattern indices are kept below 256; the system's own data limits are reported by validation. */
         const val MAX_PATTERNS = 256

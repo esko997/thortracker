@@ -77,7 +77,7 @@ abstract class WonderSwanSystemBase internal constructor(val color: Boolean) : S
     override val effects: List<EffectSpec> get() = WsRules.effects(color)
 
     /** Every shared view plus the Wave view (the song's 32-step waves). */
-    override val views = ViewKind.entries.toSet()
+    override val views = ViewKind.standard
     override val exports = listOf(ExportFormat("vgm") { WsVgm.export(it) })
     override val fine: FinePitch = WsFine
     override val help: SystemHelp = WsHelp(color)

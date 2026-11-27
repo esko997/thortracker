@@ -67,7 +67,7 @@ abstract class CbmSystem internal constructor(val chip: CbmChip) : SoundSystem {
 
     override val effects: List<EffectSpec> get() = CbmRules.effects(chip)
 
-    override val views = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views = ViewKind.standard - ViewKind.WAVE
 
     /** The project and WAV (rendered by the generic native WAV export); no register-log format has these chips. */
     override val exports: List<ExportFormat> = emptyList()

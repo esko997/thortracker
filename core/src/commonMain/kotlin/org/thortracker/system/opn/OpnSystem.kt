@@ -90,7 +90,7 @@ abstract class OpnFamilySystem(val chip: OpnChip) : SoundSystem {
     override val nameOctaveOffset = 0
 
     override val effects: List<EffectSpec> get() = OpnRules.EFFECTS.filter { chip.opna || it.code !in OpnRules.OPNA_ONLY }
-    override val views: Set<ViewKind> = ViewKind.entries.toSet() - ViewKind.WAVE
+    override val views: Set<ViewKind> = ViewKind.standard - ViewKind.WAVE
     override val exports: List<ExportFormat> = listOf(ExportFormat("vgm") { OpnVgm.export(it) })
     override val fine: FinePitch = Fine
     override val help: SystemHelp = Help()

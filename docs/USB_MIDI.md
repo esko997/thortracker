@@ -28,9 +28,11 @@ Gate is a percentage of each strike. Android runs 48 tracker ticks per second an
 ## Internal instruments alongside USB MIDI
 
 Choose **Files → New Studio song** for internal synthesis with optional USB tracks.
-**Studio tracks and destinations…** assigns each of its one to eight tracks to Mono synth
-or USB MIDI. Mono patches are edited in Instrument; USB bank, program and CC settings stay
-with the track. See [Studio instruments](MANUAL.md#studio-internal-instruments).
+**Studio tracks and destinations…** assigns each of its one to eight tracks to
+**Internal instruments** or **USB MIDI**. Internal patches and sample assets belong
+to the instrument bank; USB bank, program and CC settings stay with the track.
+Internal pedals do not process external USB instruments. See
+[Studio instruments](MANUAL.md#studio-internal-instruments).
 
 In a mixed Studio project, the internal audio engine supplies the row clock and image version
 used by USB dispatch. USB is paced against the native output-presentation estimate, not a

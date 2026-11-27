@@ -10,7 +10,6 @@ import org.thortracker.editor.Action
 import org.thortracker.editor.EditorSession
 import org.thortracker.editor.ViewKind
 import org.thortracker.input.Keymap
-import org.thortracker.model.ProjectCodec
 import org.thortracker.model.Scl
 import org.thortracker.model.Song
 import org.thortracker.model.Tuning
@@ -73,9 +72,12 @@ class DeckShell(
     /** The project file the working song was opened from or last saved to. */
     private var currentFile: String? = null
     private var dirtySince = 0uL
-    private var savedSong: Song? = null
+    private var recoveredVersion = -1L
+    private var failedRecoveryVersion = -1L
+    private var documentId = 0L
 
     override val modalDisplay: Int get() = 0
+    override fun audioPanic() { audio.silence() }
     override val displayCount: Int get() = 1
     override var keymap: Keymap = Keymap.DEFAULT
         private set
@@ -99,7 +101,7 @@ class DeckShell(
     fun recovered(): Song? {
         if (!Files.exists(working)) return null
         return runCatching {
-            ProjectCodec.decode(requireNotNull(Files.readText(working)) { "Cannot read working project" })
+            Files.readProject(working)
         }.getOrElse {
             protectRecovery = true
             error("Working project preserved. ${it.message}. Use Save as for edits in this session.")
@@ -107,14 +109,18 @@ class DeckShell(
         }
     }
 
-    /** Call every frame with the clock: writes the working song a second after it last changed. */
-    fun autosave(now: ULong, force: Boolean = false) {
-        val song = session.song
-        if (protectRecovery || song === savedSong) return
+    /** Capture a revision once edits settle; regular frames never wait for serialization/SD writes. */
+    fun autosave(now: ULong) {
+        val version = session.documentVersion
+        if (protectRecovery || version == recoveredVersion || version == failedRecoveryVersion || recoveryJob != null) return
         if (dirtySince == 0uL) dirtySince = now
-        if (!force && now - dirtySince < 1000uL) return
+        if (now - dirtySince < 1000uL) return
         dirtySince = 0uL
-        if (Files.write(working, ProjectCodec.encode(song).encodeToByteArray())) savedSong = song
+        val song = session.song
+        val path = working
+        recoveryJob = RecoveryJob(version, fileWorker().execute(TransferMode.SAFE, { path to song }) { (file, snapshot) ->
+            runCatching { check(Files.writeProject(file, snapshot)) { "Cannot write working project" } }
+        })
     }
 
     override fun refresh() {
@@ -163,16 +169,19 @@ class DeckShell(
     }
 
     override fun replace(song: Song) {
-        if (!protectRecovery) Files.write(previous, ProjectCodec.encode(session.song).encodeToByteArray())
+        if (!protectRecovery) {
+            runCatching { check(Files.writeProject(previous, session.song)) { "Cannot write previous project" } }
+                .onFailure { error("Previous-project backup failed: ${it.message}"); return }
+        }
+        documentId++
+        dirtySince = 0uL
         session.replaceSong(song)
         currentFile = null
-        autosave(0uL, force = true)
         status("${song.title} loaded")
     }
 
     override fun openProject() = FileBrowser(popups, "Open project", listOf(".thor")) { path ->
-        val song = Files.readText(path)?.let { runCatching { ProjectCodec.decode(it) } }
-        song?.fold({ replace(it); currentFile = path }, { error("Not opened: ${it.message}") }) ?: error("Not opened: $path could not be read")
+        readProject(path) { replace(it); if (session.song === it) currentFile = path }
     }.show(documents)
 
     override fun saveProject() { currentFile?.let(::writeProject) ?: saveProjectAs() }
@@ -181,10 +190,15 @@ class DeckShell(
         FileBrowser(popups, "Save project", listOf(".thor"), saveName = Files.safeName(session.song.title) + ".thor", picked = ::writeProject).show(documents)
 
     private fun writeProject(path: String) {
-        if (Files.write(path, ProjectCodec.encode(session.song).encodeToByteArray())) {
-            currentFile = path
-            status("Project saved to ${Files.pretty(path)}")
-        } else error("Could not write ${Files.pretty(path)}")
+        val song = session.song
+        val targetId = documentId
+        fileWork(onFailure = { error("Project not saved: $it") }) {
+            check(Files.writeProject(path, song)) { "Could not write ${Files.pretty(path)}" }
+            ({
+                if (documentId == targetId) currentFile = path
+                status("Project saved to ${Files.pretty(path)}")
+            })
+        }
     }
 
     override fun export(song: Song, format: ExportFormat) =
@@ -311,8 +325,60 @@ class DeckShell(
     }
 
     override fun recoverPrevious() {
-        val text = Files.readText(previous) ?: return error("There is no readable previous project to recover")
-        runCatching { ProjectCodec.decode(text) }.fold(::replace) { error("Previous project preserved: ${it.message}") }
+        if (!Files.exists(previous)) return error("There is no previous project to recover")
+        readProject(previous, ::replace)
+    }
+
+    private fun readProject(path: String, loaded: (Song) -> Unit) {
+        val version = session.documentVersion
+        fileWork("Open project", onFailure = { error("Project not opened: $it") }) {
+            val song = Files.readProject(path)
+            ({
+                if (version == session.documentVersion) loaded(song)
+                else status("Project not opened: the working document changed")
+            })
+        }
+    }
+
+    private class FileJob(val future: Future<Result<() -> Unit>>, val progress: PopupSpec?, val failed: (String) -> Unit)
+    private var fileWorker: Worker? = null
+    private var fileJob: FileJob? = null
+    private class RecoveryJob(val version: Long, val future: Future<Result<Unit>>)
+    private var recoveryJob: RecoveryJob? = null
+
+    private fun fileWorker(): Worker = fileWorker ?: Worker.start(name = "project-files").also { fileWorker = it }
+
+    private fun finishRecovery(job: RecoveryJob) {
+        recoveryJob = null
+        recordRecovery(job.version, job.future.result)
+    }
+
+    private fun recordRecovery(version: Long, result: Result<Unit>) {
+        result.fold({ recoveredVersion = version }, {
+            failedRecoveryVersion = version
+            status("Recovery not saved: ${it.message ?: "write failed"}")
+        })
+    }
+
+    /** This worker only reads or writes files. Completion closures touch the editor on the frontend thread. */
+    private fun fileWork(title: String? = null, onFailure: (String) -> Unit, work: () -> (() -> Unit)) {
+        if (fileJob != null) return error("A file operation is already running")
+        val worker = fileWorker()
+        val progress = title?.let { PopupSpec(it, "Reading file…", listOf(PopupItem.dismiss())) }
+        val task = worker.execute(TransferMode.SAFE, { work }) { operation -> runCatching { operation() } }
+        fileJob = FileJob(task, progress, onFailure)
+        if (progress != null) popups.show(progress, 0)
+    }
+
+    fun pumpFiles() {
+        recoveryJob?.let { if (it.future.state == FutureState.COMPUTED) finishRecovery(it) }
+        val job = fileJob ?: return
+        if (job.future.state != FutureState.COMPUTED) return
+        val result = job.future.result
+        fileJob = null
+        if (job.progress != null && popups.top !== job.progress) return // Cancel/Back discarded the read.
+        if (job.progress != null) popups.closeAll()
+        result.fold({ it() }, { job.failed(it.message ?: "file operation failed") })
     }
 
     override fun exportKeymap() =
@@ -357,8 +423,20 @@ class DeckShell(
         if (result.problem != null) error("Tuning library: ${result.problem}") else done?.invoke(result)
     }
 
-    /** Finish an in-flight atomic write before exit; discard its UI callback and release the native worker. */
+    /** Complete pending writes and the final working snapshot; do not deliver cancelled/outstanding read results. */
     fun close() {
+        fileWorker?.requestTermination(processScheduledJobs = true)?.result
+        recoveryJob?.let(::finishRecovery)
+        fileJob?.let { job ->
+            val result = job.future.result
+            if (job.progress == null) result.fold({ it() }, { job.failed(it.message ?: "file operation failed") })
+        }
+        fileJob = null
+        fileWorker = null
+        val version = session.documentVersion
+        if (!protectRecovery && version != recoveredVersion) recordRecovery(version, runCatching {
+            check(Files.writeProject(working, session.song)) { "Cannot write working project" }
+        })
         tuningDone = null
         tuningWorker?.requestTermination(processScheduledJobs = true)?.result
         tuningTask?.result // Consume the completed future even when its popup callback is discarded.
@@ -445,6 +523,22 @@ class DeckShell(
             val bytes = Files.readBytes(path, max = maxBytes.toLong()) ?: return@FileBrowser error("$file could not be read or is larger than ${maxBytes / 1024} KiB")
             loaded(file.dropLast(extension.length), extension, bytes)
         }.show(documents)
+
+    override fun <T> pickFileDecoded(title: String, extensions: List<String>, maxBytes: Int,
+        decode: (ByteArray) -> T, picked: (String, String, T) -> Unit) {
+        FileBrowser(popups, title, extensions) { path ->
+            val file = path.substringAfterLast('/')
+            val extension = extensions.firstOrNull { file.endsWith(it, ignoreCase = true) }
+                ?: return@FileBrowser error("Choose a ${extensions.joinToString(" or ")} file")
+            fileWork(title, onFailure = { error("Not loaded: $it") }) {
+                val bytes = checkNotNull(Files.readBytes(path, max = maxBytes.toLong())) {
+                    "$file could not be read or is larger than ${maxBytes / 1024} KiB"
+                }
+                val value = decode(bytes)
+                ({ picked(file.dropLast(extension.length), extension, value) })
+            }
+        }.show(documents)
+    }
 
     /** [MenuHost.installRhythmRom]: saves the checked [bytes] (temporary file and rename), then installs them. */
     override fun installRhythmRom(bytes: ByteArray): String? {
