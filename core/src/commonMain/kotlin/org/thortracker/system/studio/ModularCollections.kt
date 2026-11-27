@@ -58,7 +58,7 @@ internal object SettingsWire : BoundedList<Setting>(Setting.serializer(), 8)
     })
     init { require(settings.size <= 8 && settings.zipWithNext().all { (a,b) -> a.key < b.key }) { "Duplicate or unordered modular controls" } }
     @Transient val values: Map<Int,Int> = object : AbstractMap<Int,Int>() {
-        override val entries = object : AbstractSet<Map.Entry<Int,Int>>() {
+        override val entries: Set<Map.Entry<Int,Int>> = object : AbstractSet<Map.Entry<Int,Int>>() {
             override val size get() = settings.size
             override fun iterator(): Iterator<Map.Entry<Int,Int>> = settings.iterator()
         }

@@ -87,7 +87,7 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
         // The cap counts driver ticks, which multispeed songs run several times per frame.
         val capTicks = (AUDITION_CAP_SECONDS * song.system.ticksPerSecond(song)).roundToInt()
         commandError = failure(da_audition(channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune), capTicks), "audition")
-        if (commandError == null) auditionSlot = instrument
+        if (commandError == null) auditionSlot = if (song.sound is org.thortracker.system.studio.StudioSound) instrument else null
     }
 
     override fun releaseAudition() { commandError = null; auditionSlot = null; if (system != null) da_release_audition() }

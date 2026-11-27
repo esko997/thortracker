@@ -90,7 +90,6 @@ class ChipAudio(
     private var idleCheck: ScheduledFuture<*>? = null
     private var retrySong: Song? = null
     private var auditionSlot: Int? = null
-    val modularProfileName: String get() = modularLimits.name
     // Mixed only: resolve the native row's image version to the exact USB score heard at that boundary.
     private val scores = if (mixedStudio) LinkedHashMap<Int, Song>() else null
     internal fun studioClockAlive(): Boolean = synchronized(handleLock) {
@@ -163,6 +162,10 @@ class ChipAudio(
             commandError = songError ?: "No playable song loaded"
             return@post
         }
+        engine.auditionProblem(song, channel, note, instrument, detune)?.let {
+            commandError = it
+            return@post
+        }
         StudioModularAdmission.problem(song, modularLimits, instrument)?.let {
             if (handle != 0L) nativeReleaseAudition(handle)
             auditionSlot = null
@@ -170,15 +173,11 @@ class ChipAudio(
             scheduleIdleCheck()
             return@post
         }
-        engine.auditionProblem(song, channel, note, instrument, detune)?.let {
-            commandError = it
-            return@post
-        }
         val h = readyHandle() ?: return@post
         val result = nativeAudition(h, channel, engine.note(song, channel, note, instrument), instrument, engine.fine(channel, note, detune))
         commandError = if (result < 0) engineFailure(result, "audition") else null
         if (result >= 0) {
-            auditionSlot = instrument
+            auditionSlot = if (song.sound is org.thortracker.system.studio.StudioSound) instrument else null
             // A held note keeps the stream: a pending idle check must not stop it before the
             // callback has picked the audition up.
             idleCheck?.cancel(false)
