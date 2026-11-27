@@ -1,5 +1,34 @@
 # Thor Tracker verification — 2026-11-27
 
+## Unreleased — Studio track bounce
+
+Bounce records one internal track at one pattern occurrence, including its inserts,
+gain and pan. USB tracks, shared returns and post-roll are excluded. Installation
+creates an ordinary sampler in an unused Init slot without replacing source rows.
+
+- [Cross-platform CI](https://github.com/esko997/thortracker/actions/runs/45961957723)
+  passes core/Android tests, Linux core checks, native WAV checks and both native
+  frontend builds. The WAV suite includes an independent 32,000-frame stereo
+  reference that distinguishes the 96-tick preview seek from full-prefix replay.
+- Nova's actual controller/touch workflow covers rendering, explicit installation,
+  one-step Undo/Redo and cold reopen. Android and Brick produce identical embedded
+  PCM for the repeated-order fixture; only the destination patch changes. The
+  Android-created project opens on Brick without an external recording.
+  The compact Ready dialog is visually checked at 640×480 and on Brick's display.
+- Cancellation removes its spool without editing the song. Hidden completion leaves
+  an unrelated popup in place. Editing and then undoing still invalidates a pending
+  installation. USB-source and sample-size refusals preserve the document.
+  A 42.67-second stereo recording installs and persists 16,384,000 decoded bytes.
+- Brick runs eight sustained Wave tracks and 40 delay instances while completing
+  three background renders and discarding their results. The 45-second run maintains
+  59 fps with zero reported late callbacks or driver faults. Worst callback is
+  13.94 ms against a 21.33 ms buffer; `/proc` resident high-water is 143,272 KiB.
+  This fixture has no pre-existing PCM and is separate from the maximum-asset tests below.
+
+These are bounded digital-output and workflow checks, not acoustic latency or
+glitch-free guarantees. Bounce is not freeze: the new sampler still applies its
+normal pitch, envelope and track processing.
+
 ## Unreleased — Wavetable and Pluck
 
 Wavetable adds four editable 64-point sources with morph/scan controls; Pluck adds
