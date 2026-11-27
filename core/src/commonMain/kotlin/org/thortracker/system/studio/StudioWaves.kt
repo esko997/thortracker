@@ -87,7 +87,7 @@ private val cycleDescriptor = ListSerializer(Int.serializer()).descriptor
 
 /** Refuse overlong input before decoding the excess points, including in an untrusted manifest. */
 @OptIn(ExperimentalSerializationApi::class)
-private inline fun Decoder.readFixed(desc: SerialDescriptor, size: Int, read: CompositeDecoder.(Int) -> Unit) =
+private inline fun Decoder.readFixed(desc: SerialDescriptor, size: Int, crossinline read: CompositeDecoder.(Int) -> Unit) =
     decodeStructure(desc) {
         if (decodeSequentially()) {
             require(decodeCollectionSize(desc) == size) { "Expected $size wavetable elements" }
