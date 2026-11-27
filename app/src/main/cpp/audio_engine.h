@@ -83,6 +83,7 @@ public:
     // cursor -1 = first row. 1 = row, 0 = preparing/not rendered, -1 = stopped, -2 = overrun.
     int next_row(int64_t cursor, int64_t out[5]);
     bool clock_alive() const { return playing_.load(std::memory_order_acquire) && !stream_dead_.load(std::memory_order_acquire); }
+    bool audition_active() const;  // includes a published start and its release/effect tail
     void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
 
     // AAudio callbacks.
@@ -121,6 +122,8 @@ private:
     std::atomic<uint32_t> panic_seq_{0};
     std::atomic<uint32_t> published_play_seq_{0};
     std::atomic<uint32_t> acknowledged_play_seq_{0};
+    std::atomic<uint32_t> published_audition_seq_{0};
+    std::atomic<uint32_t> acknowledged_audition_seq_{0};
     std::atomic<bool> stream_dead_{false};
 
     // Audio-thread state.

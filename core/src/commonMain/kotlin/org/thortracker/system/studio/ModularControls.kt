@@ -131,12 +131,68 @@ internal object ModularControls {
         fun node(id: Int) = g.nodes.first { it.id == id }
         fun edit(label: String, f: (ModularGraph) -> ModularGraph) = capture.valid(v) && change(v,patch,label,f)
         fun item(label: String, run: () -> Unit): Pair<String,() -> Unit> = label to { if (capture.valid(v)) run() }
+        /** SDL text input needs an external keyboard on Brick. Each D-pad digit opens one bounded
+         * menu; Back removes that digit and only Apply delivers a value. Use Long for Int.MIN_VALUE. */
+        fun number(label: String, initial: Int, range: IntRange, set: (Int) -> Unit) {
+            fun digits(prefix: String, negative: Boolean) {
+                val low = if (negative) maxOf(1L,-range.last.toLong()) else maxOf(0L,range.first.toLong())
+                val high = if (negative) -range.first.toLong() else range.last.toLong()
+                val sign = if (negative) "-" else ""
+                val value = prefix.toLongOrNull()
+                fun possible(n: Long): Boolean {
+                    var first=n; var last=n
+                    while (first<=high) {
+                        if (last>=low) return true
+                        if (first==0L) break
+                        first*=10; last=last*10+9
+                    }
+                    return false
+                }
+                menu.menu("$label: $sign$prefix",buildList {
+                    if (value!=null && value in low..high) add(item("Apply $sign$prefix") {
+                        set((if (negative) -value else value).toInt())
+                    })
+                    if (prefix.isEmpty() && !negative && range.first<0) add(item("Minus (−)") { digits("",true) })
+                    if (value!=0L) for (digit in 0..9) {
+                        if (possible((value ?: 0L)*10+digit)) add(item(digit.toString()) { digits(prefix+digit,negative) })
+                    }
+                })
+            }
+            menu.menu(label,listOf(
+                item("Use $initial") { set(initial) },
+                item("Choose digits · ${range.first} to ${range.last}") { digits("",false) },
+                item("Type a number…") { studioExact(menu,label,initial,range) { if (capture.valid(v)) set(it) } }
+            ))
+        }
+        fun rename(i: Int, macro: ModularMacro) {
+            val label="Macro ${i+1} name"
+            fun apply(name: String) {
+                if (name.isBlank()) menu.error("Enter a macro name.")
+                else edit("Rename macro") { it.copy(macros=it.macros.replaced(i,macro.copy(name=name.trim()))) }
+            }
+            // A fresh name is a bounded draft. Back revisits the preceding letter; no partial rename enters history.
+            fun spell(prefix: String) {
+                menu.menu(if (prefix.isEmpty()) label else "$label: $prefix",buildList {
+                    if (prefix.isNotBlank()) add(item("Use $prefix") { apply(prefix) })
+                    if (prefix.length<ModularGraph.MAX_MACRO_NAME) {
+                        if (prefix.isNotEmpty() && prefix.last()!=' ') add(item("Space") { spell("$prefix ") })
+                        for (group in listOf("ABCDEFG","HIJKLMN","OPQRST","UVWXYZ","abcdefg","hijklmn","opqrst","uvwxyz","0123456789","-+.!?/#")) {
+                            add(item(group) { menu.menu("$label: $prefix",group.map { ch -> item(ch.toString()) { spell(prefix+ch) } }) })
+                        }
+                    }
+                })
+            }
+            menu.menu(label,listOf(
+                item("Spell with D-pad…") { spell("") },
+                item("Type a name…") { menu.text(label,macro.name,ModularGraph.MAX_MACRO_NAME) { if(capture.valid(v)) apply(it) } }
+            ))
+        }
         fun open(key: Int) {
             when (key) {
                 in 0..7 -> {
                     val spec = patch.kind.parameters[key].copy(name=g.macros[key].name)
                     menu.menu(spec.name,listOf(
-                        item("Set value · ${patch.value(key)}") { studioExact(menu,spec.name,patch.value(key),0..127) { if(capture.valid(v)) set(v,key,it) } },
+                        item("Set value · ${patch.value(key)}") { number(spec.name,patch.value(key),0..127) { set(v,key,it) } },
                         item("Write automation to Pattern") { StudioAssignments.writeParameter(v.session,menu,st,StudioBinding(0,patch.kind,key),spec,patch.value(key)) { capture.valid(v) } },
                         item("Edit bindings · ${g.macros[key].targets.size}") { bindings(key) }
                     ))
@@ -147,7 +203,7 @@ internal object ModularControls {
                 PARAMETER -> parameters()
                 CABLES -> cables()
                 MACROS -> menu.menu("Macro bindings",g.macros.mapIndexed { i,macro -> item("${i+1}  ${macro.name} · ${macro.targets.size} targets") { bindings(i) } })
-                SEED -> studioExact(menu,"Random seed",g.seed,Int.MIN_VALUE..Int.MAX_VALUE) { seed -> edit("Set random seed") { it.copy(seed=seed) } }
+                SEED -> number("Random seed",g.seed,Int.MIN_VALUE..Int.MAX_VALUE) { seed -> edit("Set random seed") { it.copy(seed=seed) } }
                 LIBRARY -> StudioInstruments.library(v.session,menu,st.instrument) { capture.valid(v) }
             }
         }
@@ -244,7 +300,7 @@ internal object ModularControls {
                 add(item("Show this pair in patch bay") { selectNode(v,true,n); selectNode(v,false,d) })
                 fun transform(scale: Boolean) {
                     val name = if (scale) "Amount" else "Offset"
-                    studioExact(menu,"$name (1000 = 1)",if (scale) c.scale else c.offset,-ModularGraph.MAX_TRANSFORM..ModularGraph.MAX_TRANSFORM) { value ->
+                    number("$name (1000 = 1)",if (scale) c.scale else c.offset,-ModularGraph.MAX_TRANSFORM..ModularGraph.MAX_TRANSFORM) { value ->
                         edit("Set cable ${name.lowercase()}") { graph -> graph.copy(connections=graph.connections.map {
                             if (it.id != c.id) it else if (scale) it.copy(scale=value) else it.copy(offset=value)
                         }) }
@@ -260,10 +316,7 @@ internal object ModularControls {
         fun bindings(i: Int) {
             val macro = g.macros[i]
             menu.menu("${macro.name} · bindings",buildList {
-                add(item("Rename macro") { menu.text("Macro ${i+1} name",macro.name,ModularGraph.MAX_MACRO_NAME) { text ->
-                    if (text.isBlank()) menu.error("Enter a macro name.") else if (capture.valid(v))
-                        edit("Rename macro") { it.copy(macros=it.macros.replaced(i,macro.copy(name=text.trim()))) }
-                } })
+                add(item("Rename macro") { rename(i,macro) })
                 add(item("Add target…") {
                     fun free(n: ModularNode, p: StudioParameter) = !p.discrete &&
                         g.macros.none { m -> m.targets.any { it.node == n.id && it.parameter == p.id } }
@@ -292,8 +345,8 @@ internal object ModularControls {
             val macro = g.macros[i]
             val range = p.min..p.max
             val unit = if (p.unit.isEmpty()) "" else " (${p.unit})"
-            studioExact(menu,"${p.name} at macro 0$unit",old?.minimum ?: p.min,range) { low ->
-                if (capture.valid(v)) studioExact(menu,"${p.name} at macro 127$unit",old?.maximum ?: p.max,range) { high ->
+            number("${p.name} at macro 0$unit",old?.minimum ?: p.min,range) { low ->
+                if (capture.valid(v)) number("${p.name} at macro 127$unit",old?.maximum ?: p.max,range) { high ->
                     if (capture.valid(v)) {
                         val target = ModularTarget(n.id,p.id,low,high)
                         macroEdit(i,"Set macro binding",macro.copy(targets=if (old == null) macro.targets + target else macro.targets.map { if (it == old) target else it }))

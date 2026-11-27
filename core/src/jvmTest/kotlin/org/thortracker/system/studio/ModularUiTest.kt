@@ -12,6 +12,12 @@ class ModularUiTest {
         var rows = emptyList<Pair<String,() -> Unit>>()
         lateinit var accept: (String) -> Unit
         fun pick(label: String) = rows.first { it.first.startsWith(label) }.second()
+        fun digits(n: String) {
+            pick("Choose digits")
+            for (ch in n) pick(if (ch=='-') "Minus" else ch.toString())
+            pick("Apply $n")
+        }
+        fun typeNumber(n: String) { pick("Type a number"); accept(n) }
         override fun menu(title: String,entries: List<Pair<String,() -> Unit>>,selected: Int) { rows=entries }
         override fun text(title: String,initial: String,maxLength: Int,accepted: (String) -> Unit) { accept=accepted }
         override fun pickFile(title: String,extensions: List<String>,maxBytes: Int,picked: (String,String,ByteArray) -> Unit) = error("Unexpected file picker")
@@ -74,8 +80,8 @@ class ModularUiTest {
             assertTrue(ui.pane.touchDown(x,y)); ui.pane.touchMove(dx,dy); ui.pane.touchUp(dx,dy)
             val link=ModularConnection(1,1,0,2,0); assertEquals(listOf(link),s.patch().graph.connections)
             fun editCable() { ui.open(ModularControls.CABLES); popup.pick("01 Oscillator:Audio → 02 Output:Left") }
-            editCable(); popup.pick("Amount"); popup.accept("-450")
-            editCable(); popup.pick("Offset"); popup.accept("125")
+            editCable(); popup.pick("Amount"); popup.digits("-450")
+            editCable(); popup.pick("Offset"); popup.digits("125")
             assertEquals(link.copy(scale=-450,offset=125),s.patch().graph.connections.single())
             editCable(); popup.pick("Disconnect"); assertTrue(s.patch().graph.connections.isEmpty())
             ui.open(ModularControls.CABLES); popup.pick("Add cable"); popup.pick("03 Note"); popup.pick("Pitch")
@@ -114,12 +120,12 @@ class ModularUiTest {
     @Test fun bindTwoControlsWithIndependentEndpointsAndRemoveOneModuleAtomically() {
         val s=session(); val ui=Display(s); val popup=Popup(); s.onMenuRequest={ it(popup) }
         fun macro() { ui.open(0); popup.pick("Edit bindings") }
-        fun target(n: String,p: String,a: String,b: String) { macro(); popup.pick("Add target"); popup.pick(n); popup.pick(p); popup.accept(a); popup.accept(b) }
-        macro(); popup.pick("Rename"); popup.accept("Squeeze")
+        fun target(n: String,p: String,a: String,b: String) { macro(); popup.pick("Add target"); popup.pick(n); popup.pick(p); popup.digits(a); popup.digits(b) }
+        macro(); popup.pick("Rename"); popup.pick("Type a name"); popup.accept("Squeeze")
         target("01 Oscillator","Tune","-12","12"); target("02 Output","Gain","1700","0")
         val targets=listOf(ModularTarget(1,1,-12,12),ModularTarget(2,0,1700,0))
         assertEquals(ModularMacro("Squeeze",targets),s.patch().graph.macros.first()); val before=s.song
-        macro(); popup.pick("Add target"); popup.pick("01 Oscillator"); popup.pick("Width"); popup.accept("90")
+        macro(); popup.pick("Add target"); popup.pick("01 Oscillator"); popup.pick("Width"); popup.digits("90"); popup.pick("Type a number")
         val late=popup.accept; ui.adjust(Action.RIGHT); late("750"); assertEquals(targets,s.patch().graph.macros.first().targets)
         ui.key(Action.UNDO); assertSame(before,s.song)
         ui.tap("Build"); ui.open(ModularControls.OVERVIEW); popup.pick("01 Oscillator"); popup.pick("Remove module"); popup.pick("Remove with")
@@ -145,14 +151,27 @@ class ModularUiTest {
     @Test fun boundParameterOpensItsMacroInsteadOfEditingAnInaudibleBaseValue() {
         val s=session(); val ui=Display(s); val popup=Popup(); s.onMenuRequest={ it(popup) }
         ui.open(0); popup.pick("Edit bindings"); popup.pick("Add target")
-        popup.pick("01 Oscillator"); popup.pick("Tune"); popup.accept("-12"); popup.accept("12")
+        popup.pick("01 Oscillator"); popup.pick("Tune"); popup.typeNumber("-12"); popup.typeNumber("12")
         val graph=s.patch().graph
         ui.tap("Build"); ui.open(ModularControls.PARAMETER); popup.pick("Tune ← Drift")
-        popup.pick("Set value"); popup.accept("95")
+        popup.pick("Set value"); popup.typeNumber("95")
         assertEquals(95,s.patch().value(0)); assertEquals(graph,s.patch().graph)
         val accepted=s.song
         ui.adjust(Action.RIGHT)
         assertSame("A bound base value must not silently change without affecting sound",accepted,s.song)
         ui.key(Action.UNDO); assertEquals(0,s.patch().value(0)); assertEquals(graph,s.patch().graph)
+    }
+    @Test fun standaloneControllerCanNameAMacroAndSetTheFullSignedSeedWithoutTyping() {
+        val s=session(); val ui=Display(s); val popup=Popup(); s.onMenuRequest={ it(popup) }
+        val before=s.song
+        ui.open(0); popup.pick("Edit bindings"); popup.pick("Rename"); popup.pick("Spell")
+        for ((group,ch) in listOf("ABCDEFG" to "F","opqrst" to "o","abcdefg" to "g")) {
+            popup.pick(group); popup.pick(ch)
+        }
+        assertSame(before,s.song); popup.pick("Use Fog")
+        assertEquals("Fog",s.patch().graph.macros.first().name)
+        ui.tap("Build"); ui.open(ModularControls.SEED); popup.digits("-2147483648")
+        assertEquals(Int.MIN_VALUE,s.patch().graph.seed); ui.key(Action.UNDO)
+        assertEquals("Fog",s.patch().graph.macros.first().name); assertEquals(1,s.patch().graph.seed)
     }
 }

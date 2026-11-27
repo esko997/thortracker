@@ -168,9 +168,9 @@ internal class ModularPainter(v: PaneView) : FmInstrumentPainter(v) {
         c.fillCircle(cx,cy,radius,p.BG); c.strokeCircle(cx,cy,radius,color,ink.dp(1.6f))
         if (output) c.fillCircle(cx,cy,radius*.42f,color)
         val x=if(output) r.left+ink.unit*.4f else cx+2*radius; val width=if(output) cx-2*radius-x else r.right-ink.unit*.4f-x
-        val size=minOf(ink.unit,r.height()*.46f)
         val compact=r.height()<ink.unit*1.8f
-        val text=if(compact) "${port.name} / ${port.type.caption}" else port.name
+        val size=minOf(ink.unit,r.height()*(if (compact) .83f else .46f))
+        val text=if(compact && !port.name.equals(port.type.caption,ignoreCase=true)) "${port.name} / ${port.type.caption}" else port.name
         ink.label(c,ink.fit(text,width,size,true),x,r.top,if(compact) r.height() else r.height()*.59f,if(muted) p.DIM else p.TEXT,true,size)
         if(!compact) ink.label(c,ink.fit(port.type.caption,width,size*.78f),x,r.top+r.height()*.53f,r.height()*.46f,color,size=size*.78f)
     }

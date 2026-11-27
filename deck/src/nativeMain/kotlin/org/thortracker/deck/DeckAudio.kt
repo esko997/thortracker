@@ -39,7 +39,7 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
     /** Lowers the song and hands its image to the engine (applied live while playing); a bad song keeps the last one. */
     override fun update(song: Song) {
         refusedSong = null
-        if (refuseModular(song, auditionSlot)) return
+        if (refuseModular(song, reservedAuditionSlot())) return
         val engine = open(song.system) ?: return
         songError = try {
             engine.lower(song, image)
@@ -64,12 +64,13 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
 
     override fun play(order: Int, row: Int) {
         refusedSong?.let { update(it) }
-        imageSong?.let { if (refuseModular(it, auditionSlot)) return }
+        imageSong?.let { if (refuseModular(it, null)) return }
         val engine = ready() ?: return
         commandError = failure(da_play(order, row, engine.seekTicks), "play")
+        if (commandError == null && engine === org.thortracker.system.studio.StudioEngine) auditionSlot = null
     }
 
-    override fun stop() { commandError = null; auditionSlot = null; if (system != null) da_stop() }
+    override fun stop() { commandError = null; if (system != null) da_stop() }
     override fun silence() { commandError = null; auditionSlot = null; if (system != null) da_panic() }
 
     override fun audition(channel: Int, note: Int, instrument: Int, detune: Int) {
@@ -80,7 +81,6 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
         engine.auditionProblem(song, channel, note, instrument, detune)?.let { commandError = it; return }
         StudioModularAdmission.problem(song, modularLimits, instrument)?.let {
             da_release_audition()
-            auditionSlot = null
             commandError = it
             return
         }
@@ -90,7 +90,7 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
         if (commandError == null) auditionSlot = if (song.sound is org.thortracker.system.studio.StudioSound) instrument else null
     }
 
-    override fun releaseAudition() { commandError = null; auditionSlot = null; if (system != null) da_release_audition() }
+    override fun releaseAudition() { commandError = null; if (system != null) da_release_audition() }
     override fun position() = PlaybackPosition(da_playing() != 0, da_order(), da_row())
     override fun error(): String? = deviceError ?: commandError ?: songError
     override fun close() = da_close()
@@ -108,6 +108,11 @@ class DeckAudio(private val audioDriver: () -> String) : TrackerAudio {
             "Audio stats" to "callbacks ${v[2]}, late callbacks ${v[3]}, worst callback ${v[4] / 1000} µs, driver faults ${v[5]}",
             "Modular" to "${modularLimits.name}: ${modularLimits.workUnits} work units, ${modularLimits.reservationBytes / (1024 * 1024)} MiB reservation",
         )
+    }
+
+    private fun reservedAuditionSlot(): Int? {
+        if (auditionSlot != null && (system == null || da_audition_active() == 0)) auditionSlot = null
+        return auditionSlot
     }
 
     private fun refuseModular(song: Song, slot: Int?): Boolean {

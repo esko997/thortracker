@@ -362,6 +362,8 @@ controller-friendly menus. **Patch map** lists the whole patch, adds modules and
 jumps between connected neighbors. **Cables** edits connection amount and offset
 or disconnects a route. Removing a module also removes its cables and macro
 targets; Undo restores them together.
+Numeric editors offer D-pad digit entry as well as keyboard input; macro names
+also have a controller spelling option.
 
 | Module | Purpose |
 | --- | --- |
@@ -400,7 +402,7 @@ let it evolve; the saved seed makes a fresh start repeatable.
 
 The portable graph format allows 64 modules, 256 cables and eight macros. Actual
 real-time capacity is platform-dependent and applies to the whole project,
-including effects, audition and prepared graph memory. If the project exceeds the
+including effects, active audition tails and prepared graph memory. If the project exceeds the
 device's playback reserve, it remains editable and saveable without pruning or
 changing its sound. Offline WAV rendering does not use the real-time CPU limit;
 format and memory constraints still apply.

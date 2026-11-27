@@ -200,6 +200,13 @@ void da_release_audition(void) {
     ao_unlock();
 }
 
+int da_audition_active(void) {
+    ao_lock();
+    int active = auditioning;
+    ao_unlock();
+    return active;
+}
+
 int da_playing(void) { return playing; }
 float da_peak(void) { float p = peak; peak = 0; return p; }
 

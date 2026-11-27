@@ -8,7 +8,7 @@ typedef struct OscState { double phase; float pitch, step; } OscState;
 typedef struct FilterState { float ic1,ic2, cutoff,mod,res, a1,a2,a3; } FilterState;
 typedef struct FunctionState { double level; float rate, rise, fall, up, down; uint8_t stage, gate; } FunctionState;
 typedef struct RandomState { uint32_t rng; float held, smooth, ms, alpha; } RandomState;
-typedef struct RingState { float re,im,pitch,decay,cr,si; } RingState;
+typedef struct RingState { float re,im,pitch,decay,radius,cr,si; } RingState;
 typedef union Kernel {
     OscState osc; FilterState filter; FunctionState function; RandomState random; RingState ring;
 } Kernel;
@@ -147,9 +147,16 @@ static inline float ring_frame(RingState *s, const StudioDspTables *basis, float
         /* Prevent interpolation error from shortening long decays. One reciprocal-length
          * Newton step suffices for the 1024-entry sine basis. Rotation is never expansive. */
         float norm=1.5f-.5f*(si*si+cr*cr);
-        float dt=6907.755279f*inv/decay, radius=1-dt/(1+.5f*dt);
-        s->si=si*(norm*radius); s->cr=cr*(norm*radius);
-        s->decay=decay; s->pitch=pitch;
+        /* FM changes the angle, not the pole radius. Use the exact same decay
+         * calculation on each effective decay change, including every slew sample.
+         * Zero-initialized decay is outside its legal range (10..4000 ms). */
+        if (decay!=s->decay) {
+            float dt=6907.755279f*inv/decay;
+            s->radius=1-dt/(1+.5f*dt);
+            s->decay=decay;
+        }
+        s->si=si*(norm*s->radius); s->cr=cr*(norm*s->radius);
+        s->pitch=pitch;
     }
     float re=s->cr*s->re-s->si*s->im+.25f*in;
     s->im=dsp_zap_tiny(dsp_clamp(s->si*s->re+s->cr*s->im,-8,8));

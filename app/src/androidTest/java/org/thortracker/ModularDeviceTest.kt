@@ -50,9 +50,11 @@ class ModularDeviceTest {
         val original = song.studio.patch(slot) as ModularPatch
         val duration = args.getString("observeMillis")?.toLongOrNull()?.coerceIn(5000, 180000) ?: 30000
         val edits = args.getString("modularEdits") != "false"
+        val auditions = args.getString("modularAudition")?.let { it == "true" } ?: edits
         var peakPss = 0L
         var peakNative = 0L
         var revisions = 0
+        var iterations = 0
         ChipAudio(instrumentation.targetContext).use { audio ->
             audio.update(song)
             audio.play()
@@ -65,10 +67,15 @@ class ModularDeviceTest {
                     val graph = if (revisions % 2 == 0) original.graph.copy(nodes = original.graph.nodes.reversed()) else original.graph
                     val patch = original.copy(graph = graph, values = original.values + (0 to (revisions * 7 % 128)))
                     audio.update(song.copy(sound = song.studio.withPatch(slot, patch)))
-                    if (revisions % 8 == 0) audio.audition(0, 48 + revisions % 12, slot)
-                    if (revisions % 8 == 4) audio.releaseAudition()
+                }
+                if (auditions) {
+                    if (iterations % 8 == 0) audio.audition(0, 48 + iterations % 12, slot)
+                    if (iterations % 8 == 4) audio.releaseAudition()
+                }
+                if (edits) {
                     revisions++
                 }
+                iterations++
                 SystemClock.sleep(400)
                 assertNull(audio.error())
                 assertTrue("Transport must not restart/stop during graph edits", audio.position().playing)
@@ -81,7 +88,7 @@ class ModularDeviceTest {
             audio.silence()
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
             instrumentation.sendStatus(0, Bundle().apply {
-                putString("stream", "MODULAR_SOAK fixture=$name maxRack=$maxRack activeTracks=$activeTracks edits=$edits revisions=$revisions " +
+                putString("stream", "MODULAR_SOAK fixture=$name maxRack=$maxRack activeTracks=$activeTracks edits=$edits auditions=$auditions revisions=$revisions " +
                     "initialXruns=$initialXruns measuredXruns=$xruns peakPssKiB=$peakPss " +
                     "peakNativeBytes=$peakNative ${audio.diagnostics()}\n")
             })
@@ -120,10 +127,56 @@ class ModularDeviceTest {
             assertArrayEquals(original, ProjectCodec.encodeBytes(larger))
             audio.update(song)
             audio.play()
-            await("Reduced graph starts again", audio) { audio.position().playing && audio.error() == null }
+            waitUntil("Reduced graph starts again") { audio.position().playing && audio.error() == null }
             audio.silence()
             await("Panic completes", audio) { !audio.position().playing && !audio.position().pending }
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
+        }
+    }
+
+    @Test fun releasedAuditionRetainsItsBudgetUntilTheNativeTailEnds() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("modularFixture") != null)
+        val song = studioModularDemo()
+        val generous = StudioModularLimits("tail reserve", Long.MAX_VALUE, 2L * 1024 * 1024 * 1024, 12, 14)
+        val limit = generous.copy(workUnits = StudioModularAdmission.demand(song, generous, 1)!!.workUnits)
+        val larger = song.copy(sound = song.studio.copy(patches = song.studio.patches.map { patch ->
+            if (patch !is ModularPatch) patch else patch.copy(graph = patch.graph.copy(
+                nodes = patch.graph.nodes + ModularNode(patch.graph.nextNodeId(), ModularKind.NOISE)))
+        }))
+        assertNull(StudioModularAdmission.problem(larger, limit))
+        assertNotNull(StudioModularAdmission.problem(larger, limit, 1))
+        ChipAudio(InstrumentationRegistry.getInstrumentation().targetContext, modularLimits = limit).use { audio ->
+            audio.update(song)
+            audio.play()
+            await("Original song starts", audio) { audio.position().playing }
+            audio.audition(0, 48, 1)
+            await("Audition is published or sounding", audio) { audio.diagnostics()["auditionActive"] == 1L }
+            SystemClock.sleep(40)
+            audio.releaseAudition()
+            audio.update(larger)
+            waitUntil("Released tail still reserves overlap") {
+                audio.error()?.contains("tail reserve") == true && !audio.position().playing && !audio.position().pending
+            }
+            audio.update(song)
+            audio.play()
+            waitUntil("Original song resumes") { audio.position().playing && audio.error() == null }
+            audio.audition(0, 48, 1)
+            await("Second audition starts", audio) { audio.diagnostics()["auditionActive"] == 1L }
+            SystemClock.sleep(40)
+            audio.releaseAudition()
+            val deadline = SystemClock.elapsedRealtime() + 12000
+            while (audio.diagnostics()["auditionActive"] != 0L && SystemClock.elapsedRealtime() < deadline) {
+                assertNull(audio.error())
+                SystemClock.sleep(20)
+            }
+            assertEquals("Native tail finishes", 0L, audio.diagnostics().getValue("auditionActive"))
+            audio.update(larger)
+            audio.stop()
+            waitUntil("Update and Stop complete") { !audio.position().playing && !audio.position().pending }
+            assertNull("Finished tail no longer reserves overlap", audio.error())
+            audio.play()
+            await("Larger song starts without audition", audio) { audio.position().playing }
+            audio.silence()
         }
     }
 

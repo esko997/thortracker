@@ -9,6 +9,7 @@ void da_stop(void);
 void da_panic(void);                                       /* cuts song, audition and effect tails */
 int da_audition(int channel, int note, int instrument, int fine, int ticks); /* sounds until ticks run out or release */
 void da_release_audition(void);
+int da_audition_active(void);                              /* includes release and effect tails */
 int da_playing(void);
 int da_order(void);                                        /* played-order position of the row heard */
 int da_row(void);

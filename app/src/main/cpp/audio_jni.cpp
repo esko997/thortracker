@@ -112,6 +112,10 @@ JNIEXPORT jboolean JNICALL Java_org_thortracker_audio_ChipAudio_nativeClockAlive
     return engine(h)->clock_alive() ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_org_thortracker_audio_ChipAudio_nativeAuditionActive(JNIEnv*, jclass, jlong h) {
+    return engine(h)->audition_active() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_org_thortracker_audio_ChipAudio_nativeNextRow(JNIEnv* env, jclass, jlong h, jlong cursor,
                                                                          jlongArray row) {
     int64_t out[5];

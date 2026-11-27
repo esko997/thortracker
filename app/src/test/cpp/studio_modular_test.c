@@ -194,6 +194,46 @@ static void test_delay_and_resonator(void) {
     done(v,p);
 }
 
+/* An impulse in a time-varying resonator has phase = sum of the instantaneous
+ * rotation angles, magnitude = product of the per-sample RT60 attenuations.
+ * Independent double-precision oracle: no DSP table, fitted coefficient or
+ * reference voice. Exercise both pitch-constant decay edits and audio-rate FM. */
+static void test_resonator_modulation_migration(void) {
+    for (int fm=0; fm<=1; ++fm) {
+        Graph g={0}; dc(&g,10,1); node(&g,20,SM_NOTE,0,0,0); node(&g,30,SM_OSC,0,0,.5f);
+        node(&g,40,SM_VCA,1,0,0); node(&g,50,SM_RESONATOR,0,700,0); output(&g,60);
+        join(&g,20,0,30,0); join(&g,10,0,40,0); join(&g,20,3,40,1);
+        join(&g,40,0,50,0); if (fm) cable(&g,30,0,50,2,12,0);
+        join(&g,50,0,60,0); target(&g,0,50,1,40,700);
+        SmPlan *p=compile(&g); SmVoice *v=voice(p,RATE);
+        dc(&g,1,.5f); /* shifts the running resonator's slot without altering its signal */
+        SmPlan *next=compile(&g);
+        uint8_t macros[SM_MACROS]={127};
+        sm_macro(v,0,127); sm_note(v,250,0,0,false); skip(v,32); /* exactly one FM cycle */
+        sm_note(v,250,1,0,true);
+        double phase=0,amplitude=.25,prev=0,anchor=0;
+        for (int i=0; i<400; ++i) {
+            if (i==1) sm_note(v,250,0,0,true); /* no further excitation */
+            if (i==56 || i==104) sm_macro(v,0,i==56 ? 0 : 127);
+            if (i==160) { anchor=prev; sm_bind(v,next,macros,true); }
+            double decay=700;
+            if (i>=56 && i<80) decay=700-660*(i-55)/24.;
+            else if (i>=80 && i<104) decay=40;
+            else if (i>=104 && i<128) decay=40+660*(i-103)/24.;
+            if (i) {
+                double hz=440*exp2(fm*sin(2*PI*i/32.));
+                phase+=2*PI*hz/RATE;
+                amplitude*=pow(.001,1000./(RATE*decay));
+            }
+            double expected=amplitude*cos(phase);
+            if (i>=160 && i<192) expected+=(anchor-expected)*(192-i)/32.;
+            NEAR(frame(v).l,expected,.00025);
+            prev=expected;
+        }
+        done(v,p); sm_plan_destroy(next);
+    }
+}
+
 static void test_function_event_feedback(void) {
     Graph g={0}; node(&g,1,SM_NOTE,0,0,0); node(&g,2,SM_FUNCTION,8,8,0); node(&g,3,SM_RANDOM,25,0,0);
     dc(&g,4,1); node(&g,5,SM_VCA,1,0,0); node(&g,6,SM_VCA,1,0,0); output(&g,7);
@@ -301,6 +341,7 @@ static void test_format_ceiling_and_rt(void) {
     SmPlan *p=compile(&g); SmCost c=sm_cost(p);
     assert(c.nodes==64 && c.edges==256 && c.targets==128 && c.work_units>=c.nodes+c.edges);
     assert(c.plan_bytes>0 && c.voice_bytes==sm_cost(NULL).voice_bytes && !sm_cost(NULL).plan_bytes);
+    assert(c.voice_bytes<=10240); /* admission's per-voice reservation */
     g.targets[16][0]=0; invalid(&g); g.targets[16][0]=1;
     g.edges[0][5]=bits(-16); SmPlan *q=compile(&g);
     const unsigned rates[]={8000,44100,96000};
@@ -367,6 +408,7 @@ int main(void) {
     studio_dsp_prepare_tables(&tables);
     test_validation(); test_pitch_and_shapes(); test_note_ports_mix_fold(); test_filter();
     test_delay_and_resonator(); test_function_event_feedback(); test_seeded_random_and_noise();
+    test_resonator_modulation_migration();
     test_macro_and_cable_slew(); test_migration(); test_audio_rate_fm();
     test_format_ceiling_and_rt(); test_modulated_feedback_extremes();
     puts("Studio Modular: typed graph, synthesis, one-sample feedback, macros, migration, stop and format ceilings OK");

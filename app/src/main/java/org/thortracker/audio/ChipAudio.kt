@@ -126,17 +126,17 @@ class ChipAudio(
 
     override fun play(order: Int, row: Int) = post(transport = true) {
         retryFailedImage()
-        imageSong?.let { if (refuseModular(it, auditionSlot)) return@post }
+        imageSong?.let { if (refuseModular(it, null)) return@post }
         val h = readyHandle() ?: return@post
         val engine = system?.engine ?: return@post   // set whenever readyHandle has a handle
         val result = nativePlay(h, order, row, engine.seekTicks)
         commandError = if (result < 0) engineFailure(result, "play") else null
+        if (result >= 0 && engine === StudioEngine) auditionSlot = null
         scheduleIdleCheck()
     }
 
     override fun stop() = post(transport = true) {
         commandError = null   // a failed command is over once its sound is
-        auditionSlot = null
         val h = handle
         if (h != 0L) nativeStop(h)
         scheduleIdleCheck()
@@ -168,7 +168,6 @@ class ChipAudio(
         }
         StudioModularAdmission.problem(song, modularLimits, instrument)?.let {
             if (handle != 0L) nativeReleaseAudition(handle)
-            auditionSlot = null
             commandError = it
             scheduleIdleCheck()
             return@post
@@ -187,7 +186,6 @@ class ChipAudio(
 
     override fun releaseAudition() = post {
         commandError = null
-        auditionSlot = null
         val h = handle
         if (h != 0L) nativeReleaseAudition(h)
         scheduleIdleCheck()
@@ -223,7 +221,10 @@ class ChipAudio(
         if (h == 0L) return emptyMap()
         val values = LongArray(DIAGNOSTIC_NAMES.size)
         nativeStats(h, values)
-        DIAGNOSTIC_NAMES.zip(values.toList()).toMap()
+        buildMap(values.size + 1) {
+            for (i in values.indices) put(DIAGNOSTIC_NAMES[i], values[i])
+            put("auditionActive", if (nativeAuditionActive(h)) 1L else 0L)
+        }
     }
 
     override fun close() {
@@ -288,7 +289,7 @@ class ChipAudio(
 
     private fun applySong(song: Song) {
         retrySong = null
-        if (refuseModular(song, auditionSlot)) return
+        if (refuseModular(song, reservedAuditionSlot())) return
         val h = engineFor(song.system)
         if (h == 0L) {
             retrySong = song
@@ -337,6 +338,11 @@ class ChipAudio(
             }
             songError = "Playing the last playable version, not your latest edits: the player rejected the song data (layout error $result)"
         }
+    }
+
+    private fun reservedAuditionSlot(): Int? {
+        if (auditionSlot != null && (handle == 0L || !nativeAuditionActive(handle))) auditionSlot = null
+        return auditionSlot
     }
 
     /** Reject before lowering or native allocation; never keep playing an obsolete modular graph. */
@@ -500,6 +506,7 @@ class ChipAudio(
         @JvmStatic private external fun nativePosition(handle: Long): Long
         @JvmStatic private external fun nativeNextRow(handle: Long, cursor: Long, row: LongArray): Int
         @JvmStatic private external fun nativeClockAlive(handle: Long): Boolean
+        @JvmStatic private external fun nativeAuditionActive(handle: Long): Boolean
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray

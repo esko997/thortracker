@@ -111,6 +111,105 @@ static void test_delay_automation(void) {
     studio_fx_destroy(target);
 }
 
+/* The one-frame public API is the oracle for block scheduling. Use uneven spans
+ * across tap/read/write wraps, including independent invalid samples on either
+ * channel; compare every output, not just aggregate power. */
+static void compare_fx_blocks(StudioFx *block, StudioFx *reference, unsigned *clock, unsigned frames) {
+    const unsigned widths[] = {1, 128, 37, 257, 2, 89};
+    unsigned chunk = 0;
+    while (frames) {
+        float storage[2 * 257 + 2], *audio = storage + 1;
+        Stereo expected[257];
+        unsigned n = widths[chunk++ % (sizeof widths / sizeof widths[0])];
+        if (n > frames) n = frames;
+        storage[0] = 17.f;
+        audio[2*n] = -19.f;
+        for (unsigned j = 0; j < n; ++j, ++*clock) {
+            unsigned t = *clock;
+            float l = ((int)((t * 353u + 19u) % 1021u) - 510) / 1024.f;
+            float r = ((int)((t * 127u + 83u) % 991u) - 495) / 512.f;
+            if (t % 211 == 36) l = NAN;
+            if (t % 199 == 14) r = -INFINITY;
+            if (t % 251 == 9) r = 9.f;
+            audio[2*j] = l; audio[2*j+1] = r;
+            expected[j] = fx_frame(reference, l, r);
+        }
+        studio_fx_process(block, audio, n);
+        assert(storage[0] == 17.f && audio[2*n] == -19.f);
+        for (unsigned j = 0; j < n; ++j) {
+            near(audio[2*j], expected[j].l);
+            near(audio[2*j+1], expected[j].r);
+        }
+        frames -= n;
+    }
+}
+
+static void test_delay_block_continuation(void) {
+    StudioFxParams p = {.delay = {1.f, .25f, 1800.f, .1f}};
+    StudioFx *block = effect(STUDIO_FX_DELAY, p), *ref = effect(STUDIO_FX_DELAY, p);
+    unsigned clock = 0;
+    studio_fx_process(block, NULL, 0); /* Must not prime controls on an empty block. */
+    p = (StudioFxParams){.delay = {2.0625f, .82f, 3500.f, .875f}};
+    studio_fx_set(block, &p); studio_fx_set(ref, &p);
+    compare_fx_blocks(block, ref, &clock, 16);
+    compare_fx_blocks(block, ref, &clock, 1); /* tap at age 16.5: only newer endpoint exists */
+    compare_fx_blocks(block, ref, &clock, 2 * RATE + 179);
+
+    p.delay.time_ms = 1900.125f;
+    studio_fx_set(block, &p); studio_fx_set(ref, &p);
+    compare_fx_blocks(block, ref, &clock, 31);
+    p.delay.time_ms = 1999.9375f; /* replace pending tap during crossfade */
+    p.delay.mix = .35f; p.delay.feedback = .95f; p.delay.tone_hz = 370.f;
+    studio_fx_set(block, &p); studio_fx_set(ref, &p);
+    compare_fx_blocks(block, ref, &clock, 3 * RATE);
+    studio_fx_set_bypass(block, true); studio_fx_set_bypass(ref, true);
+    compare_fx_blocks(block, ref, &clock, 201);
+    p.delay.time_ms = 4.f; /* exact 32-frame tap; bypass must not freeze history */
+    studio_fx_set(block, &p); studio_fx_set(ref, &p);
+    studio_fx_set_bypass(block, false); studio_fx_set_bypass(ref, false);
+    compare_fx_blocks(block, ref, &clock, 2 * RATE + 83);
+
+    /* Continue the block-built feedback history using only the scalar API. */
+    for (unsigned j = 0; j < 500; ++j) {
+        Stereo a = fx_frame(block, 0.f, 0.f), b = fx_frame(ref, 0.f, 0.f);
+        near(a.l, b.l); near(a.r, b.r);
+    }
+    /* Previously valid nonzero cells must not leak after O(1) clear. An isolated
+     * quiet impulse stays audible at the exact tap, including on the settled path. */
+    studio_fx_clear(block);
+    p = (StudioFxParams){.delay = {1.f, 0.f, 3000.f, 1.f}};
+    studio_fx_set(block, &p);
+    float zeros[64] = {0};
+    studio_fx_process(block, zeros, 32);
+    for (unsigned i = 0; i < 64; ++i) assert(zeros[i] == 0.f);
+    zeros[0] = 1e-20f; zeros[1] = -1e-20f;
+    studio_fx_process(block, zeros, 32);
+    for (unsigned i = 0; i < 32; ++i) {
+        assert(zeros[2*i] == (i == 8 ? 1e-20f : 0.f));
+        assert(zeros[2*i+1] == (i == 8 ? -1e-20f : 0.f));
+    }
+    studio_fx_destroy(block); studio_fx_destroy(ref);
+}
+
+static void test_other_fx_blocks(void) {
+    const StudioFxParams params[] = {
+        [STUDIO_FX_DRIVE] = {.drive = {14, 1000, -3}},
+        [STUDIO_FX_CRUSHER] = {.crusher = {7, 1303, .8f, -2}},
+        [STUDIO_FX_REVERB] = {.reverb = {.3f, .5f, 1200, 3, .7f}},
+        [STUDIO_FX_CHORUS] = {.chorus = {.8f, 4, .75f}},
+    };
+    for (int i = STUDIO_FX_DRIVE; i <= STUDIO_FX_CHORUS; ++i) {
+        StudioFx *block = effect((StudioFxKind)i, params[i]), *ref = effect((StudioFxKind)i, params[i]);
+        unsigned clock = 0;
+        compare_fx_blocks(block, ref, &clock, RATE);
+        studio_fx_set_bypass(block, true); studio_fx_set_bypass(ref, true);
+        compare_fx_blocks(block, ref, &clock, 15);
+        studio_fx_set_bypass(block, false); studio_fx_set_bypass(ref, false);
+        compare_fx_blocks(block, ref, &clock, 257);
+        studio_fx_destroy(block); studio_fx_destroy(ref);
+    }
+}
+
 static void test_drive_and_crusher(void) {
     StudioFxParams p = {.drive = {0.f, 20000.f, 0.f}};
     StudioFx *drive = effect(STUDIO_FX_DRIVE, p);
@@ -680,6 +779,8 @@ int main(void) {
     studio_dsp_prepare_tables(&tables);
     test_delay();
     test_delay_automation();
+    test_delay_block_continuation();
+    test_other_fx_blocks();
     test_drive_and_crusher();
     test_reverb_chorus();
     test_sampler();

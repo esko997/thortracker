@@ -156,6 +156,7 @@ int Engine::audition(int channel, int note, int instrument, int fine) {
     slot->seq = ++seq_;
     slot->channel = channel;
     slot->image_version = control_image_.version;
+    published_audition_seq_.store(slot->seq, std::memory_order_release);
     audition_slots_.publish();
     last_audition_ns_.store(now_ns() - t0);
     return CHIP_OK;
@@ -263,6 +264,8 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
 
     uint32_t consumed_play_seq = 0;
     bool consumed_play = false;
+    uint32_t consumed_audition_seq = 0;
+    bool consumed_audition = false;
     if (images_.consume()) front_image_ = images_.front();
     if (play_slots_.consume()) {
         play_ = play_slots_.front();
@@ -287,6 +290,8 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     }
     if (audition_slots_.consume()) {
         aud_ = audition_slots_.front();
+        consumed_audition_seq = aud_->seq;
+        consumed_audition = true;
         aud_len_ = aud_pos_ = 0;
         aud_releasing_ = false;
         aud_stopped_ = false;
@@ -376,6 +381,7 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     // Acknowledge only the slot actually consumed, after its playing/ended state is visible.
     // A newer published start must stay pending, including when this one ended on its first tick.
     if (consumed_play) acknowledged_play_seq_.store(consumed_play_seq, std::memory_order_release);
+    if (consumed_audition) acknowledged_audition_seq_.store(consumed_audition_seq, std::memory_order_release);
     frames_rendered_ += static_cast<uint64_t>(frames);
     frames_written_.store(static_cast<int64_t>(frames_rendered_), std::memory_order_release);
     // AAudio/Oboe support latency tuning at the end of the data callback. This changes the used
@@ -410,6 +416,12 @@ int64_t Engine::presented_frame_locked() {
     }
     last_latency_frames_.store(latency, std::memory_order_relaxed);
     return written - latency;
+}
+
+bool Engine::audition_active() const {
+    const uint32_t published = published_audition_seq_.load(std::memory_order_acquire);
+    const uint32_t acknowledged = acknowledged_audition_seq_.load(std::memory_order_acquire);
+    return after(published, acknowledged) || auditioning_.load(std::memory_order_acquire);
 }
 
 bool Engine::start_pending() const {
