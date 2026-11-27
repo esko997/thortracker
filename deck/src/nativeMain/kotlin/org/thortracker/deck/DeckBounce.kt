@@ -52,7 +52,7 @@ class DeckBounce(private val directory: String) : AutoCloseable {
         val future = worker.execute(TransferMode.SAFE, { Triple(plan, directory, state) }) { (snapshot, dir, control) ->
             var path: String? = null
             try {
-                runCatching {
+                kotlin.runCatching {
                     if (control.cancelled) return@runCatching null
                     val spool = memScoped {
                         val name = "$dir/${PREFIX}XXXXXX".cstr.getPointer(this)
