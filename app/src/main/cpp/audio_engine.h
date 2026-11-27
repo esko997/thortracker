@@ -60,6 +60,8 @@ class Engine {
 public:
     static constexpr int32_t kSampleRate = 48000;
     static constexpr int kStatCount = 14;
+    // timing_stats(): enabled, bin width, histogram ceiling, then 8 fields per refill mask.
+    static constexpr int kTimingStatCount = 3 + 4 * 8;
 
     // nullptr if ops is null or allocation fails.
     static Engine* create(const ChipEngineOps* ops);
@@ -75,6 +77,7 @@ public:
     int ensure_stream();  // AAUDIO_OK or an AAudio error code
     bool suspend_if_idle();
     bool has_image() const { return has_image_; }
+    void set_timing_probe(bool enabled) { timing_enabled_.store(enabled, std::memory_order_relaxed); }
 
     // Any thread. Packed: bit 41 = start pending callback acknowledgement, bit 40 = playing,
     // bits 16..23 order, bits 0..7 row; -1 = never played and no start pending.
@@ -85,6 +88,7 @@ public:
     bool clock_alive() const { return playing_.load(std::memory_order_acquire) && !stream_dead_.load(std::memory_order_acquire); }
     bool audition_active() const;  // includes a published start and its release/effect tail
     void stats(int64_t* out, int count);  // see audio_jni.cpp for the field order
+    void timing_stats(int64_t out[kTimingStatCount]) const;
 
     // AAudio callbacks.
     aaudio_data_callback_result_t render(AAudioStream* stream, float* out, int32_t frames);
@@ -139,6 +143,24 @@ private:
     int play_len_ = 0, play_pos_ = 0, aud_len_ = 0, aud_pos_ = 0;
     uint64_t frames_rendered_ = 0;
     int32_t previous_xruns_ = 0;  // callback-owned; reset before starting a newly opened stream
+
+    // Single callback writer, nonblocking diagnostic readers. Lifetime is one engine, even
+    // across stream restarts; disabling sampling never clears a histogram under its writer.
+    struct TimingHistogram {
+        static constexpr int64_t kBinNs = 250000;
+        static constexpr int kBins = 256;  // last extra bucket: durations strictly over 64 ms
+        std::atomic<int64_t> count{0}, max_ns{0};
+        std::atomic<int64_t> bins[kBins + 1]{};
+        void record(int64_t ns);
+        int64_t p99(int64_t samples) const;
+    };
+    struct CallbackTiming {
+        TimingHistogram wall, cpu;
+        std::atomic<int32_t> max_frames{0};
+        std::atomic<uint64_t> cpu_mask{0};
+    };
+    std::atomic<bool> timing_enabled_{false};
+    CallbackTiming timing_[4];
 
     // Shared (audio thread writes, others read).
     std::atomic<bool> playing_{false};

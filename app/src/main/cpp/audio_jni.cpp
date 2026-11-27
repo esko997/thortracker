@@ -138,6 +138,20 @@ JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeStats(JNIEnv* 
     env->SetLongArrayRegion(out, 0, n, tmp);
 }
 
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeSetTimingProbe(JNIEnv*, jclass, jlong h,
+                                                                                jboolean enabled) {
+    engine(h)->set_timing_probe(enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL Java_org_thortracker_audio_ChipAudio_nativeTimingStats(JNIEnv* env, jclass, jlong h,
+                                                                             jlongArray out) {
+    jlong values[Engine::kTimingStatCount];
+    engine(h)->timing_stats(values);
+    const jsize length = env->GetArrayLength(out);
+    const jsize n = length < Engine::kTimingStatCount ? length : Engine::kTimingStatCount;
+    env->SetLongArrayRegion(out, 0, n, values);
+}
+
 // The OPL3 VGM export (any thread; allocates, renders the whole song: not the audio thread). Returns the file, or
 // throws IllegalArgumentException with the loader's reason for a rejected image.
 JNIEXPORT jbyteArray JNICALL Java_org_thortracker_audio_ChipAudio_nativeOpl3Vgm(JNIEnv* env, jclass, jbyteArray image,

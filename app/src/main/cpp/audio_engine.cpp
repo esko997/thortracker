@@ -9,6 +9,7 @@
 #include <new>
 
 #include <dlfcn.h>
+#include <sched.h>
 
 #define LOG_TAG "ThorTrackerAudio"
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
@@ -19,6 +20,12 @@ namespace {
 int64_t now_ns() {
     timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
+int64_t thread_cpu_ns() {
+    timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return -1;
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
 
@@ -260,6 +267,9 @@ void Engine::record_row(uint64_t frame, int order, int row) {
 
 aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, int32_t frames) {
     const int64_t t0 = now_ns();
+    const bool probe = timing_enabled_.load(std::memory_order_relaxed);
+    const int64_t cpu_start = probe ? thread_cpu_ns() : -1;
+    int refill_mask = 0;
     std::memset(out, 0, sizeof(float) * 2 * static_cast<size_t>(frames));
 
     uint32_t consumed_play_seq = 0;
@@ -316,6 +326,7 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     int i = 0;
     while (play_ && i < frames) {
         if (play_pos_ >= play_len_) {
+            refill_mask |= 1;
             ChipMachine* m = play_->machine;
             if (front_image_ && after(front_image_->version, play_->image_version)) {
                 const int64_t a0 = now_ns();
@@ -352,6 +363,7 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     i = 0;
     while (aud_ && i < frames) {
         if (aud_pos_ >= aud_len_) {
+            refill_mask |= 2;
             if (ops_->apply_audition_image && front_image_ && after(front_image_->version, aud_->image_version)) {
                 ops_->apply_audition_image(aud_->machine, front_image_->data);
                 aud_->image_version = front_image_->version;
@@ -399,6 +411,20 @@ aaudio_data_callback_result_t Engine::render(AAudioStream* stream, float* out, i
     const int64_t spent = now_ns() - t0;
     if (spent > max_callback_ns_.load(std::memory_order_relaxed)) {
         max_callback_ns_.store(spent, std::memory_order_relaxed);
+    }
+    if (probe) {
+        const int64_t cpu_end = thread_cpu_ns();
+        const int cpu = sched_getcpu();
+        auto& group = timing_[refill_mask];
+        if (cpu >= 0 && cpu < 64) {
+            const auto mask = group.cpu_mask.load(std::memory_order_relaxed);
+            group.cpu_mask.store(mask | (uint64_t{1} << cpu), std::memory_order_relaxed);
+        }
+        if (frames > group.max_frames.load(std::memory_order_relaxed)) {
+            group.max_frames.store(frames, std::memory_order_relaxed);
+        }
+        if (cpu_start >= 0 && cpu_end >= cpu_start) group.cpu.record(cpu_end - cpu_start);
+        group.wall.record(spent);
     }
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
@@ -512,6 +538,41 @@ void Engine::stats(int64_t* out, int count) {
     v[12] = last_latency_frames_.load();
     v[13] = raw_latency_frames_.load();
     for (int i = 0; i < count && i < kStatCount; ++i) out[i] = v[i];
+}
+
+void Engine::TimingHistogram::record(int64_t ns) {
+    const int64_t bin = ns > 0 ? std::min<int64_t>((ns - 1) / kBinNs, kBins) : 0;
+    bins[bin].store(bins[bin].load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    if (ns > max_ns.load(std::memory_order_relaxed)) max_ns.store(ns, std::memory_order_relaxed);
+    count.store(count.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+}
+
+int64_t Engine::TimingHistogram::p99(int64_t samples) const {
+    if (!samples) return 0;
+    int64_t remaining = samples - samples / 100;  // nearest rank ceil(0.99 * n)
+    for (int i = 0; i < kBins; ++i) {
+        remaining -= bins[i].load(std::memory_order_relaxed);
+        if (remaining <= 0) return (i + 1) * kBinNs;
+    }
+    return -1;  // p99 landed in overflow, not an invented 64 ms measurement
+}
+
+void Engine::timing_stats(int64_t out[kTimingStatCount]) const {
+    *out++ = timing_enabled_.load(std::memory_order_relaxed) ? 1 : 0;
+    *out++ = TimingHistogram::kBinNs;
+    *out++ = TimingHistogram::kBinNs * TimingHistogram::kBins;
+    for (const auto& group : timing_) {
+        const auto n = group.wall.count.load(std::memory_order_acquire);
+        const auto cpu_n = group.cpu.count.load(std::memory_order_acquire);
+        *out++ = n;
+        *out++ = group.wall.max_ns.load(std::memory_order_relaxed);
+        *out++ = group.cpu.max_ns.load(std::memory_order_relaxed);
+        *out++ = group.wall.p99(n);
+        *out++ = group.cpu.p99(cpu_n);
+        *out++ = group.max_frames.load(std::memory_order_relaxed);
+        *out++ = static_cast<int64_t>(group.cpu_mask.load(std::memory_order_relaxed));
+        *out++ = cpu_n;
+    }
 }
 
 }  // namespace thortracker

@@ -90,6 +90,7 @@ class ChipAudio(
     private var idleCheck: ScheduledFuture<*>? = null
     private var retrySong: Song? = null
     private var auditionSlot: Int? = null
+    private var timingProbeEnabled = false
     // Mixed only: resolve the native row's image version to the exact USB score heard at that boundary.
     private val scores = if (mixedStudio) LinkedHashMap<Int, Song>() else null
     internal fun studioClockAlive(): Boolean = synchronized(handleLock) {
@@ -209,20 +210,33 @@ class ChipAudio(
 
     override fun error(): String? = deviceError ?: commandError ?: songError
 
+    /** Queue optional per-callback measurements. Disabling pauses, not resets, this engine's counters. */
+    fun setTimingProbe(enabled: Boolean) = post {
+        timingProbeEnabled = enabled
+        if (handle != 0L) nativeSetTimingProbe(handle, enabled)
+    }
+
     /**
      * Measurements for latency tuning: sample rate, frames per burst, buffer size (frames), xruns,
      * worst callback (ns), last seek / audition preparation (ns), driver faults, last seek mode
      * (0 from song start, 1 from order start), exclusive stream, low-latency stream, last live
      * image apply inside the callback (ns), output latency used for the playhead and the raw
      * timestamp measurement (frames at 48 kHz; negative measurements fall back to the buffer size).
+     * Timing groups are actual tick refills (none/song/audition/both), not sounding voices.
+     * P99 is a histogram upper bound in ns: 0 for no samples, -1 above timingCeilingNs.
+     * CpuMask samples the exit CPU (ids 0..63); CpuCount excludes failed thread-clock reads.
+     * Live counters may advance while diagnostics are read; all restart at engine replacement.
      */
     fun diagnostics(): Map<String, Long> = synchronized(handleLock) {
         val h = handle
         if (h == 0L) return emptyMap()
         val values = LongArray(DIAGNOSTIC_NAMES.size)
         nativeStats(h, values)
-        buildMap(values.size + 1) {
+        val timing = LongArray(TIMING_NAMES.size)
+        nativeTimingStats(h, timing)
+        buildMap(values.size + timing.size + 1) {
             for (i in values.indices) put(DIAGNOSTIC_NAMES[i], values[i])
+            for (i in timing.indices) put(TIMING_NAMES[i], timing[i])
             put("auditionActive", if (nativeAuditionActive(h)) 1L else 0L)
         }
     }
@@ -382,6 +396,7 @@ class ChipAudio(
             deviceError = "Audio engine could not start the ${next.name} player"
             return 0L
         }
+        if (timingProbeEnabled) nativeSetTimingProbe(created, true)
         synchronized(handleLock) { handle = created }
         system = next
         if (image.size != next.engine.imageSize) image = ByteArray(next.engine.imageSize)
@@ -426,6 +441,13 @@ class ChipAudio(
             "lastAuditionPrepNs", "driverFaults", "lastSeekMode", "exclusive", "lowLatency", "lastLiveApplyNs",
             "outputLatencyFrames", "rawTimestampLatencyFrames",
         )
+        private val TIMING_NAMES = buildList {
+            addAll(listOf("timingEnabled", "timingBinNs", "timingCeilingNs"))
+            val fields = listOf("Count", "WallMaxNs", "CpuMaxNs", "WallP99Ns", "CpuP99Ns", "MaxFrames", "CpuMask", "CpuCount")
+            for (group in listOf("None", "Song", "Audition", "Both")) {
+                for (field in fields) add("timing$group$field")
+            }
+        }
 
         init {
             System.loadLibrary("thortracker_audio")
@@ -508,6 +530,8 @@ class ChipAudio(
         @JvmStatic private external fun nativeClockAlive(handle: Long): Boolean
         @JvmStatic private external fun nativeAuditionActive(handle: Long): Boolean
         @JvmStatic private external fun nativeStats(handle: Long, out: LongArray)
+        @JvmStatic private external fun nativeSetTimingProbe(handle: Long, enabled: Boolean)
+        @JvmStatic private external fun nativeTimingStats(handle: Long, out: LongArray)
         /** UTF-8 tag strings; throws IllegalArgumentException(loader problem) for a rejected image. */
         @JvmStatic private external fun nativeOpl3Vgm(image: ByteArray, maxTicks: Int, title: ByteArray, author: ByteArray, date: ByteArray): ByteArray
         /** WonderSwan / WonderSwan Color VGM (`ws/ws_export.h`); UTF-8 tags; throws IllegalArgumentException(loader problem). */

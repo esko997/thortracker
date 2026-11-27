@@ -51,11 +51,15 @@ class ModularDeviceTest {
         val duration = args.getString("observeMillis")?.toLongOrNull()?.coerceIn(5000, 180000) ?: 30000
         val edits = args.getString("modularEdits") != "false"
         val auditions = args.getString("modularAudition")?.let { it == "true" } ?: edits
+        val sampleMemory = args.getString("modularSampleMemory") != "false"
         var peakPss = 0L
         var peakNative = 0L
         var revisions = 0
         var iterations = 0
         ChipAudio(instrumentation.targetContext).use { audio ->
+            audio.setTimingProbe(args.getString("modularTiming") == "true")
+            peakPss = Debug.getPss()
+            peakNative = Debug.getNativeHeapAllocatedSize()
             audio.update(song)
             audio.play()
             await("Modular starts", audio) { audio.position().playing }
@@ -79,16 +83,20 @@ class ModularDeviceTest {
                 SystemClock.sleep(400)
                 assertNull(audio.error())
                 assertTrue("Transport must not restart/stop during graph edits", audio.position().playing)
-                peakPss = maxOf(peakPss, Debug.getPss())
-                peakNative = maxOf(peakNative, Debug.getNativeHeapAllocatedSize())
+                if (sampleMemory) {
+                    peakPss = maxOf(peakPss, Debug.getPss())
+                    peakNative = maxOf(peakNative, Debug.getNativeHeapAllocatedSize())
+                }
             }
             val xruns = audio.diagnostics().getValue("xruns") - initialXruns
+            peakPss = maxOf(peakPss, Debug.getPss())
+            peakNative = maxOf(peakNative, Debug.getNativeHeapAllocatedSize())
             audio.stop()
             await("Modular stop", audio) { !audio.position().playing && !audio.position().pending }
             audio.silence()
             assertEquals(0L, audio.diagnostics().getValue("driverFaults"))
             instrumentation.sendStatus(0, Bundle().apply {
-                putString("stream", "MODULAR_SOAK fixture=$name maxRack=$maxRack activeTracks=$activeTracks edits=$edits auditions=$auditions revisions=$revisions " +
+                putString("stream", "MODULAR_SOAK fixture=$name maxRack=$maxRack activeTracks=$activeTracks edits=$edits auditions=$auditions revisions=$revisions periodicMemory=$sampleMemory " +
                     "initialXruns=$initialXruns measuredXruns=$xruns peakPssKiB=$peakPss " +
                     "peakNativeBytes=$peakNative ${audio.diagnostics()}\n")
             })
