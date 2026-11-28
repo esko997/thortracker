@@ -92,6 +92,34 @@ internal object StudioAssignments {
         })
     }
 
+    /** Returns the bound effect letter(s) on [channel] for [instance]/[kind]/[parameter], or null when unbound. */
+    fun boundLetters(song: Song, channel: Int, instance: Int, kind: StudioKind, parameter: Int): String? {
+        val studio = song.sound as? StudioSound ?: return null
+        val lane = studio.tracks.getOrNull(channel) ?: return null
+        if (lane.bindings.isEmpty()) return null
+        var first = -1
+        var more: StringBuilder? = null
+        for (code in 14..35) {
+            val b = lane.bindings[code] ?: continue
+            if (b.instance == instance && b.kind == kind && b.parameter == parameter) {
+                if (first < 0) first = code
+                else {
+                    if (more == null) more = StringBuilder(fxLetter(first))
+                    more.append(',').append(fxLetter(code))
+                }
+            }
+        }
+        return more?.toString() ?: if (first >= 0) fxLetter(first) else null
+    }
+
+    private fun bindingLabel(s: StudioSound, slot: Int, b: StudioBinding): String {
+        val base = b.kind.parameters.first { p -> p.id == b.parameter }.name
+        if (b.kind != StudioKind.MODULAR) return "${b.kind.faceName} $base"
+        val active = (s.patch(slot) as? ModularPatch) ?: s.patches.firstOrNull { it is ModularPatch } as? ModularPatch
+        val custom = active?.graph?.macros?.getOrNull(b.parameter)?.name
+        return if (custom != null && custom != base) "${b.kind.faceName} $custom ($base)" else "${b.kind.faceName} $base"
+    }
+
     /** Explicitly bind a named letter, including repair of an already-used unbound command. */
     fun bindings(v: ViewController, menu: MenuContext) {
         val state = v.state
@@ -117,7 +145,7 @@ internal object StudioAssignments {
             val b = lane.bindings[code]
             val count = counts[code]
             val letter = fxLetter(code)
-            val label = b?.let { "${it.kind.faceName} ${it.kind.parameters.first { p -> p.id == it.parameter }.name}" } ?: "Unbound"
+            val label = b?.let { bindingLabel(doc.studio, state.instrument, it) } ?: "Unbound"
             "$letter  $label${if (count == 0) "" else "  ($count)"}" to {
                 fun pick() = targets(doc.studio, channel, state.instrument, menu, "Bind $letter to…") { next, p, _ ->
                     if (count == 0 || next == b) bind(code, next)

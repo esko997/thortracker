@@ -3,6 +3,7 @@ package org.thortracker.ui
 import android.content.Context
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -12,62 +13,108 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * Primary-screen touch chrome. The actual editor receives the remaining height, including after resize and
- * while the dock is hidden for an attached controller; the Menu/Play header stays either way.
+ * Primary-screen touch chrome. All touch chrome (both the top bar and the virtual controller dock) hides
+ * completely whenever a usable physical controller is attached ([dockShown] == false), leaving 100% of the
+ * display to [tracker].
  */
 class TouchShell(
     context: Context,
     private val tracker: TrackerView,
     val dock: ControllerDock,
     private val cancelInput: () -> Unit,
+    private val chooseView: () -> Unit,
     private val entries: () -> List<Pair<String, () -> Unit>>,
     play: () -> Unit,
 ) : FrameLayout(context) {
-    private val title = TextView(context).apply {
-        typeface = PopupLayer.REGULAR; textSize = 12f; gravity = Gravity.CENTER_VERTICAL
-        maxLines = 2; ellipsize = TextUtils.TruncateAt.END
-        setPadding(dp(8), 0, dp(8), 0)
+    private val songTitle = TextView(context).apply {
+        typeface = PopupLayer.BOLD
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
     }
-    private val menu = button("Menu") { openDrawer() }
-    private val transport = button("Play", play)
+    private val menu = pillButton("Menu") { openDrawer() }
+    private val viewPill = pillButton("Pattern ▾", chooseView)
+    private val transport = pillButton("Play", play)
+    private val bar = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(6), 0, dp(6), 0)
+    }
+    private val barRule = View(context)
+    private val header = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val drawer = FrameLayout(context).apply { visibility = GONE; isClickable = true }
+    private val drawerCard = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; isClickable = true }
+    private val drawerTitle = TextView(context).apply {
+        text = "Navigation"
+        typeface = PopupLayer.BOLD
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        setPadding(dp(16), dp(12), dp(16), dp(10))
+    }
+    private val drawerRule = View(context)
     private val drawerRows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    private val drawerScroll = ScrollView(context).apply { isFillViewport = true; addView(drawerRows) }
+    private val drawerScroll = ScrollView(context).apply { isFillViewport = false; addView(drawerRows) }
     private var palette = Palette.SLATE
+    private var lastPlaying = false
     val drawerOpen: Boolean get() = drawer.visibility == VISIBLE
-    /** The host cancels the dock's presses ([ControllerDock.cancel]) before hiding it. */
+
+    /** The host cancels the dock's presses ([ControllerDock.cancel]) before hiding touch chrome. */
     var dockShown: Boolean
         get() = dock.visibility == VISIBLE
-        set(value) { dock.visibility = if (value) VISIBLE else GONE }
+        set(value) {
+            val vis = if (value) VISIBLE else GONE
+            header.visibility = vis
+            dock.visibility = vis
+            if (!value && drawerOpen) closeDrawer()
+        }
 
     init {
         tag = "touch-shell"
         fitsSystemWindows = true
-        val bar = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        bar.addView(menu, LinearLayout.LayoutParams(dp(64), dp(48)))
-        bar.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
-        bar.addView(transport, LinearLayout.LayoutParams(dp(64), dp(48)))
-        content.addView(bar, LinearLayout.LayoutParams(-1, dp(48)))
+        bar.addView(menu, LinearLayout.LayoutParams(-2, dp(34)).apply { marginEnd = dp(6) })
+        bar.addView(viewPill, LinearLayout.LayoutParams(-2, dp(34)).apply { marginEnd = dp(8) })
+        bar.addView(songTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(8) })
+        bar.addView(transport, LinearLayout.LayoutParams(-2, dp(34)))
+        header.addView(bar, LinearLayout.LayoutParams(-1, dp(42)))
+        header.addView(barRule, LinearLayout.LayoutParams(-1, dp(1)))
+        content.addView(header, LinearLayout.LayoutParams(-1, -2))
         content.addView(tracker, LinearLayout.LayoutParams(-1, 0, 1f))
         content.addView(dock, LinearLayout.LayoutParams(-1, dp(ControllerDock.HEIGHT_DP)))
         addView(content, LayoutParams(-1, -1))
+
+        drawerCard.addView(drawerTitle, LinearLayout.LayoutParams(-1, -2))
+        drawerCard.addView(drawerRule, LinearLayout.LayoutParams(-1, dp(1)))
+        drawerCard.addView(drawerScroll, LinearLayout.LayoutParams(-1, -2))
         drawer.setOnClickListener { closeDrawer() }
-        drawer.addView(drawerScroll, LayoutParams(-1, -1, Gravity.START))
+        drawer.addView(drawerCard, LayoutParams(dp(300), -1, Gravity.START))
         addView(drawer, LayoutParams(-1, -1))
     }
 
     private fun dp(n: Int) = (n * resources.displayMetrics.density + .5f).toInt()
-    private fun button(label: String, action: () -> Unit) = Button(context).apply {
-        text = label; isAllCaps = false; typeface = PopupLayer.REGULAR; textSize = 14f
-        minHeight = dp(48); minimumHeight = dp(48); minWidth = dp(48)
-        setPadding(dp(8), dp(4), dp(8), dp(4)); setOnClickListener { action() }
+
+    private fun pillButton(label: String, action: () -> Unit) = Button(context).apply {
+        text = label; isAllCaps = false; typeface = PopupLayer.REGULAR
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        minHeight = 0; minimumHeight = 0; minWidth = dp(52); minimumWidth = dp(52)
+        stateListAnimator = null
+        setPadding(dp(10), 0, dp(10), 0)
+        setOnClickListener { action() }
+    }
+
+    private fun drawerRowButton(label: String, action: () -> Unit) = Button(context).apply {
+        text = label; isAllCaps = false; typeface = PopupLayer.REGULAR
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        minHeight = dp(46); minimumHeight = dp(46)
+        stateListAnimator = null
+        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        setPadding(dp(16), dp(4), dp(16), dp(4))
+        setOnClickListener { action() }
     }
 
     fun openDrawer() {
         cancelInput()
         drawerRows.removeAllViews()
-        addDrawerButton("Close navigation") { closeDrawer() }
+        addDrawerButton("Close navigation", accent = true) { closeDrawer() }
         for ((label, action) in entries()) addDrawerButton(label) { closeDrawer(); action() }
         drawer.visibility = VISIBLE
         content.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -75,9 +122,11 @@ class TouchShell(
         drawerRows.announceForAccessibility("Navigation")
     }
 
-    private fun addDrawerButton(label: String, action: () -> Unit) {
-        val item = button(label, action).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }
-        style(item)
+    private fun addDrawerButton(label: String, accent: Boolean = false, action: () -> Unit) {
+        val item = drawerRowButton(label, action).apply {
+            typeface = if (accent) PopupLayer.BOLD else PopupLayer.REGULAR
+        }
+        styleDrawerRow(item, accent)
         drawerRows.addView(item, LinearLayout.LayoutParams(-1, -2))
     }
 
@@ -87,22 +136,68 @@ class TouchShell(
         tracker.requestFocus()
     }
 
-    fun refresh(value: Palette, view: String, playing: Boolean, ready: Boolean) {
-        title.text = "Thor Tracker\n$view"
+    fun refresh(value: Palette, song: String, view: String, playing: Boolean, ready: Boolean) {
+        songTitle.text = song.ifBlank { "Thor Tracker" }
+        viewPill.text = "$view ▾"
         transport.text = if (playing) "Stop" else "Play"
         transport.isEnabled = ready
-        if (palette !== value || menu.background !is GradientDrawable) {
+        val paletteChanged = palette !== value || menu.background !is GradientDrawable
+        if (paletteChanged || lastPlaying != playing) {
             palette = value
+            lastPlaying = playing
             setBackgroundColor(value.BG); content.setBackgroundColor(value.BG)
-            title.setTextColor(value.TEXT); drawer.setBackgroundColor(value.BG)
-            style(menu); style(transport)
-            for (i in 0 until drawerRows.childCount) style(drawerRows.getChildAt(i) as Button)
+            bar.setBackgroundColor(value.LANE)
+            barRule.setBackgroundColor(value.RULE)
+            songTitle.setTextColor(value.DIM)
+            drawer.setBackgroundColor(Palette.alpha(value.BG, 0xB8))
+            drawerCard.background = GradientDrawable().apply {
+                setColor(value.BG)
+                setStroke(dp(1), value.RULE)
+            }
+            drawerTitle.setBackgroundColor(value.LANE)
+            drawerTitle.setTextColor(value.FOCUS_ACCENT)
+            drawerRule.setBackgroundColor(value.RULE)
+            stylePill(menu, active = false)
+            stylePill(viewPill, active = true)
+            styleTransport(playing, ready)
+            for (i in 0 until drawerRows.childCount) {
+                styleDrawerRow(drawerRows.getChildAt(i) as Button, i == 0)
+            }
             dock.palette = value
+        } else {
+            styleTransport(playing, ready)
         }
     }
 
-    private fun style(button: Button) {
-        button.setTextColor(palette.TEXT)
-        button.background = GradientDrawable().apply { setColor(palette.BAR); setStroke(dp(1), palette.RULE) }
+    private fun stylePill(button: Button, active: Boolean) {
+        button.setTextColor(if (active) palette.FOCUS_ACCENT else palette.TEXT)
+        button.typeface = if (active) PopupLayer.BOLD else PopupLayer.REGULAR
+        button.background = GradientDrawable().apply {
+            cornerRadius = dp(4).toFloat()
+            setColor(if (active) Palette.mix(palette.BAR, palette.FOCUS_ACCENT, 0.14f) else palette.BAR)
+            setStroke(dp(1), if (active) Palette.alpha(palette.FOCUS_ACCENT, 140) else palette.RULE)
+        }
+    }
+
+    private fun styleTransport(playing: Boolean, ready: Boolean) {
+        transport.setTextColor(when {
+            !ready -> palette.FAINT
+            playing -> palette.PLAYHEAD
+            else -> palette.TEXT
+        })
+        transport.typeface = if (playing) PopupLayer.BOLD else PopupLayer.REGULAR
+        transport.background = GradientDrawable().apply {
+            cornerRadius = dp(4).toFloat()
+            setColor(if (playing) Palette.alpha(palette.PLAYHEAD, 44) else palette.BAR)
+            setStroke(dp(1), if (playing) palette.PLAYHEAD else palette.RULE)
+        }
+    }
+
+    private fun styleDrawerRow(button: Button, accent: Boolean) {
+        button.setTextColor(if (accent) palette.FOCUS_ACCENT else palette.TEXT)
+        button.background = GradientDrawable().apply {
+            setColor(if (accent) palette.LANE else palette.BG)
+            setStroke(dp(1), palette.RULE)
+        }
     }
 }

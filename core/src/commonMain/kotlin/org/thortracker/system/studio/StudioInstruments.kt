@@ -141,6 +141,12 @@ internal object StudioModuleControls {
             MARK_IN->region?.let { p.start until it.end }; MARK_OUT->region?.let { it.start+1..last };else->null
         }?.takeUnless { it.isEmpty() }
     }
+    private fun formatFrames(frames: Int, rate: Int): String {
+        if (rate <= 0) return "$frames frames"
+        val ms = (frames * 1000L + rate / 2) / rate
+        val time = if (ms < 1000L) "$ms ms" else "${org.thortracker.model.NumberText.fixed(frames.toDouble() / rate, 2)} s"
+        return "$time · $frames fr"
+    }
     fun display(p:StudioPatch,st:ViewState,s:StudioSound,k:Int):String {
         if(k<100) {
             val n=p.value(k)
@@ -155,11 +161,16 @@ internal object StudioModuleControls {
             POINT->return "${st.wavePoint+1} / 64"; HEIGHT->return p.waves.point(st.waveSource,st.wavePoint).toString()
         }
         if(p is SamplerPatch) when(k) {
-            PAGE->return pageNames[st.samplerPage];SAMPLE->return p.assetId?.let { "Recording ${fxHex(it)}" } ?: "Import WAV…"
+            PAGE->return pageNames[st.samplerPage]
+            SAMPLE->return p.assetId?.let { id ->
+                val a = s.assets[id]
+                if (a != null) "Rec ${fxHex(id)} · ${formatFrames(a.frames, a.sampleRate)}" else "Recording ${fxHex(id)}"
+            } ?: "Import WAV…"
             SLICE->return selected(p,st)?.let { fxHex(it.id) } ?: "Create slices…";ZOOM->return "${st.samplerZoom}×";DEFAULT->return p.defaultSlice?.let { fxHex(it) } ?: "Whole region"
             WRITE->return selected(p,st)?.let { "D${fxHex(it.id)}" } ?: "Choose a slice"
         }
-        return value(p,st,s,k)?.let { "$it frames" } ?: when(k){ LIBRARY,CHOP->"Open…";else->"Not set" }
+        val rate = (p as? SamplerPatch)?.let { pcm(s, it)?.sampleRate } ?: 0
+        return value(p,st,s,k)?.let { formatFrames(it, rate) } ?: when(k){ LIBRARY,CHOP->"Open…";else->"Not set" }
     }
     fun help(p:StudioPatch,k:Int):String = when(k) {
         PAGE->if(p is WavetablePatch) "Play blends the waves; Draw edits one source." else "Play sets pitch; Chop chooses a region; Shape sets its contour."
@@ -250,7 +261,7 @@ internal object StudioModuleControls {
                 SAMPLE->if(p is SamplerPatch) m.menu("Recording",buildList {
                     add("Import WAV…" to { if(valid()) importStudioSample(v.session,m,slot) })
                     for(id in s.assets.ids.sorted()) { val a=s.assets[id]!!
-                        add("Use ${fxHex(id)} · ${a.frames} frames · ${a.channels} ch" to { if(valid() && p.assetId!=id) {
+                        add("Use ${fxHex(id)} · ${formatFrames(a.frames, a.sampleRate)} · ${if (a.channels == 2) "stereo" else "mono"}" to { if(valid() && p.assetId!=id) {
                             m.menu("Replace recording and region markers?",listOf("Use recording ${fxHex(id)}" to { if(valid()) StudioInstruments.store(v.session,slot,p.copy(assetId=id,start=0,end=a.frames,loopStart=0,loopEnd=a.frames,slices=emptyList(),defaultSlice=null),"Reuse recording"); Unit }))
                         } })
                     }

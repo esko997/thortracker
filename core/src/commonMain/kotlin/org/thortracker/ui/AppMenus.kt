@@ -157,6 +157,12 @@ class AppMenus(
             PopupItem.dismiss(), selected = selected), host.modalDisplay)
     }
 
+    private fun groupedMenu(title: String, items: List<PopupItem>) {
+        val all = items + PopupItem.dismiss()
+        val first = all.indexOfFirst { !it.heading }.coerceAtLeast(0)
+        popups.show(PopupSpec(title, items = all, selected = first), host.modalDisplay)
+    }
+
     fun choose(title: String, labels: List<String>, selected: (Int) -> Unit) =
         menu(title, labels.mapIndexed { index, label -> label to { selected(index) } })
 
@@ -255,52 +261,69 @@ class AppMenus(
     }
 
     fun appMenu() {
-        menu("Thor Tracker", buildList {
-            add("Files" to ::fileMenu)
-            add("Song details / tempo" to host::showSongDetails)
-            if (bounce.pending) add("Show track bounce…" to bounce::reopen)
-            if (session.song.sound is StudioSound) {
-                val state = states[host.modalDisplay.coerceIn(states.indices)]
-                add("Track strip" to {
-                    state.switchKind(ViewKind.STUDIO_STRIP)
-                    state.pinned = true
-                    host.refresh()
-                })
-                add("Instrument / presets…" to { StudioInstruments.library(session, context, state.instrument) })
-                if (!bounce.pending && state.kind == ViewKind.PATTERN) {
-                    val display = host.modalDisplay.coerceIn(states.indices)
-                    add("Bounce this track to sampler…" to { bounce.chooseSlot(display) { states.getOrNull(display) } })
+        groupedMenu("Thor Tracker", buildList {
+            add(PopupItem.heading("Project & song"))
+            add(PopupItem("Files", action = ::fileMenu))
+            add(PopupItem("Song details / tempo", action = host::showSongDetails))
+            if (bounce.pending || session.song.sound is StudioSound) {
+                add(PopupItem.heading("Studio"))
+                if (bounce.pending) add(PopupItem("Show track bounce…", PopupItem.Tone.PRIMARY, action = bounce::reopen))
+                if (session.song.sound is StudioSound) {
+                    val state = states[host.modalDisplay.coerceIn(states.indices)]
+                    add(PopupItem("Track strip") {
+                        state.switchKind(ViewKind.STUDIO_STRIP)
+                        state.pinned = true
+                        host.refresh()
+                    })
+                    add(PopupItem("Studio tracks and destinations…") {
+                        org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic, host.supportsUsbMidi)
+                    })
+                    add(PopupItem("Instrument / presets…") { StudioInstruments.library(session, context, state.instrument) })
+                    if (!bounce.pending && state.kind == ViewKind.PATTERN) {
+                        val display = host.modalDisplay.coerceIn(states.indices)
+                        add(PopupItem("Bounce this track to sampler…") { bounce.chooseSlot(display) { states.getOrNull(display) } })
+                    }
+                    if (state.kind == ViewKind.PATTERN) add(PopupItem("Write module parameter…") {
+                        StudioAssignments.choose(session, context, state)
+                    })
+                    add(PopupItem("Panic / cut tails", action = host::audioPanic))
                 }
-                if (state.kind == ViewKind.PATTERN) add("Write module parameter…" to {
-                    StudioAssignments.choose(session, context, state)
+            } else if (session.song.sound is org.thortracker.system.midi.MidiSound) {
+                add(PopupItem.heading("MIDI"))
+                add(PopupItem("MIDI tracks and USB outputs…") {
+                    org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic)
                 })
-                add("Panic / cut tails" to host::audioPanic)
             }
-            // The YM2608 drum ROM is device firmware the user supplies; offered (with its state) while a song of a
-            // system with rhythm drums (the NES EPSM, the YM2608) is open.
-            if (session.song.system.rhythmRom) {
-                add(RhythmRomMenu.LABEL + (if (Ym2608RhythmRom.installed) "  installed" else "  missing") to { open(RhythmRomMenu::open) })
-            }
-            add("Views / layout" to { viewOptions(focus) })
-            add("Focused view zoom: ${states[focus].zoom.percent}%" to { zoomMenu(focus) })
-            if (host.displayCount > 1) add("Switch controller focus" to host::switchFocus)
-            add("Play from song start" to { transport.start(0, 0) })
-            add("Copy selection" to { host.editAction(Action.COPY) })
-            add("Cut selection" to { host.editAction(Action.CUT) })
-            add("Paste" to { host.editAction(Action.PASTE) })
-            add("Duplicate" to { host.editAction(Action.DUPLICATE) })
-            add("Undo" to { host.editAction(Action.UNDO) })
-            add("Redo" to { host.editAction(Action.REDO) })
-            add("Entry step" to {
+            add(PopupItem.heading("Views & transport"))
+            add(PopupItem("Views / layout") { viewOptions(focus) })
+            add(PopupItem("Focused view zoom: ${states[focus].zoom.percent}%") { zoomMenu(focus) })
+            if (host.displayCount > 1) add(PopupItem("Switch controller focus", action = host::switchFocus))
+            add(PopupItem("Play from song start") { transport.start(0, 0) })
+
+            add(PopupItem.heading("Edit"))
+            add(PopupItem("Undo") { host.editAction(Action.UNDO) })
+            add(PopupItem("Redo") { host.editAction(Action.REDO) })
+            add(PopupItem("Copy selection") { host.editAction(Action.COPY) })
+            add(PopupItem("Cut selection") { host.editAction(Action.CUT) })
+            add(PopupItem("Paste") { host.editAction(Action.PASTE) })
+            add(PopupItem("Duplicate") { host.editAction(Action.DUPLICATE) })
+            add(PopupItem("Entry step", value = if (session.step == 0) "Stay" else "${session.step}") {
                 choose("Advance after note entry", listOf("Stay", "1 row", "2 rows", "4 rows", "8 rows", "16 rows")) {
                     session.step = intArrayOf(0, 1, 2, 4, 8, 16)[it]; host.refresh()
                 }
             })
-            add("Tuning" to ::tuningMenu)
-            add("Controls" to ::showControls)
-            add("Colour theme" to ::colourTheme)
-            add("Help" to { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; host.refresh() })
-            addAll(host.extraMenuItems())
+
+            add(PopupItem.heading("Setup & help"))
+            // The YM2608 drum ROM is device firmware the user supplies; offered (with its state) while a song of a
+            // system with rhythm drums (the NES EPSM, the YM2608) is open.
+            if (session.song.system.rhythmRom) {
+                add(PopupItem(RhythmRomMenu.LABEL + (if (Ym2608RhythmRom.installed) "  installed" else "  missing")) { open(RhythmRomMenu::open) })
+            }
+            add(PopupItem("Tuning", action = ::tuningMenu))
+            add(PopupItem("Controls", action = ::showControls))
+            add(PopupItem("Colour theme", value = panes.palette.name, action = ::colourTheme))
+            add(PopupItem("Help") { states[focus].switchKind(ViewKind.HELP); states[focus].pinned = true; host.refresh() })
+            for ((label, action) in host.extraMenuItems()) add(PopupItem(label, action = action))
         })
     }
 
@@ -562,27 +585,34 @@ class AppMenus(
 
     fun fileMenu() {
         val system = session.song.system
-        menu("Project", listOf(
-            "New blank song" to { chooseSystem("New song for") { confirmReplace { host.replace(it.blank()) } } },
-            "Open project" to { confirmReplace { host.openProject() } },
-            "Save" to host::saveProject,
-            "Save as…" to host::saveProjectAs,
-            "New Studio song" to { confirmReplace { host.replace(org.thortracker.system.studio.StudioSound().system.blank()) } },
-        ) + (if (host.supportsUsbMidi) listOf<Pair<String, () -> Unit>>(
-            "New USB MIDI song (Beta)" to { confirmReplace { host.replace(org.thortracker.system.midi.MidiSound().system.blank()) } }
-        ) else emptyList()) + system.exports.map { format -> "Export ${format.label}" to { export(format) } } + (if (session.song.sound is org.thortracker.system.midi.MidiSound) listOf<Pair<String, () -> Unit>>(
-            "MIDI tracks and USB outputs…" to { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic) }
-        ) else if (session.song.sound is org.thortracker.system.studio.StudioSound) listOf(
-            "Studio tracks and destinations…" to { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic, host.supportsUsbMidi) },
-            "Export .wav…" to ::exportWav,
-        ) else listOf(
-            "Export .wav…" to ::exportWav,
-            "Convert to system…" to { chooseSystem("Convert to") { conversionPreview(it) } },
-        )) + listOf(
-            "Rename song" to ::rename,
-            "Load demo" to { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } },
-            "Recover previous project" to { confirmReplace { host.recoverPrevious() } },
-        ))
+        groupedMenu("Files · Project", buildList {
+            add(PopupItem.heading("Create & open"))
+            add(PopupItem("New Studio song") { confirmReplace { host.replace(org.thortracker.system.studio.StudioSound().system.blank()) } })
+            add(PopupItem("New blank song") { chooseSystem("New song for") { confirmReplace { host.replace(it.blank()) } } })
+            if (host.supportsUsbMidi) {
+                add(PopupItem("New USB MIDI song (Beta)") { confirmReplace { host.replace(org.thortracker.system.midi.MidiSound().system.blank()) } })
+            }
+            add(PopupItem("Open project") { confirmReplace { host.openProject() } })
+            add(PopupItem("Load demo") { chooseSystem("Demo for") { confirmReplace { host.replace(it.demo()) } } })
+
+            add(PopupItem.heading("Save & export"))
+            add(PopupItem("Save", action = host::saveProject))
+            add(PopupItem("Save as…", action = host::saveProjectAs))
+            for (format in system.exports) add(PopupItem("Export ${format.label}") { export(format) })
+            if (session.song.sound is org.thortracker.system.midi.MidiSound) {
+                add(PopupItem("MIDI tracks and USB outputs…") { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic) })
+            } else if (session.song.sound is org.thortracker.system.studio.StudioSound) {
+                add(PopupItem("Studio tracks and destinations…") { org.thortracker.system.midi.midiTrackMenu(session, context, host.midiOutputs(), host::midiPanic, host.supportsUsbMidi) })
+                add(PopupItem("Export .wav…", action = ::exportWav))
+            } else {
+                add(PopupItem("Export .wav…", action = ::exportWav))
+                add(PopupItem("Convert to system…") { chooseSystem("Convert to") { conversionPreview(it) } })
+            }
+
+            add(PopupItem.heading("Song & recovery"))
+            add(PopupItem("Rename song", action = ::rename))
+            add(PopupItem("Recover previous project") { confirmReplace { host.recoverPrevious() } })
+        })
     }
 
     /**

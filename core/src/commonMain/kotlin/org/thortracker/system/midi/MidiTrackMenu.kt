@@ -35,7 +35,26 @@ fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<St
     val output = ports.firstOrNull { it.first == track.port }?.second ?: "Bind USB output"
     val clock = studio?.clock ?: requireNotNull(legacy).clock
     val count = song.system.channels.size
-    menu.menu("${if (studio == null) "MIDI" else "Studio"} track ${track.id}", buildList {
+    val maxTracks = if (studio == null) 64 else StudioSound.MAX_TRACKS
+    menu.menu("${if (studio == null) "MIDI" else "Studio"} track ${track.id} of $count", buildList {
+        if (count < maxTracks) add("Add track" to {
+            session.apply("Add track") { if (studio != null) it.addStudioTrack() else it.addMidiTrack() }; Unit
+        })
+        if (count > 1) add("Select track… ($count active)" to {
+            val entries = if (studio != null) studio.tracks.mapIndexed { i, t ->
+                val dest = if (t.target == StudioTarget.USB_MIDI) "USB MIDI" else "Internal"
+                "Track ${t.midi.id} · $dest" to {
+                    session.select(session.selection.copy(channel = i))
+                    midiTrackMenu(session, menu, ports, panic, usbAvailable)
+                }
+            } else requireNotNull(legacy).tracks.mapIndexed { i, t ->
+                "Track ${t.id} · Ch ${t.channel + 1}" to {
+                    session.select(session.selection.copy(channel = i))
+                    midiTrackMenu(session, menu, ports, panic, usbAvailable)
+                }
+            }
+            menu.menu("Tracks ($count / $maxTracks)", entries, index.coerceIn(entries.indices))
+        })
         if (lane != null) add("Destination · ${if (external) "USB MIDI" else "Internal"}" to {
             menu.menu("Track destination", listOf(
                 "Internal instruments" to { editLane("Assign internal instruments") { it.copy(target = StudioTarget.MONO) } },
@@ -71,9 +90,6 @@ fun midiTrackMenu(session: EditorSession, menu: MenuContext, ports: List<Pair<St
         }
         if (external && usbAvailable) add("Clock / Start / Stop · ${if (clock) "on" else "off"}" to {
             session.apply("Toggle MIDI clock") { it.copy(sound = studio?.copy(clock = !clock) ?: requireNotNull(legacy).copy(clock = !clock)) }
-        })
-        if (count < (if (studio == null) 64 else StudioSound.MAX_TRACKS)) add("Add track" to {
-            session.apply("Add track") { if (studio != null) it.addStudioTrack() else it.addMidiTrack() }; Unit
         })
         if (count > 1) add("Remove track ${track.id}" to {
             menu.menu("Remove track from every pattern?", listOf("Remove track ${track.id}" to {

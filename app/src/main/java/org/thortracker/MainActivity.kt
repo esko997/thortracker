@@ -116,7 +116,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             workspace.save(states, focus)
             workspace.savePalette(palette)
         }
-        override fun status(message: String) { statusMessage = message; this@MainActivity.refresh() }
+        override fun status(message: String) {
+            statusMessage = message
+            session.note(message)
+            this@MainActivity.refresh()
+        }
         override fun error(message: String) = showError(message)
         override fun applyKeymap(next: Keymap, message: String?) = this@MainActivity.applyKeymap(next, message)
         override fun resetInput() = cancelHeldInput()
@@ -539,20 +543,26 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
      * ([TouchControllers.usable], the built-in handheld pad included) and returns when the last one goes.
      * A rescan rather than per-event bookkeeping, so startup, resume and enable/disable changes agree.
      */
+    private var controllerConnected = false
+
     private fun syncControllers() {
-        val shell = hosts[0]?.touchShell ?: return
         val attached = inputDevices.inputDeviceIds.any { id ->
             val device = inputDevices.getInputDevice(id) ?: return@any false
             TouchControllers.usable(device.isVirtual, Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1 || device.isEnabled,
                 device.sources) { device.hasKeys(*it) }
         }
-        if (shell.dockShown != attached) return
-        val dockFocused = shell.dock.hasFocus()
-        if (attached) forgetVirtualInput()
-        shell.dockShown = !attached
-        hosts[0]?.layoutDock()
-        // A focused dock button must not hand focus to the header; drawer and popup focus stay where they are.
-        if (dockFocused && !shell.drawerOpen && !popups.isOpen) hosts[0]?.tracker?.requestFocus()
+        val shell = hosts[0]?.touchShell
+        if (controllerConnected == attached && (shell == null || shell.dockShown == !attached)) return
+        controllerConnected = attached
+        if (shell != null) {
+            val dockFocused = shell.dock.hasFocus()
+            if (attached) forgetVirtualInput()
+            shell.dockShown = !attached
+            hosts[0]?.layoutDock()
+            // A focused dock button must not hand focus to the header; drawer and popup focus stay where they are.
+            if (dockFocused && !shell.drawerOpen && !popups.isOpen) hosts[0]?.tracker?.requestFocus()
+        }
+        refresh()
     }
 
     /**
@@ -790,16 +800,17 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             host.tracker.refresh()
             host.toolbar.heading.text = if (index == focus) "● ${session.song.title}" else session.song.title
             host.toolbar.heading.setTextColor(if (index == focus) palette.FOCUS_ACCENT else palette.DIM)
-            host.viewButton.text = state.kind.name.lowercase().replaceFirstChar { it.uppercase() }
+            host.viewButton.text = state.kind.displayName
             host.pin.text = if (state.pinned) "Pinned" else "Context"
             host.focusButton.visibility = if (hosts.size > 1) View.VISIBLE else View.GONE
             host.transport.isEnabled = initialized
             host.transport.text = if (transport.requested) "Stop" else "Play"
             host.toolbar.repaint()
-            host.touchShell?.refresh(palette, state.kind.name.lowercase().replaceFirstChar(Char::uppercase),
+            host.touchShell?.refresh(palette, session.song.title, state.kind.displayName,
                 transport.requested, initialized)
             val popupHere = popups.isOpen && popups.display == index
-            host.handle.visibility = if (host.touchShell == null && documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
+            val touchBarShown = host.touchShell?.dockShown == true
+            host.handle.visibility = if (!controllerConnected && !touchBarShown && documentReady && !popupHere && !host.toolbar.revealed) View.VISIBLE else View.GONE
             host.setModal(popupHere, if (popupHere) popups.top?.capture else null)
         }
         updateStatus()
@@ -820,30 +831,32 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
     }
 
     /**
-     * Status lives in the (usually hidden) toolbar; a new message also flashes a chip on each display. An audio
-     * error (e.g. the preview could not take the latest edits) stays on screen until it clears, because what you
-     * hear no longer matches the song; then its chip comes down.
+     * Status lives in the (usually hidden) toolbar and the pane's bottom-right status slot; the floating chip is
+     * reserved for pre-document startup and sticky live-audio errors (where audible output differs from the score),
+     * and never duplicates an open modal dialog.
      */
     private fun updateStatus() {
         val audioError = audio?.error()
         val message = audioError ?: statusMessage
         hosts.values.forEach { if (it.toolbar.status.text.toString() != message) it.toolbar.status.text = message }
         if (message != WORKING) RecentMessages.record(if (audioError != null) "audio" else "status", message)
-        if (!documentReady) { hosts.values.forEach { it.flash(message, sticky = true) }; return }
+        if (!documentReady) { hosts.values.forEach { it.flash(message, sticky = true, alert = false) }; return }
         main.removeCallbacks(statusCheck)
         if (audioError != null) main.postDelayed(statusCheck, 500)
         else if (showingAudioError) {
-            // Not re-flashing the older status the error had covered.
             showingAudioError = false
             flashedStatus = message
-            hosts.values.forEach { it.flash(null, false) }
+            hosts.values.forEach { it.flash(null, sticky = false, alert = false) }
             return
         }
-        if (message == WORKING) { flashedStatus = null; return }
-        if (message == flashedStatus) return
+        if (popups.isOpen || audioError == null) {
+            if (audioError == null) flashedStatus = message
+            hosts.values.forEach { it.flash(null, sticky = false, alert = false) }
+            return
+        }
         flashedStatus = message
-        showingAudioError = audioError != null
-        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = showingAudioError) else it.flash(null, false) }
+        showingAudioError = true
+        hosts.values.forEach { if (!it.toolbar.revealed) it.flash(message, sticky = true, alert = true) else it.flash(null, sticky = false, alert = false) }
     }
 
     private fun cancelAuditionSequence() {
@@ -1662,10 +1675,11 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         val touchShell: TouchShell? = if (index == 0) TouchShell(context, tracker,
             ControllerDock(context, ::virtualKey, ::cancelInterruptedInput),
             { cancelHeldInput(); setFocus(index); toolbar.hide() },
+            chooseView = { cancelHeldInput(); modalDisplay = index; menus.chooseView(index) },
             entries = {
                 buildList {
                     for (kind in session.song.system.views) {
-                        add(kind.name.lowercase().replaceFirstChar(Char::uppercase) to { showView(kind, index) })
+                        add(kind.displayName to { showView(kind, index) })
                     }
                     add("Files — new, open, save, export" to { modalDisplay = index; menus.fileMenu() })
                     add("Pattern scale and length" to {
@@ -1693,11 +1707,12 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             toolbar.setKeys(keymap)
             root.addView(touchShell ?: tracker, FrameLayout.LayoutParams(-1, -1))
             root.addView(handle, FrameLayout.LayoutParams(dp(72), dp(18), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-            root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+            root.addView(chip, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
             root.addView(toolbar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
             root.addView(popup, FrameLayout.LayoutParams(-1, -1))
             applyPalette(palette)
             (if (index == 0) window else secondary?.window)?.let(::applyWindowPalette)
+            touchShell?.dockShown = !controllerConnected
             layoutDock()
         }
 
@@ -1713,12 +1728,16 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
             root.setBackgroundColor(value.BG)
         }
 
-        /** Shows [message] on the status chip ([sticky] while loading); null clears it. */
-        fun flash(message: String?, sticky: Boolean) {
+        /** Shows [message] on the status banner ([sticky] while loading or during an audio refusal); null clears it. */
+        fun flash(message: String?, sticky: Boolean, alert: Boolean = false) {
             chip.removeCallbacks(chipHide)
             chip.animate().cancel()
             if (message == null) { chip.visibility = View.GONE; return }
             chip.text = message
+            (chip.background as GradientDrawable).apply {
+                setColor(if (alert) Palette.mix(palette.BAR, palette.ERROR, 0.16f) else palette.BAR)
+                setStroke(dp(if (alert) 2 else 1), if (alert) palette.ERROR else palette.RULE)
+            }
             chip.alpha = 1f
             chip.visibility = View.VISIBLE
             if (!sticky) chip.postDelayed(chipHide, 2800)
@@ -1738,7 +1757,8 @@ class MainActivity : Activity(), DisplayManager.DisplayListener, InputManager.In
         fun layoutDock() {
             val dockShown = touchShell?.dockShown == true
             (chip.layoutParams as FrameLayout.LayoutParams).let {
-                it.bottomMargin = dp(if (dockShown) 200 else 34)
+                it.topMargin = dp(if (dockShown) 50 else 10)
+                it.bottomMargin = 0
                 chip.layoutParams = it
             }
             val captureDock = modal && bindingCapture != null && dockShown

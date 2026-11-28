@@ -25,12 +25,16 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
     private val name = Rect()
     private val previousSlot = Rect()
     private val nextSlot = Rect()
+    private val presetsButton = Rect()
+    private val listenButton = Rect()
+    private val badge = Rect()
     private val body = Rect()
     private val work = Rect()
     private val group = Rect()
     private val focus = Rect()
     private val drag = PanelDrag<Drag>()
     private val cancelPointer: () -> Unit = { cancel() }
+    private var heldListen = false
     private var drawnState: ViewState? = null
     private var drawnVersion = -1L
     private var drawnRevision = -1
@@ -115,13 +119,31 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         }
         y += tabH + pad * 0.45f
         val nameH = minOf(ink.unit * 2f, body.height() * 0.125f)
-        val arrowW = minOf(nameH, (right - left) * 0.17f)
-        name.set(left, y, right - 2f * arrowW, y + nameH)
-        previousSlot.set(name.right, y, right - arrowW, y + nameH)
-        nextSlot.set(previousSlot.right, y, right, y + nameH)
+        val rowW = right - left
+        val showSlotTools = rowW >= ink.unit * 21f
+        val listenW = if (showSlotTools) minOf(rowW * 0.19f, ink.unit * 4.8f) else 0f
+        val presetsW = if (showSlotTools) minOf(rowW * 0.21f, ink.unit * 5.2f) else 0f
+        val arrowW = minOf(nameH, rowW * (if (showSlotTools) 0.095f else 0.17f))
+        if (showSlotTools) {
+            listenButton.set(right - listenW, y, right, y + nameH)
+            presetsButton.set(listenButton.left - pad * 0.35f - presetsW, y, listenButton.left - pad * 0.35f, y + nameH)
+            nextSlot.set(presetsButton.left - pad * 0.35f - arrowW, y, presetsButton.left - pad * 0.35f, y + nameH)
+            previousSlot.set(nextSlot.left - arrowW, y, nextSlot.left, y + nameH)
+            name.set(left, y, previousSlot.left - pad * 0.35f, y + nameH)
+        } else {
+            presetsButton.set(0f, 0f, 0f, 0f)
+            listenButton.set(0f, 0f, 0f, 0f)
+            name.set(left, y, right - 2f * arrowW, y + nameH)
+            previousSlot.set(name.right, y, right - arrowW, y + nameH)
+            nextSlot.set(previousSlot.right, y, right, y + nameH)
+        }
         drawPatchName(c, patch.name, pad)
         drawButton(c, previousSlot, "‹", st.instrument > 1)
         drawButton(c, nextSlot, "›", st.instrument < StudioSound.SLOTS)
+        if (showSlotTools) {
+            drawToolPill(c, presetsButton, "Presets", active = false)
+            drawToolPill(c, listenButton, "Listen", active = heldListen || ctl.auditionHeld)
+        }
         y += nameH + pad * 0.5f
         val footH = minOf(ink.unit * 2.2f, body.height() * 0.12f)
         work.set(left, y, right, body.bottom - footH - pad * 0.25f)
@@ -248,8 +270,10 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
             outline(c, r)
         }
         val p = ink.palette
-        ink.label(c, ink.fit(param.label, r.width() - ink.unit * 0.5f, size, selected), cx, r.top, labelH,
+        val letters = StudioAssignments.boundLetters(song, st.listenChannel, 0, StudioKind.MONO, param.ordinal)
+        ink.label(c, ink.fit(param.label, r.width() - ink.unit * (if (letters != null) 2.2f else 0.5f), size, selected), cx, r.top, labelH,
             p.TEXT, selected, size, Align.CENTER)
+        if (letters != null) drawLetterBadge(c, r.right - ink.dp(3f), r.top, labelH, letters)
         for (i in 0..100 step 10) {
             val x = dialX[i]
             val y = dialY[i]
@@ -358,6 +382,22 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
             minOf(ink.unit * 1.35f, r.height() * 0.77f), Align.CENTER)
     }
 
+    private fun drawToolPill(c: Surface, r: Rect, text: String, active: Boolean) {
+        PanelWidgets.segment(ink, c, r, active, signal)
+        val sz = minOf(ink.unit * 0.92f, r.height() * 0.56f)
+        ink.label(c, ink.fit(text, r.width() - ink.dp(6f), sz, active), r.centerX(), r.top, r.height(),
+            if (active) ink.palette.TEXT else ink.palette.DIM, active, sz, Align.CENTER)
+    }
+
+    private fun drawLetterBadge(c: Surface, right: Float, top: Float, h: Float, letters: String) {
+        val sz = minOf(ink.unit * 0.74f, h * 0.66f)
+        val pad = sz * 0.36f
+        val w = ink.monoWidth(letters, sz, true) + pad * 2f
+        badge.set(right - w, top + (h - sz * 1.32f) * 0.5f, right, top + (h + sz * 1.32f) * 0.5f)
+        ink.round(c, badge, ink.dp(2.5f), Palette.alpha(ink.palette.PLAYHEAD, 48))
+        ink.mono(c, letters, badge.centerX(), top, h, ink.palette.PLAYHEAD, true, sz, Align.CENTER)
+    }
+
     private fun focusColor() = if (StudioSoundView.panel(st).cancelTouch != null) ink.palette.WRITE else cursorColor()
 
     private fun outline(c: Surface, r: Rect) {
@@ -383,6 +423,26 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         }
         if (previousSlot.contains(x, y) || nextSlot.contains(x, y)) {
             StudioSoundView.selectSlot(ctl, st.instrument + if (nextSlot.contains(x, y)) 1 else -1)
+            return true
+        }
+        if (presetsButton.width() > 0f && presetsButton.contains(x, y)) {
+            val slot = st.instrument
+            val version = session.documentVersion
+            StudioSoundView.blockHeldEdit(ctl)
+            session.requestMenu { m ->
+                StudioInstruments.library(session, m, slot) {
+                    st.kind == ViewKind.INSTRUMENT && st.instrument == slot && session.documentVersion == version
+                }
+            }
+            return true
+        }
+        if (listenButton.width() > 0f && listenButton.contains(x, y)) {
+            StudioSoundView.blockHeldEdit(ctl)
+            if (!ctl.auditionHeld) {
+                StudioSoundView.audition(ctl)
+                heldListen = true
+                p.cancelTouch = cancelPointer
+            }
             return true
         }
         if (name.contains(x, y)) {
@@ -444,6 +504,10 @@ internal class StudioSoundPainter(v: PaneView) : FmInstrumentPainter(v) {
         val p = StudioSoundView.panel(drag.target?.state ?: st)
         if (p.cancelTouch === cancelPointer) p.cancelTouch = null
         drag.finish(session)
+        if (heldListen) {
+            heldListen = false
+            if (!ctl.auditionHeld) session.releaseAudition()
+        }
     }
 
     companion object {
